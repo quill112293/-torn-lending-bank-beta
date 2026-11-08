@@ -16,7 +16,7 @@
     {
       "binding": "DB",
       "database_name": "torn-lending-bank-beta",
-      "database_id": "REPLACE_WITH_NEW_BETA_DATABASE_ID",
+      "database_id": "75073cef-2f59-45fb-b64e-c436809c871d",
       "migrations_dir": "migrations"
     }
   ],
