@@ -25,16 +25,18 @@ afterEach(() => {
   for (const key of ['PDA_httpGet','PDA_httpPost','PDA_storage','GM_xmlhttpRequest','GM_getValue','GM_setValue','GM_deleteValue','localStorage']) delete globalThis[key];
 });
 
-test('remembered login restores after a new transport without keeping the Torn key', async () => {
+test('remembered login restores the Torn key locally without sending it on bank reads', async () => {
   const calls = bridge(), store = memory();
   const first = createTransport(origin, {native: true, store});
   const result = await first.request('link', {key: apiKey}, {remember: true});
   assert.equal(result.token, undefined);
-  assert.deepEqual(Object.keys(store.value()).sort(), ['expiresAt','origin','token']);
-  assert.ok(!JSON.stringify(store.value()).includes(apiKey));
+  assert.deepEqual(Object.keys(store.value()).sort(), ['apiKey','expiresAt','origin','token']);
+  assert.equal(store.value().apiKey, apiKey);
   const reopened = createTransport(origin, {native: true, store});
   await reopened.request('bank'); // Waits for asynchronous storage automatically.
   assert.equal(reopened.isRemembered(), true);
+  assert.equal(reopened.getSavedKey(), apiKey);
+  assert.ok(!JSON.stringify(reopened.diagnostics()).includes(apiKey));
   assert.equal(calls[1].headers.Authorization, 'Bearer ' + token);
   assert.ok(!calls[1].url.includes(token));
   assert.equal(calls[1].body, undefined);
@@ -334,4 +336,56 @@ test('entering a complete key enables account and trade checks without signing i
     assert.equal(JSON.parse(call.body).key, apiKey);
   }
   assert.ok(!JSON.stringify(transport.diagnostics()).includes(apiKey));
+});
+
+test('expired saved login renews once and restores trade verification key', async () => {
+  const calls = bridge(), store = memory({...saved(), expiresAt: 1, apiKey});
+  const transport = createTransport(origin, {native: true, store});
+  await transport.ready;
+  assert.equal(transport.canRestore(), true);
+  assert.equal(transport.getSavedKey(), apiKey);
+  await Promise.all([transport.request('bank'), transport.request('access')]);
+  assert.equal(calls.filter(c=>c.url.endsWith('/link')).length, 1);
+  await transport.request('trades', {key: transport.getSavedKey()});
+  assert.equal(JSON.parse(calls.at(-1).body).key, apiKey);
+  assert.equal(store.value().apiKey, apiKey);
+  assert.ok(!JSON.stringify(transport.diagnostics()).includes(apiKey));
+});
+
+test('network failure during renewal retains credentials for a later retry', async () => {
+  bridge(); const store = memory({...saved(), expiresAt: 1, apiKey});
+  globalThis.PDA_httpPost = async () => {throw Error('offline');};
+  const transport = createTransport(origin, {native: true, store});
+  await assert.rejects(transport.request('bank'), /Connection interrupted/);
+  assert.equal(store.value().apiKey, apiKey);
+  bridge(); await transport.request('bank');
+  assert.equal(transport.hasSession(), true);
+});
+
+test('401 retains key but never replays a bank write', async () => {
+  const calls = bridge(), store = memory({...saved(), apiKey});
+  const transport = createTransport(origin, {native: true, store});
+  globalThis.PDA_httpPost = async (url) => {calls.push({url});return json({error:'expired'},401);};
+  await assert.rejects(transport.request('bank', {action:'payment'}), /Refresh to reconnect/);
+  assert.equal(calls.length, 1);
+  assert.equal(store.value().apiKey, apiKey);
+  bridge(); await transport.request('bank');
+  assert.equal(transport.hasSession(), true);
+});
+
+test('another bank cannot restore a saved Torn key', async () => {
+  const store = memory({...saved(), origin:'https://other.workers.dev', apiKey});
+  const transport = createTransport(origin, {store});await transport.ready;
+  assert.equal(transport.getSavedKey(), '');assert.equal(store.value(), null);
+});
+
+test('logout during renewal prevents credentials from being restored', async () => {
+  bridge(); const gate = delayedResponse();
+  globalThis.PDA_httpPost = () => gate.send();
+  const store = memory({...saved(), expiresAt:1, apiKey});
+  const transport = createTransport(origin, {native:true,store});
+  const pending = transport.request('bank');await gate.started;
+  await transport.logout();gate.finish(json(saved()));
+  await assert.rejects(pending,/login changed/);
+  assert.equal(transport.getSavedKey(),'');assert.equal(store.value(),null);
 });

@@ -12,7 +12,7 @@ export function createTransport(origin, {native = false, onExpired = () => {}, s
   origin = normalizeOrigin(origin);
   let bearer = '', expiresAt = 0, remembered = false, notice = '', epoch = 0, writes = Promise.resolve();
   const requestLog = createRequestLog();
-  let bankRead = null;
+  let bankRead = null, savedKey = '', renewal = null, signingOut = false;
   const hasSession = () => !!bearer && expiresAt > Date.now();
   // Serialize persistence so a slow save cannot restore a session after sign-out.
   function persist(value) {
@@ -27,14 +27,15 @@ export function createTransport(origin, {native = false, onExpired = () => {}, s
     try {
       const saved = await store.read();
       if (epoch !== initialEpoch) return;
+      if (saved?.origin === origin && validTornKey(saved.apiKey)) { savedKey = saved.apiKey; remembered = true; }
       if (validSession(saved, origin)) {
         bearer = saved.token; expiresAt = saved.expiresAt; remembered = true;
-      } else if (saved) await persist(null);
+      } else if (saved && !savedKey) await persist(null);
     } catch { notice = 'Saved login is unavailable. You can still sign in for this session.'; }
   })();
   async function clear() {
     bankRead = null;
-    epoch++; bearer = ''; expiresAt = 0; remembered = false; notice = '';
+    epoch++; bearer = ''; expiresAt = 0; savedKey = ''; renewal = null; remembered = false; notice = '';
     await persist(null);
   }
   // Share only in-flight bank reads. Never cache results or combine writes.
@@ -52,9 +53,23 @@ export function createTransport(origin, {native = false, onExpired = () => {}, s
     bankRead = pending;
     return pending;
   }
+  async function ensureSession() {
+    if (hasSession() || !savedKey) return;
+    if (!renewal) {
+      const pending = send('link', {key: savedKey}, {remember: true}).finally(() => {
+        if (renewal === pending) renewal = null;
+      });
+      renewal = pending;
+    }
+    await renewal;
+  }
   async function send(path, body, {remember = false} = {}) {
     await ready;
-    if (bearer && !hasSession()) await clear();
+    if (signingOut && path !== 'logout') throw Error('You are signing out.');
+    if (bearer && !hasSession()) { bearer = ''; expiresAt = 0; }
+    const startEpoch = epoch;
+    if (!['link', 'logout'].includes(path)) await ensureSession();
+    if (epoch !== startEpoch) throw Error('Your login changed. Refresh the bank.');
     if (body !== undefined && ['link', 'check', 'trades'].includes(path) && !validTornKey(body?.key)) {
       throw Error(path === 'link' ? 'Enter a valid 16-character Torn API key.' : 'Enter a valid 16-character Torn API key in Connections before running live checks.');
     }
@@ -69,7 +84,7 @@ export function createTransport(origin, {native = false, onExpired = () => {}, s
       if (native && typeof PDA_httpGet === 'function' && typeof PDA_httpPost === 'function') {
         driver = 'Torn PDA';
         // Cloudflare recommends an application User-Agent for native HTTP clients.
-        headers['User-Agent'] = 'TornLendingBank/1.1.0-beta.20 (TornPDA userscript)';
+        headers['User-Agent'] = 'TornLendingBank/1.1.0-beta.21 (TornPDA userscript)';
         let timer;
         try {
           res = await Promise.race([
@@ -79,7 +94,7 @@ export function createTransport(origin, {native = false, onExpired = () => {}, s
         } finally { clearTimeout(timer); }
       } else if (native && typeof GM_xmlhttpRequest === 'function') {
         driver = 'userscript';
-        headers['User-Agent'] = 'TornLendingBank/1.1.0-beta.20 (userscript)';
+        headers['User-Agent'] = 'TornLendingBank/1.1.0-beta.21 (userscript)';
         res = await new Promise((resolve, reject) => GM_xmlhttpRequest({method, url, headers, data: payload, timeout: 25000, anonymous: true, onload: resolve, onerror: reject, ontimeout: reject}));
       } else {
         const r = await fetch(url, {method, headers, body: payload, credentials: 'omit', cache: 'no-store', signal: AbortSignal.timeout(25000)});
@@ -90,8 +105,12 @@ export function createTransport(origin, {native = false, onExpired = () => {}, s
     const status = Number(res?.status) || 0;
     if (status === 401) {
       record(driver, 'session_expired', res);
-      if (epoch === requestEpoch) { await clear(); onExpired(); }
-      throw Error('Your bank session ended. Sign in again.');
+      if (epoch === requestEpoch) {
+        bearer = ''; expiresAt = 0;
+        await persist(savedKey ? {origin, apiKey: savedKey} : null);
+        onExpired();
+      }
+      throw Error(savedKey ? 'Your bank session ended. Refresh to reconnect; the saved key is still on this device.' : 'Your bank session ended. Sign in again.');
     }
     let data;
     try {
@@ -114,22 +133,24 @@ export function createTransport(origin, {native = false, onExpired = () => {}, s
       delete data.token;
       if (!validSession(session, origin)) { record(driver, 'invalid_login', res); throw Error('The bank returned an invalid login. Please try again.'); }
       bearer = session.token; expiresAt = session.expiresAt; remembered = remember; notice = '';
-      await persist(remember ? session : null);
+      savedKey = remember ? body.key : '';
+      await persist(remember ? {...session, apiKey: savedKey} : null);
     }
     record(driver, 'ok', res);
     return data;
   }
   return {
-    ready, request, hasSession, clear, isRemembered: () => remembered && hasSession(), notice: () => notice,
+    ready, request, hasSession, clear, getSavedKey: () => savedKey, canRestore: () => hasSession() || !!savedKey, isRemembered: () => remembered && hasSession(), notice: () => notice,
     diagnostics: () => ({bankOrigin: origin, native, sessionActive: hasSession(), remembered: remembered && hasSession(),
       storage: ['torn-pda', 'userscript', 'browser'].includes(store.kind) ? store.kind : 'custom',
       capabilities: {pdaGet: typeof PDA_httpGet === 'function', pdaPost: typeof PDA_httpPost === 'function', userscriptRequest: typeof GM_xmlhttpRequest === 'function', browserFetch: typeof fetch === 'function'},
       recentRequests: requestLog.snapshot()}),
-    async forget() { remembered = false; notice = ''; await persist(null); },
+    async forget() { savedKey = ''; remembered = false; notice = ''; await persist(null); },
     async logout() {
       await ready;
+      signingOut = true; epoch++; savedKey = ''; renewal = null; bankRead = null;
       try { if (hasSession()) await request('logout', {}); }
-      finally { await clear(); }
+      finally { await clear(); signingOut = false; }
     },
   };
 }

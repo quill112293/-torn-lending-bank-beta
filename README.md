@@ -21,3 +21,7 @@ Promote approved code deliberately. Never copy bindings, origins, update links o
 ## Verification
 
 Run `npm run build` then `npm test`. Deployment is blocked until a new database ID is configured. The old database ID is explicitly rejected.
+
+## Beta.21 remembered sign-in
+
+Successful sign-in saves the Torn API key and bank session on the device, isolated by bank origin. Reopening restores the key for live Torn checks. Expired sessions renew through the normal identity/access checks; logout removes the local key and session and attempts server revocation. Keys are excluded from diagnostics and the bank database. Device storage removal or revoked credentials/access can require sign-in again. Existing installations need one sign-in with this version to save their key. Trade checks still require suitable Torn API permissions.

@@ -1,4 +1,4 @@
-// Store only the short-lived bank session, never a Torn API key.
+// Device-local login and Torn key, isolated by bank origin. Explicit logout deletes both.
 export function createSessionStore(origin, {native = false} = {}) {
   const key = 'tlb.session.v1:' + new URL(origin).origin;
   if (native && typeof PDA_storage !== 'undefined') {
