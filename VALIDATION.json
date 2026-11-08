@@ -1,0 +1,12 @@
+{
+  "channel": "beta",
+  "basedOn": "1.1.0-beta.19",
+  "build": "passed",
+  "tests": {
+    "passed": 113,
+    "failed": 0
+  },
+  "isolationChecks": "namespace, origin, update URL, host ID and missing-DB deployment rejection passed",
+  "deployment": "pending dedicated D1 ID and Cloudflare setup",
+  "deviceTesting": "pending"
+}
