@@ -19,7 +19,7 @@ export async function handle(request,env,ctx){
  let result;const srv=createServer(env);const {database,response,body,identity,rateLimit,loadState,saveState,allowed,torn,flagConfirmedProfile}=srv;
  try{
   if(request.method==='OPTIONS')result=new Response(null,{status:204});
-  else if(path==='/api/health'&&request.method==='GET'){let notificationsReady=false;try{await database().prepare('SELECT id FROM push_devices LIMIT 1').first();notificationsReady=true;}catch{}result=response({ok:true,version:'1.1.0-beta.35',notificationsReady});}
+  else if(path==='/api/health'&&request.method==='GET'){let notificationsReady=false;try{await database().prepare('SELECT id FROM push_devices LIMIT 1').first();notificationsReady=true;}catch{}result=response({ok:true,version:'1.1.0-beta.36',notificationsReady});}
   else if(path==='/api/notifications')result=await notificationRoute(request,srv);
   else if(path==='/api/link'&&request.method==='POST'){
    const ip=request.headers.get('cf-connecting-ip')||'local';await rateLimit('login:'+await digest(ip),5);
@@ -70,4 +70,5 @@ export function validateImport(s){
  TB.validateRules(s.rules);for(const loan of s.loans){TB.balance(loan,TB.today());if(!loan.id||!/^\d{1,10}$/.test(loan.borrowerId))fail('Invalid loan record.');}
 }
 export default {fetch:handle,async scheduled(_event,env){await env.DB.batch([env.DB.prepare('DELETE FROM sessions WHERE expires_at>0 AND expires_at<=?').bind(Date.now()),env.DB.prepare('DELETE FROM api_limits WHERE bucket<?').bind(Math.floor(Date.now()/60000)-2),env.DB.prepare('DELETE FROM push_events WHERE created_at<?').bind(Date.now()-7*86400000)]);await drainPush(env);}};
+
 
