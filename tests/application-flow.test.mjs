@@ -54,3 +54,11 @@ test('Torn collateral rejects wrong sender, items, outgoing money, underpayment,
  assert.throws(()=>verifyCollateral(TB.clone(s),owner,l.id,{...t,completed_at:1}),/after/);
  s.receipts=[{reference:'torn-api-trade:123'}];assert.throws(()=>verifyCollateral(s,owner,l.id,t),/already/);
 });
+
+test('archived application still supports collateral date checks and funding the retained loan',()=>{
+ let s=apply(base()),a=s.applications[0],l=s.loans[0],t=trade(s);
+ s=applyAction(s,owner,'removeRecords',{kind:'application',id:a.id,confirm:'REMOVE '+a.id,reason:'Application archived separately'});
+ assert.equal(s.applications.length,0);assert.equal(s.loans.length,1);
+ assert.throws(()=>verifyCollateral(TB.clone(s),owner,l.id,{...t,completed_at:1}),/after/);
+ verifyCollateral(s,owner,l.id,t);s=applyAction(s,borrower,'confirmTerms',{id:l.id});s=applyAction(s,owner,'fund',{id:l.id,reference:'funded after application archive'});assert.equal(s.loans[0].status,'active');assert.equal(project(s,borrower).state.recordArchives,undefined);
+});

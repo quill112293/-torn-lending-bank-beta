@@ -1,10 +1,10 @@
 {
   "channel": "beta",
-  "version": "1.1.0-beta.28",
-  "basedOn": "1.1.0-beta.27",
+  "version": "1.1.0-beta.29",
+  "basedOn": "1.1.0-beta.28",
   "build": "passed",
-  "tests": 124,
-  "workerPackaging": "Not repeated for this UI-only update; prior beta.23 dry run passed",
+  "tests": 128,
+  "workerPackaging": "Worker rebuilt; runtime tests passed. No binding or configuration changes.",
   "sessionChecks": [
     "No time limit, including simulated ten-year passage",
     "Scheduled cleanup preserves permanent sessions",
@@ -27,5 +27,11 @@
   ],
   "noticeChecks": "Application detail combines eligibility notices and saved review reasons, displaying each distinct message once. Loan eligibility rules unchanged.",
   "historyChecks": "Category selector replaces individual event selector. Shared filtering used by list, export and clearing; category isolation and scoped clearing covered by tests.",
-  "navigationChecks": "Removed standalone History tab, render branch and unused imports. Users still renders HistoryLog with category filtering, export and clearing; no audit data or permissions changed."
+  "navigationChecks": "Removed standalone History tab, render branch and unused imports. Users still renders HistoryLog with category filtering, export and clearing; no audit data or permissions changed.",
+  "removalChecks": [
+    "Application removal preserves funded loan and related records",
+    "Loan removal preserves approved application and cannot reopen approval",
+    "Collateral date checks and loan funding work after application archival",
+    "Funded live-loan protections and ledger preservation retained"
+  ]
 }

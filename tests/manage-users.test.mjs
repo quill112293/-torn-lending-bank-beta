@@ -50,3 +50,24 @@ test('pending payment deletion removes linked requests but not money movements',
  const s=state();s.pendingPayments=[{id:'p',status:'pending',reference:'receipt-p',loanId:'l'}];s.paymentIntents=[{id:'i',status:'review',paymentId:'p'}];const next=act(s,O,'removeRecords',{kind:'payment',id:'p',confirm:'REMOVE p',reason:'Duplicate input'});assert.equal(next.pendingPayments.length,0);assert.equal(next.paymentIntents.length,0);assert.deepEqual(next.ledger,s.ledger);
  s.pendingPayments[0].status='accepted';assert.throws(()=>removalPlan(s,'payment','p'),/Accepted payments/);
 });
+
+test('application-only archive preserves a funded loan, related records and ledger',()=>{
+ let s=act(state(),B,'apply',app());const a=s.applications[0],l=s.loans[0];l.collateralConfirmed={reference:'received collateral'};s=act(s,B,'confirmTerms',{id:l.id});s=act(s,O,'fund',{id:l.id,reference:'funded loan'});
+ s=act(s,B,'paymentIntent',{id:l.id,amount:10e6,recipient:O});s.collateral=[{id:'c',loanId:l.id,reference:'received collateral'}];
+ const before=JSON.stringify({loans:s.loans,requests:s.paymentIntents,collateral:s.collateral,ledger:s.ledger});
+ const plan=removalPlan(s,'application',a.id);assert.deepEqual(plan.summary,[{type:'applications',count:1}]);
+ s=act(s,O,'removeRecords',{kind:'application',id:a.id,confirm:'REMOVE '+a.id,reason:'Archive application only'});
+ assert.equal(s.applications.length,0);assert.equal(JSON.stringify({loans:s.loans,requests:s.paymentIntents,collateral:s.collateral,ledger:s.ledger}),before);assert.equal(s.recordArchives[0].records.applications[0].id,a.id);assert.equal(project(s,B).state.loans[0].reference,a.reference);
+});
+test('loan-only archive keeps approved application and removes only that loans dependent records',()=>{
+ let s=act(status(state()),B,'apply',app());const l=s.loans[0],apps=JSON.stringify(s.applications),ledger=JSON.stringify(s.ledger);
+ for(const key of ['pendingPayments','paymentIntents','extensionRequests','collateral','receipts'])s[key]=[{id:key+'-selected',loanId:l.id,reference:key+'-receipt'},{id:key+'-other',loanId:'other-loan'}];
+ const plan=removalPlan(s,'loan',l.id);assert.deepEqual(plan.applications,[]);assert.deepEqual(plan.loans,[l.id]);
+ s=act(s,O,'removeRecords',{kind:'loan',id:l.id,confirm:'REMOVE '+l.id,reason:'Archive loan only'});
+ assert.equal(s.loans.length,0);assert.equal(JSON.stringify(s.applications),apps);assert.equal(JSON.stringify(s.ledger),ledger);assert.equal(s.recordArchives[0].records.applications.length,0);
+ for(const key of ['pendingPayments','paymentIntents','extensionRequests','collateral','receipts'])assert.deepEqual(s[key].map(x=>x.id),[key+'-other']);
+ assert.throws(()=>act(s,O,'approve',{id:s.applications[0].id,amount:100e6,reason:'Do not reopen',checks:true}),/pending application/);
+});
+test('unfunded live loan removal also keeps its application',()=>{
+ let s=act(state(),B,'apply',app());const a=s.applications[0],l=s.loans[0];s=act(s,O,'removeRecords',{kind:'loan',id:l.id,confirm:'REMOVE '+l.id,reason:'Cancel unfunded loan'});assert.equal(s.loans.length,0);assert.deepEqual(s.applications[0],a);
+});
