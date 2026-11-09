@@ -1,6 +1,6 @@
 # Torn Lending Bank — BETA
 
-Standalone beta bank. This beta.23 source update adds the signed-in welcome lobby and retains sign-in without a time limit; deployment is tracked separately from source validation.
+Standalone beta bank. This beta.24 source update keeps bank and banker availability in the signed-in welcome lobby and retains sign-in without a time limit; deployment is tracked separately from source validation.
 
 ## Setup
 
@@ -33,3 +33,7 @@ Update the beta Worker and install the beta.22 userscript, then sign in once to 
 ## Beta.23 welcome lobby
 
 Welcome lobby is the first tab after a new or restored sign-in for borrowers and bankers. It shows the bank's online/offline status and each enabled banker's name, role, Torn ID, and staff-set availability. It uses the existing authenticated bank refresh; no public status endpoint or additional data exposure is introduced. The Overview tab remains available from the lobby and navigation. Remembered sign-in is unchanged.
+
+## Beta.24 overview cleanup
+
+Removed the duplicate bank status and staff availability section from Overview. The Welcome lobby retains these details. Overview continues to show account summaries, application and loan search, and loan activity.
