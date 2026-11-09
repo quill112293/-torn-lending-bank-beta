@@ -1,7 +1,7 @@
 {
   "channel": "beta",
-  "version": "1.1.0-beta.24",
-  "basedOn": "1.1.0-beta.23",
+  "version": "1.1.0-beta.25",
+  "basedOn": "1.1.0-beta.24",
   "build": "passed",
   "tests": {
     "passed": 122,
@@ -27,5 +27,6 @@
   "overviewChecks": [
     "Duplicate availability section and unused component removed",
     "Welcome lobby status display retained"
-  ]
+  ],
+  "noticeChecks": "Application detail combines eligibility notices and saved review reasons, displaying each distinct message once. Loan eligibility rules unchanged."
 }

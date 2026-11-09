@@ -1,6 +1,6 @@
 # Torn Lending Bank — BETA
 
-Standalone beta bank. This beta.24 source update keeps bank and banker availability in the signed-in welcome lobby and retains sign-in without a time limit; deployment is tracked separately from source validation.
+Standalone beta bank. This beta.25 source update keeps bank and banker availability in the signed-in welcome lobby and retains sign-in without a time limit; deployment is tracked separately from source validation.
 
 ## Setup
 
@@ -37,3 +37,5 @@ Welcome lobby is the first tab after a new or restored sign-in for borrowers and
 ## Beta.24 overview cleanup
 
 Removed the duplicate bank status and staff availability section from Overview. The Welcome lobby retains these details. Overview continues to show account summaries, application and loan search, and loan activity.
+
+Beta.25 removes duplicate application notices when eligibility checks and saved review reasons contain the same message.
