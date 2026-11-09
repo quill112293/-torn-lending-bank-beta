@@ -1,6 +1,6 @@
 {
   "name": "torn-lending-bank-beta",
-  "version": "1.1.0-beta.34",
+  "version": "1.1.0-beta.35",
   "private": true,
   "type": "module",
   "engines": {
@@ -8,7 +8,7 @@
   },
   "scripts": {
     "build": "node scripts/build.mjs",
-    "test": "node --test tests/*.test.mjs",
+    "test": "node --test tests/*.test.mjs && node scripts/test-push-runtime.mjs",
     "dev": "wrangler dev",
     "deploy": "node scripts/check-deployment.mjs && npm run build && wrangler d1 migrations apply DB --remote && wrangler deploy",
     "db:local": "wrangler d1 migrations apply DB --local"

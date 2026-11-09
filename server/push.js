@@ -23,7 +23,9 @@ export async function validateSubscription(value){
 }
 export async function sendPush(subscription,message,keys){
  const sub=await validateSubscription(subscription),payload=await buildPushPayload({data:JSON.stringify(message),options:{ttl:3600}},sub,keys);
- const result=await fetch(sub.endpoint,{...payload,redirect:'error',signal:AbortSignal.timeout(8000)});
+ // Workers supports manual redirects; callers accept only 2xx, so a redirect
+ // stays a failed send and never forwards the encrypted payload or VAPID token.
+ const result=await fetch(sub.endpoint,{...payload,redirect:'manual',signal:AbortSignal.timeout(8000)});
  return result.status;
 }
 export function eventStatements(db,previous,next,serialized,revision){

@@ -1,10 +1,10 @@
 {
   "channel": "beta",
-  "version": "1.1.0-beta.34",
-  "basedOn": "1.1.0-beta.33",
+  "version": "1.1.0-beta.35",
+  "basedOn": "1.1.0-beta.34",
   "build": "passed",
-  "tests": 153,
-  "workerPackaging": "Wrangler deploy --dry-run passed. Both D1 migrations applied locally. Wrangler dev blocked by host uv_interface_addresses error; runtime tests passed.",
+  "tests": 154,
+  "workerPackaging": "Production build and encrypted push delivery pass in local workerd. Runtime regression reproduces the original invalid redirect error and passes with manual redirect handling. The installed workerd uses compatibility date 2026-05-22.",
   "sessionChecks": [
     "No time limit, including simulated ten-year passage",
     "Scheduled cleanup preserves permanent sessions",
@@ -14,7 +14,7 @@
     "Legacy timed sessions remain supported"
   ],
   "deployment": "Pending Cloudflare automatic deployment of this release",
-  "deviceTesting": "Actual iPhone Home Screen permission and notification receipt require device setup and remain pending.",
+  "deviceTesting": "Phone subscription is present in the supplied iPhone screenshot. Actual notification receipt after this fix remains to be confirmed on-device.",
   "lobbyChecks": [
     "Lender script omits Welcome lobby and starts on Overview",
     "Borrower script retains Welcome lobby as its initial page",
@@ -58,6 +58,8 @@
     "Failed sends retain cursor for retry; expired subscriptions are removed",
     "Logout, session expiry and disabled staff prevent further delivery",
     "Service worker displays visible notifications and opens only the bank origin",
-    "Notification route and D1 migration included in backend fixture"
+    "Notification route and D1 migration included in backend fixture",
+    "Cloudflare-compatible manual redirect handling; 301/302/303/307/308 never count as successful delivery",
+    "Real workerd runtime sends encrypted requests to a local simulated push service, accepts success responses, and never follows redirects"
   ]
 }

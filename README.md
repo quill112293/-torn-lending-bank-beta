@@ -1,6 +1,6 @@
 # Torn Lending Bank — BETA
 
-Standalone beta bank. Beta.34 adds adjustable phone notifications in Settings. The lender opens on Overview, borrowers retain Welcome lobby, and sign-in lasts until logout; deployment is tracked separately from source validation.
+Standalone beta bank. Beta.35 fixes Cloudflare delivery for the adjustable phone notifications in Settings. The lender opens on Overview, borrowers retain Welcome lobby, and sign-in lasts until logout; deployment is tracked separately from source validation.
 
 ## Setup
 
@@ -67,3 +67,9 @@ Alerts are sent for newly saved bank activity even while the website and Torn sc
 Deployment must run `npm run deploy`, which applies `migrations/0002_notifications.sql` before publishing the Worker. This adds separate notification preferences, subscriptions and an event outbox. The Worker generates its VAPID signing key once in D1; it is never returned to clients or included in bank exports. No manual key configuration is required. Saved bank actions and their outbox entries are atomic; delivery runs after actions and retries every five minutes. Expired subscriptions are removed, events are retained for seven days, and delivery rechecks current staff access and session validity. `/api/health` reports `notificationsReady` when the notification tables exist.
 
 The test button’s success means the push service accepted the message; actual receipt must be checked on the phone.
+
+## Beta.35 notification delivery fix
+
+Replaces the unsupported `redirect: "error"` fetch option with Cloudflare-compatible `manual` handling. Redirect responses are not followed or treated as delivered; queued events remain available for retry. Existing subscriptions and preferences are retained. Reload the website and use Send test notification again.
+
+`npm test` now also runs the encrypted push request inside local workerd, using its supported 2026-05-22 compatibility date and a simulated push service. This reproduces the beta.34 runtime error and verifies successful sends and non-followed redirects without sending notifications to a real device.
