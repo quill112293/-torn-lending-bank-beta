@@ -1,6 +1,6 @@
 # Torn Lending Bank — BETA
 
-Standalone beta bank. This beta.25 source update keeps bank and banker availability in the signed-in welcome lobby and retains sign-in without a time limit; deployment is tracked separately from source validation.
+Standalone beta bank. Beta.34 adds adjustable phone notifications in Settings. The lender opens on Overview, borrowers retain Welcome lobby, and sign-in lasts until logout; deployment is tracked separately from source validation.
 
 ## Setup
 
@@ -24,7 +24,7 @@ Run `npm run build` then `npm test`. Deployment is blocked until a new database 
 
 ## Beta.22 sign-in until logout
 
-New sign-ins have no time limit. The server stores a token digest with `expires_at = 0`, an explicit no-expiry value; daily cleanup removes only expired legacy timed sessions. Signing in on another device does not revoke existing sessions. Connections → Log out removes this device's saved key and session and revokes its token on the server when connected. Access removal still blocks existing sessions immediately.
+New sign-ins have no time limit. The server stores a token digest with `expires_at = 0`, an explicit no-expiry value; scheduled cleanup removes only expired legacy timed sessions. Signing in on another device does not revoke existing sessions. Connections → Log out removes this device's saved key and session and revokes its token on the server when connected. Access removal still blocks existing sessions immediately.
 
 Successful sign-in saves the Torn API key and bank session on the device, isolated by bank origin. Closing the panel, reloading Torn, and restarting Torn PDA restore the same session and key. Keys are excluded from diagnostics and the bank database. Trade checks still require a valid key with suitable Torn API permissions. Clearing device storage removes the saved login.
 
@@ -55,3 +55,15 @@ Beta.31 adds press-and-hold tab reordering (hold about 0.4 seconds, drag, releas
 Beta.32 removes Welcome lobby from the Lender userscript and opens it on Overview. The Borrower userscript keeps Welcome lobby. Saved tab orders automatically exclude the removed lender tab.
 
 Beta.33 simplifies the native panel header to one close (×) button. Closing retains the saved bank login; the BETA Bank launcher reopens the panel.
+
+## Beta.34 phone notifications
+
+Settings lets each lender choose applications, loans, payments, collateral, comments, extensions, transfers, user restrictions, bank/staff changes, and other activity. A master switch and an Include my own actions switch apply across that account’s connected devices. The Send test notification button checks the current device.
+
+On iPhone, open the bank website in Safari, use Share → Add to Home Screen, then open the new Torn Bank icon and sign in. Go to Settings → Enable on this device and allow notifications. The native Torn userscript links to this setup; iOS push permission belongs to the installed bank website. Closing the bank keeps alerts enabled; logging out of the web app disconnects its session’s devices. Settings can disconnect one device or all of the account’s devices.
+
+Alerts are sent for newly saved bank activity even while the website and Torn script are closed. External Torn trades first need to be checked in the bank. Previews contain event types, without borrower names, amounts or API keys. Category changes do not replay older activity. Delivery timing depends on the phone and push service.
+
+Deployment must run `npm run deploy`, which applies `migrations/0002_notifications.sql` before publishing the Worker. This adds separate notification preferences, subscriptions and an event outbox. The Worker generates its VAPID signing key once in D1; it is never returned to clients or included in bank exports. No manual key configuration is required. Saved bank actions and their outbox entries are atomic; delivery runs after actions and retries every five minutes. Expired subscriptions are removed, events are retained for seven days, and delivery rechecks current staff access and session validity. `/api/health` reports `notificationsReady` when the notification tables exist.
+
+The test button’s success means the push service accepted the message; actual receipt must be checked on the phone.

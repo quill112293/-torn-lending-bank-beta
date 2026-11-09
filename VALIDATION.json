@@ -1,10 +1,10 @@
 {
   "channel": "beta",
-  "version": "1.1.0-beta.33",
-  "basedOn": "1.1.0-beta.32",
+  "version": "1.1.0-beta.34",
+  "basedOn": "1.1.0-beta.33",
   "build": "passed",
-  "tests": 142,
-  "workerPackaging": "Worker rebuilt; runtime tests passed. No binding or configuration changes.",
+  "tests": 153,
+  "workerPackaging": "Wrangler deploy --dry-run passed. Both D1 migrations applied locally. Wrangler dev blocked by host uv_interface_addresses error; runtime tests passed.",
   "sessionChecks": [
     "No time limit, including simulated ten-year passage",
     "Scheduled cleanup preserves permanent sessions",
@@ -14,7 +14,7 @@
     "Legacy timed sessions remain supported"
   ],
   "deployment": "Pending Cloudflare automatic deployment of this release",
-  "deviceTesting": "Automated gesture-controller and storage tests passed. Actual Torn PDA/iPhone touch validation pending; local browser executable unavailable.",
+  "deviceTesting": "Actual iPhone Home Screen permission and notification receipt require device setup and remain pending.",
   "lobbyChecks": [
     "Lender script omits Welcome lobby and starts on Overview",
     "Borrower script retains Welcome lobby as its initial page",
@@ -48,5 +48,16 @@
     "Touch/mouse/vertical layout, edge scrolling, cancellation and click suppression tested",
     "Storage unavailable falls back to current-visit order"
   ],
-  "panelChecks": "Removed the Minimize header button; existing accessible close button and launcher retained. No logout or session behavior changed."
+  "panelChecks": "Removed the Minimize header button; existing accessible close button and launcher retained. No logout or session behavior changed.",
+  "notificationChecks": [
+    "Lender-only preferences and subscription management; signing key is not exposed",
+    "Push endpoint allowlist and curve/key validation reject unsupported destinations",
+    "Generated encrypted payload independently decrypted in tests; previews omit private bank details",
+    "Category, master and own-action filters honored; old activity is not replayed",
+    "Atomic state/outbox save, stale revisions and duplicate delivery claims tested",
+    "Failed sends retain cursor for retry; expired subscriptions are removed",
+    "Logout, session expiry and disabled staff prevent further delivery",
+    "Service worker displays visible notifications and opens only the bank origin",
+    "Notification route and D1 migration included in backend fixture"
+  ]
 }

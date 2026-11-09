@@ -1,4 +1,5 @@
 import TB from '../lib/engine.js';
+import {eventStatements} from './push.js';
 import {project, role} from '../lib/operations.js';
 export const OWNER_ID = '3542697';
 // Zero means this session has no time limit. Logout/access revocation still apply.
@@ -17,7 +18,7 @@ export function createServer(env){
   try{return JSON.parse(new TextDecoder().decode(bytes));}catch{fail('Invalid JSON request.');}
  }
  async function loadState(){let row=await database().prepare('SELECT data,revision FROM bank_state WHERE id = ?').bind('main').first();if(!row){const s=TB.newState();s.processedRequests=[];s.extensionRequests=[];s.paymentIntents=[];s.receipts=[];await database().prepare('INSERT OR IGNORE INTO bank_state (id,data,revision) VALUES (?,?,0)').bind('main',JSON.stringify(s)).run();row=await database().prepare('SELECT data,revision FROM bank_state WHERE id = ?').bind('main').first();}const s=JSON.parse(row.data);s.revision=row.revision;s.testDate=TB.today();return s;}
- async function saveState(s,expected){const serialized=JSON.stringify({...s,revision:expected+1});if(new TextEncoder().encode(serialized).length>1500000)fail('Export and archive bank history before adding more records.');const r=await database().prepare('UPDATE bank_state SET data = ?, revision = revision + 1 WHERE id = ? AND revision = ?').bind(serialized,'main',expected).run();if(r.meta.changes!==1)fail('Another person updated the bank. Refresh and review the latest balances before retrying.',409);s.revision=expected+1;}
+ async function saveState(s,expected){const serialized=JSON.stringify({...s,revision:expected+1});if(new TextEncoder().encode(serialized).length>1500000)fail('Export and archive bank history before adding more records.');const before=await database().prepare('SELECT data,revision FROM bank_state WHERE id=?').bind('main').first();if(!before||before.revision!==expected)fail('Another person updated the bank. Refresh and review the latest balances before retrying.',409);const results=await database().batch([database().prepare('UPDATE bank_state SET data = ?, revision = revision + 1 WHERE id = ? AND revision = ?').bind(serialized,'main',expected),...eventStatements(database(),JSON.parse(before.data),s,serialized,expected+1)]);const r=results[0];if(r.meta.changes!==1)fail('Another person updated the bank. Refresh and review the latest balances before retrying.',409);s.revision=expected+1;}
  async function allowed(id){if(id===OWNER_ID)return true;const s=await loadState();if(role(s,id)!=='borrower')return true;return !!(await database().prepare('SELECT torn_id FROM allowed_members WHERE torn_id=?').bind(id).first());}
  async function identity(req){
   const auth=req.headers.get('authorization')||'';if(!/^Bearer [a-f0-9]{64}$/.test(auth))fail('Verify your Torn account to sign in.',401);
