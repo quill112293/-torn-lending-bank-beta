@@ -1,9 +1,9 @@
 {
   "channel": "beta",
-  "version": "1.1.0-beta.29",
-  "basedOn": "1.1.0-beta.28",
+  "version": "1.1.0-beta.30",
+  "basedOn": "1.1.0-beta.29",
   "build": "passed",
-  "tests": 128,
+  "tests": 134,
   "workerPackaging": "Worker rebuilt; runtime tests passed. No binding or configuration changes.",
   "sessionChecks": [
     "No time limit, including simulated ten-year passage",
@@ -33,5 +33,12 @@
     "Loan removal preserves approved application and cannot reopen approval",
     "Collateral date checks and loan funding work after application archival",
     "Funded live-loan protections and ledger preservation retained"
+  ],
+  "manageChecks": [
+    "All 13 categories listed with search and empty states",
+    "Notes, drafts, unassigned receipts, orphan collateral, pending transfers and activity archive independently",
+    "Protected records enforced by removalPlan in client and server",
+    "Archived trade and collateral references stay blocked",
+    "Activity archival does not undo statuses; cash ledger unchanged"
   ]
 }
