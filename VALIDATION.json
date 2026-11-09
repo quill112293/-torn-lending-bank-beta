@@ -1,12 +1,9 @@
 {
   "channel": "beta",
-  "version": "1.1.0-beta.26",
-  "basedOn": "1.1.0-beta.25",
+  "version": "1.1.0-beta.27",
+  "basedOn": "1.1.0-beta.26",
   "build": "passed",
-  "tests": {
-    "passed": 122,
-    "failed": 0
-  },
+  "tests": 124,
   "workerPackaging": "Not repeated for this UI-only update; prior beta.23 dry run passed",
   "sessionChecks": [
     "No time limit, including simulated ten-year passage",
@@ -29,5 +26,5 @@
     "Welcome lobby status display retained"
   ],
   "noticeChecks": "Application detail combines eligibility notices and saved review reasons, displaying each distinct message once. Loan eligibility rules unchanged.",
-  "historyChecks": "Removed date and record-type controls and state from history filters; all beta history remains searchable. Mobile filters stack at full width."
+  "historyChecks": "Category selector replaces individual event selector. Shared filtering used by list, export and clearing; category isolation and scoped clearing covered by tests."
 }
