@@ -39,3 +39,5 @@ Welcome lobby is the first tab after a new or restored sign-in for borrowers and
 Removed the duplicate bank status and staff availability section from Overview. The Welcome lobby retains these details. Overview continues to show account summaries, application and loan search, and loan activity.
 
 Beta.25 removes duplicate application notices when eligibility checks and saved review reasons contain the same message.
+
+Beta.26 simplifies history filters to Activity and Search (plus User in the full history view), removing date-range and Live/TEST selectors. Mobile filters use full-width stacked fields.

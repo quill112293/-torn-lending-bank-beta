@@ -1,7 +1,7 @@
 {
   "channel": "beta",
-  "version": "1.1.0-beta.25",
-  "basedOn": "1.1.0-beta.24",
+  "version": "1.1.0-beta.26",
+  "basedOn": "1.1.0-beta.25",
   "build": "passed",
   "tests": {
     "passed": 122,
@@ -28,5 +28,6 @@
     "Duplicate availability section and unused component removed",
     "Welcome lobby status display retained"
   ],
-  "noticeChecks": "Application detail combines eligibility notices and saved review reasons, displaying each distinct message once. Loan eligibility rules unchanged."
+  "noticeChecks": "Application detail combines eligibility notices and saved review reasons, displaying each distinct message once. Loan eligibility rules unchanged.",
+  "historyChecks": "Removed date and record-type controls and state from history filters; all beta history remains searchable. Mobile filters stack at full width."
 }
