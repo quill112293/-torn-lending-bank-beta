@@ -1,9 +1,9 @@
 {
   "channel": "beta",
-  "version": "1.1.0-beta.35",
-  "basedOn": "1.1.0-beta.34",
+  "version": "1.1.0-beta.36",
+  "basedOn": "1.1.0-beta.35",
   "build": "passed",
-  "tests": 154,
+  "tests": 161,
   "workerPackaging": "Production build and encrypted push delivery pass in local workerd. Runtime regression reproduces the original invalid redirect error and passes with manual redirect handling. The installed workerd uses compatibility date 2026-05-22.",
   "sessionChecks": [
     "No time limit, including simulated ten-year passage",
@@ -61,5 +61,15 @@
     "Notification route and D1 migration included in backend fixture",
     "Cloudflare-compatible manual redirect handling; 301/302/303/307/308 never count as successful delivery",
     "Real workerd runtime sends encrypted requests to a local simulated push service, accepts success responses, and never follows redirects"
-  ]
+  ],
+  "piCollateralChecks": [
+    "Saved PI user status required for proposals, edits, approval and manual confirmation",
+    "Proposed PI payment value included in collateral support, always lender reviewed",
+    "Staff enter accepted amount, payment notes and responsible lender without a Torn trade or API request",
+    "Confirmed value must cover required collateral; duplicate confirmations and invalid inputs rejected",
+    "Cash ledger and repayments unchanged; borrower terms and disbursement checks retained",
+    "Collateral custody and filtered user history retain value and source; borrower projections protect other users",
+    "API persistence, reload and idempotent retries tested; existing waiting loans and archived applications supported"
+  ],
+  "piCollateralUI": "Headless Chromium interaction passed at 393px and 1280px: lender enters PI value and notes, saves with blank optional reference and no trade/API check; borrower cannot confirm but can propose PI value. Mobile modal fits viewport. Actual Torn PDA device testing remains to be confirmed."
 }

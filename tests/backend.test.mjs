@@ -16,6 +16,26 @@ const realFetch=globalThis.fetch;
 globalThis.fetch=async (url,options)=>{assert.equal(new URL(url).hostname,'api.torn.com');const key=options.headers.Authorization.slice(7),id=keys[key];if(!id)return Response.json({error:{error:'Invalid key'}});if(new URL(url).pathname.endsWith('/money'))return Response.json({money:{wallet:987654321,vault:888888888}});return Response.json({profile:{id:Number(id),name:id===OWNER?'Aaron112293':'Tester',status:{state:'Okay'},faction_id:1}});};
 test.after(()=>{globalThis.fetch=realFetch;});
 test('anonymous and forged platform headers cannot read the bank',async()=>{const e=fixture();assert.equal((await call(e,'bank',{extra:{'oai-authenticated-user-id':OWNER}})).status,401);});
+test('PI collateral saves through the bank API without Torn trade access and survives reload',async()=>{
+ const e=fixture(),owner=(await login(e)).data.token;
+ await call(e,'access',{token:owner,body:{action:'invite',id:BORROWER}});
+ const borrower=(await login(e,'borrower')).data.token;
+ const s=(await call(e,'bank',{token:owner})).data.state;
+ TB.person(s,BORROWER).piRto=true;
+ s.loans=[{id:'pi-api-loan',reference:'TLB-PI-API',borrowerId:BORROWER,name:'Tester',product:'bank',principal:100e6,rate:.005,freeDays:0,start:TB.today(),maturity:TB.addDays(TB.today(),60),status:'approved',collateralRequired:10e6,collateralConfirmed:false,payments:[],extensions:[],rules:TB.clone(s.rules),issuer:OWNER}];
+ e.DB.sqlite.prepare('UPDATE bank_state SET data=? WHERE id=?').run(JSON.stringify(s),'main');
+ const data={action:'piCollateral',payload:{id:'pi-api-loan',amount:10e6,description:'PI payment ledger reviewed',holder:OWNER,checked:true},revision:s.revision,requestId:'pi-collateral-api'};
+ const denied=await call(e,'bank',{token:borrower,body:data});assert.equal(denied.status,400);assert.match(denied.data.error,/Staff permission/);
+ const originalFetch=globalThis.fetch;globalThis.fetch=async()=>{throw Error('No external API call is needed for PI collateral');};
+ try{
+  const saved=await call(e,'bank',{token:owner,body:data});assert.equal(saved.status,200,saved.data.error);
+  const retry=await call(e,'bank',{token:owner,body:data});assert.equal(retry.status,200);assert.equal(retry.data.state.collateral.length,1);
+  const reloaded=await call(e,'bank',{token:borrower});assert.equal(reloaded.data.state.loans[0].collateralConfirmed.amount,10e6);
+  assert.equal(reloaded.data.state.collateral[0].kind,'pi_payment');assert.deepEqual(reloaded.data.state.loans[0].payments,[]);
+  const duplicate=await call(e,'bank',{token:owner,body:{...data,revision:saved.data.state.revision,requestId:'pi-second-save'}});
+  assert.equal(duplicate.status,400);assert.match(duplicate.data.error,/awaiting collateral/);
+ }finally{globalThis.fetch=originalFetch;}
+});
 test('owner login uses Torn identity, stores only token digest, and no API key',async()=>{const e=fixture(),r=await login(e);assert.equal(r.status,200);const t=r.data.token;assert.match(t,/^[a-f0-9]{64}$/);const session=e.DB.sqlite.prepare('SELECT * FROM sessions').get();assert.equal(session.token_hash,await digest(t));assert.notEqual(session.token_hash,t);assert.equal((await call(e,'bank',{token:t})).data.role,'owner');const dump=['identities','sessions','bank_state','api_limits'].map(n=>e.DB.sqlite.prepare('SELECT * FROM '+n).all());assert.ok(!JSON.stringify(dump).includes('owner'.padEnd(16,'0')));});
 test('uninvited accounts cannot sign in; owner can invite a tester',async()=>{const e=fixture();assert.equal((await login(e,'borrower')).status,403);const owner=(await login(e)).data.token;assert.equal((await call(e,'access',{token:owner,body:{action:'invite',id:BORROWER}})).status,200);const borrower=(await login(e,'borrower')).data.token;const view=await call(e,'bank',{token:borrower});assert.equal(view.data.role,'borrower');assert.deepEqual(view.data.state.ledger,[]);assert.equal((await call(e,'access',{token:borrower})).status,403);});
 test('revoking invitation blocks an existing session immediately',async()=>{const e=fixture(),o=(await login(e)).data.token;await call(e,'access',{token:o,body:{action:'invite',id:BORROWER}});const b=(await login(e,'borrower')).data.token;await call(e,'access',{token:o,body:{action:'revoke',id:BORROWER}});assert.equal((await call(e,'bank',{token:b})).status,401);});
@@ -160,3 +180,4 @@ test('cleanup removes only expired legacy sessions and preserves permanent and f
  assert.ok(e.DB.sqlite.prepare("SELECT * FROM sessions WHERE token_hash='future'").get());
  assert.equal((await call(e,'bank',{token})).status,200);
 });
+

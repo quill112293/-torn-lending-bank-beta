@@ -1,6 +1,6 @@
 # Torn Lending Bank — BETA
 
-Standalone beta bank. Beta.35 fixes Cloudflare delivery for the adjustable phone notifications in Settings. The lender opens on Overview, borrowers retain Welcome lobby, and sign-in lasts until logout; deployment is tracked separately from source validation.
+Standalone beta bank. Beta.36 adds lender-reviewed PI payment collateral for users with the saved Private Island status. The lender opens on Overview, borrowers retain Welcome lobby, and sign-in lasts until logout; deployment is tracked separately from source validation.
 
 ## Setup
 
@@ -73,3 +73,10 @@ The test button’s success means the push service accepted the message; actual 
 Replaces the unsupported `redirect: "error"` fetch option with Cloudflare-compatible `manual` handling. Redirect responses are not followed or treated as delivered; queued events remain available for retry. Existing subscriptions and preferences are retained. Reload the website and use Send test notification again.
 
 `npm test` now also runs the encrypted push request inside local workerd, using its supported 2026-05-22 compatibility date and a simulated push service. This reproduces the beta.34 runtime error and verifies successful sends and non-followed redirects without sending notifications to a real device.
+
+
+## Beta.36 PI payment collateral
+
+Users with Private Island status saved in Users can propose a PI payment collateral value on an application. It counts toward the preliminary collateral calculation and always requires lender review. For an approved loan awaiting collateral, staff can choose **Record PI payment collateral**, enter the accepted value and valuation notes, select the responsible lender and confirm that the value is available for this loan. A payment/agreement reference is optional; no Torn trade ID or API check is needed. The accepted value must cover the loan's required collateral.
+
+The server checks the borrower's current saved PI status and staff permissions. Application checkboxes alone do not authorize this path. Confirmation is recorded once against the loan with its value, reviewer, responsible lender, time and notes, and appears in collateral custody and user history. It does not add bank cash or repay the loan; funding still requires borrower confirmation and a separate disbursement record. Payment values are entered and reviewed by the lender, not automatically calculated from PI payments. Existing Torn trade verification remains available. No database migration is required.
