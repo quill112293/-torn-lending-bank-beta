@@ -1,6 +1,6 @@
 # Torn Lending Bank — BETA
 
-Standalone beta bank. This beta.22 source update adds sign-in without a time limit; deployment is tracked separately from source validation.
+Standalone beta bank. This beta.23 source update adds the signed-in welcome lobby and retains sign-in without a time limit; deployment is tracked separately from source validation.
 
 ## Setup
 
@@ -29,3 +29,7 @@ New sign-ins have no time limit. The server stores a token digest with `expires_
 Successful sign-in saves the Torn API key and bank session on the device, isolated by bank origin. Closing the panel, reloading Torn, and restarting Torn PDA restore the same session and key. Keys are excluded from diagnostics and the bank database. Trade checks still require a valid key with suitable Torn API permissions. Clearing device storage removes the saved login.
 
 Update the beta Worker and install the beta.22 userscript, then sign in once to create a session without expiry. Legacy timed sessions remain supported during the update; a saved key can renew them. No database migration is required. If logout cannot reach the server, local credentials are still removed and a connection warning explains that server revocation was not confirmed.
+
+## Beta.23 welcome lobby
+
+Welcome lobby is the first tab after a new or restored sign-in for borrowers and bankers. It shows the bank's online/offline status and each enabled banker's name, role, Torn ID, and staff-set availability. It uses the existing authenticated bank refresh; no public status endpoint or additional data exposure is introduced. The Overview tab remains available from the lobby and navigation. Remembered sign-in is unchanged.
