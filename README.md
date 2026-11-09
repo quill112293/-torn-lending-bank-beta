@@ -43,3 +43,5 @@ Beta.25 removes duplicate application notices when eligibility checks and saved 
 Beta.26 simplifies history filters to Activity and Search (plus User in the full history view), removing date-range and Live/TEST selectors. Mobile filters use full-width stacked fields.
 
 Beta.27 groups history into Applications, Loans, Comments & notes, Payments, Collateral, Extensions, User status & restrictions, Funding & transfers, Bank & staff, and Other activity. Category filters apply consistently to the list, export, and selected-history clearing.
+
+Beta.28 removes the separate History navigation tab. Per-user history, categories, search and exports remain in Users. Stored audit records are unchanged.
