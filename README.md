@@ -49,3 +49,5 @@ Beta.28 removes the separate History navigation tab. Per-user history, categorie
 Beta.29 separates Applications and Loans in Manage. Archiving an application preserves its loans; archiving a loan preserves its application while including loan-dependent records. Collateral date verification can use the archived application. Existing funded-live-loan protections, history, archives and ledger preservation remain.
 
 Beta.30 expands Manage to 13 action-record categories, including collateral, trade receipts, comments, drafts, transfers, extensions, cash ledger and activity/status history. Independent cleanup retains an owner archive and consumed references; records supporting posted balances, accepted payments, collateral evidence and agreed extensions remain protected. Archiving history does not undo an action.
+
+Beta.31 adds press-and-hold tab reordering (hold about 0.4 seconds, drag, release). Quick swipes still scroll the mobile row; dragging near an edge reveals off-screen tabs. Order is stored per bank/account/role on this device. Desktop users can also hold and drag or use Alt + arrow keys. New tabs are appended and inaccessible tabs are excluded.

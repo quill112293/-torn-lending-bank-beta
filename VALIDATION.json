@@ -1,9 +1,9 @@
 {
   "channel": "beta",
-  "version": "1.1.0-beta.30",
-  "basedOn": "1.1.0-beta.29",
+  "version": "1.1.0-beta.31",
+  "basedOn": "1.1.0-beta.30",
   "build": "passed",
-  "tests": 134,
+  "tests": 142,
   "workerPackaging": "Worker rebuilt; runtime tests passed. No binding or configuration changes.",
   "sessionChecks": [
     "No time limit, including simulated ten-year passage",
@@ -14,7 +14,7 @@
     "Legacy timed sessions remain supported"
   ],
   "deployment": "Pending Cloudflare automatic deployment of this release",
-  "deviceTesting": "Pending Torn PDA installation and real-device verification",
+  "deviceTesting": "Automated gesture-controller and storage tests passed. Actual Torn PDA/iPhone touch validation pending; local browser executable unavailable.",
   "lobbyChecks": [
     "First signed-in tab for borrower and staff, including restored sessions",
     "Online/offline and banker availability rendering verified",
@@ -40,5 +40,12 @@
     "Protected records enforced by removalPlan in client and server",
     "Archived trade and collateral references stay blocked",
     "Activity archival does not undo statuses; cash ledger unchanged"
+  ],
+  "tabOrderChecks": [
+    "Saved order restored and isolated by bank, user, role and demo",
+    "Unauthorized/removed tabs filtered; new tabs appended",
+    "Tap and quick swipe do not reorder; hold and release commit once",
+    "Touch/mouse/vertical layout, edge scrolling, cancellation and click suppression tested",
+    "Storage unavailable falls back to current-visit order"
   ]
 }
