@@ -51,3 +51,5 @@ Beta.29 separates Applications and Loans in Manage. Archiving an application pre
 Beta.30 expands Manage to 13 action-record categories, including collateral, trade receipts, comments, drafts, transfers, extensions, cash ledger and activity/status history. Independent cleanup retains an owner archive and consumed references; records supporting posted balances, accepted payments, collateral evidence and agreed extensions remain protected. Archiving history does not undo an action.
 
 Beta.31 adds press-and-hold tab reordering (hold about 0.4 seconds, drag, release). Quick swipes still scroll the mobile row; dragging near an edge reveals off-screen tabs. Order is stored per bank/account/role on this device. Desktop users can also hold and drag or use Alt + arrow keys. New tabs are appended and inaccessible tabs are excluded.
+
+Beta.32 removes Welcome lobby from the Lender userscript and opens it on Overview. The Borrower userscript keeps Welcome lobby. Saved tab orders automatically exclude the removed lender tab.

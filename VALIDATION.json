@@ -1,7 +1,7 @@
 {
   "channel": "beta",
-  "version": "1.1.0-beta.31",
-  "basedOn": "1.1.0-beta.30",
+  "version": "1.1.0-beta.32",
+  "basedOn": "1.1.0-beta.31",
   "build": "passed",
   "tests": 142,
   "workerPackaging": "Worker rebuilt; runtime tests passed. No binding or configuration changes.",
@@ -16,10 +16,10 @@
   "deployment": "Pending Cloudflare automatic deployment of this release",
   "deviceTesting": "Automated gesture-controller and storage tests passed. Actual Torn PDA/iPhone touch validation pending; local browser executable unavailable.",
   "lobbyChecks": [
-    "First signed-in tab for borrower and staff, including restored sessions",
-    "Online/offline and banker availability rendering verified",
-    "Disabled bankers omitted",
-    "Existing authenticated refresh used; no public status endpoint"
+    "Lender script omits Welcome lobby and starts on Overview",
+    "Borrower script retains Welcome lobby as its initial page",
+    "Home link, logout reset and demo navigation use the script-specific home tab",
+    "Saved orders filter out unavailable tabs"
   ],
   "overviewChecks": [
     "Duplicate availability section and unused component removed",
