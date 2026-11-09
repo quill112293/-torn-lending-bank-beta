@@ -1,7 +1,8 @@
 import TB from '../lib/engine.js';
 import {project, role} from '../lib/operations.js';
 export const OWNER_ID = '3542697';
-export const SESSION_MS = 12 * 60 * 60 * 1000;
+// Zero means this session has no time limit. Logout/access revocation still apply.
+export const SESSION_NO_EXPIRY = 0;
 export function fail(message,status=400){const error=new Error(message);error.status=status;throw error;}
 export async function digest(value){const hash=await crypto.subtle.digest('SHA-256',new TextEncoder().encode(value));return Array.from(new Uint8Array(hash),v=>v.toString(16).padStart(2,'0')).join('');}
 export function token(){return Array.from(crypto.getRandomValues(new Uint8Array(32)),v=>v.toString(16).padStart(2,'0')).join('');}
@@ -21,7 +22,7 @@ export function createServer(env){
  async function identity(req){
   const auth=req.headers.get('authorization')||'';if(!/^Bearer [a-f0-9]{64}$/.test(auth))fail('Verify your Torn account to sign in.',401);
   const hash=await digest(auth.slice(7));const session=await database().prepare('SELECT torn_id,expires_at FROM sessions WHERE token_hash=?').bind(hash).first();
-  if(!session||session.expires_at<=Date.now())fail('Your session ended. Verify your Torn account again.',401);
+  if(!session||(session.expires_at!==SESSION_NO_EXPIRY&&session.expires_at<=Date.now()))fail('Your session ended. Verify your Torn account again.',401);
   if(!await allowed(session.torn_id))fail('The owner has not enabled bank access for this Torn account.',403);
   const user=await database().prepare('SELECT torn_id,name,profile,verified_at FROM identities WHERE id = ?').bind('torn:'+session.torn_id).first();
   if(!user)fail('Verify your Torn account again.',401);
@@ -34,3 +35,4 @@ export function createServer(env){
  function flagConfirmedProfile(s,profile,actorId){if(profile.status?.state!=='Federal')return false;const target=String(profile.id),p=TB.person(s,target),signature=JSON.stringify([profile.status.description,profile.status.details,profile.status.until]);if(p.flags.some(f=>f.cause==='ban'&&f.signature===signature))return false;s.actorId=actorId;s.testDate=TB.today();p.flags.push({id:TB.uid('FLAG'),cause:'ban',signature,reason:'Torn API reports Federal: '+TB.text(profile.status.description,300),created:TB.today(),checkedAt:new Date().toISOString()});TB.log(s,'Confirmed Torn ban',target);return true;}
  return {database,response,body,loadState,saveState,allowed,identity,view,rateLimit,torn,ownKey,flagConfirmedProfile};
 }
+

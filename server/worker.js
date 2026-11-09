@@ -1,6 +1,6 @@
 import TB from '../lib/engine.js';
 import {role} from '../lib/operations.js';
-import {createServer,OWNER_ID,SESSION_MS,digest,token,fail} from './context.js';
+import {createServer,OWNER_ID,SESSION_NO_EXPIRY,digest,token,fail} from './context.js';
 import {route as bank} from '../routes/bank.ts';
 import {route as check} from '../routes/check.ts';
 import {route as trades} from '../routes/trades.ts';
@@ -18,7 +18,7 @@ export async function handle(request,env){
  let result;const srv=createServer(env);const {database,response,body,identity,rateLimit,loadState,saveState,allowed,torn,flagConfirmedProfile}=srv;
  try{
   if(request.method==='OPTIONS')result=new Response(null,{status:204});
-  else if(path==='/api/health'&&request.method==='GET')result=response({ok:true,version:'1.1.0-beta.21'});
+  else if(path==='/api/health'&&request.method==='GET')result=response({ok:true,version:'1.1.0-beta.22'});
   else if(path==='/api/link'&&request.method==='POST'){
    const ip=request.headers.get('cf-connecting-ip')||'local';await rateLimit('login:'+await digest(ip),5);
    const a=await body(request);const p=(await torn(a.key,'user/profile')).profile;
@@ -27,9 +27,10 @@ export async function handle(request,env){
    const stamp=new Date().toISOString(),slim={id:p.id,name:p.name,faction_id:p.faction_id,status:p.status,checkedAt:stamp};
    await database().prepare('INSERT INTO identities (id,torn_id,name,profile,verified_at) VALUES (?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET name=excluded.name,profile=excluded.profile,verified_at=excluded.verified_at').bind('torn:'+id,id,p.name,JSON.stringify(slim),stamp).run();
    const s=await loadState();if(flagConfirmedProfile(s,p,id))await saveState(s,s.revision);
-   const bearer=token(),expires=Date.now()+SESSION_MS;
-   // Rotate this account's login; store only a digest of the new session token.
-   await database().batch([database().prepare('DELETE FROM sessions WHERE torn_id=? OR expires_at<=?').bind(id,Date.now()),database().prepare('INSERT INTO sessions(token_hash,torn_id,expires_at) VALUES(?,?,?)').bind(await digest(bearer),id,expires)]);
+   const bearer=token(),expires=SESSION_NO_EXPIRY;
+   // Keep other devices signed in. Only legacy timed sessions are cleaned up here.
+   // Store the token digest; explicit logout revokes just the requesting session.
+   await database().batch([database().prepare('DELETE FROM sessions WHERE expires_at>0 AND expires_at<=?').bind(Date.now()),database().prepare('INSERT INTO sessions(token_hash,torn_id,expires_at) VALUES(?,?,?)').bind(await digest(bearer),id,expires)]);
    result=response({ok:true,id:p.id,name:p.name,token:bearer,expiresAt:expires});
   }else if(path==='/api/logout'&&request.method==='POST'){
    const u=await identity(request);await body(request);await database().prepare('DELETE FROM sessions WHERE token_hash=?').bind(u.sessionHash).run();result=response({ok:true});
@@ -65,4 +66,5 @@ export function validateImport(s){
  if(new Set(s.staff.map(p=>p.id)).size!==s.staff.length)fail('Duplicate staff records.');
  TB.validateRules(s.rules);for(const loan of s.loans){TB.balance(loan,TB.today());if(!loan.id||!/^\d{1,10}$/.test(loan.borrowerId))fail('Invalid loan record.');}
 }
-export default {fetch:handle,async scheduled(_event,env){await env.DB.batch([env.DB.prepare('DELETE FROM sessions WHERE expires_at<=?').bind(Date.now()),env.DB.prepare('DELETE FROM api_limits WHERE bucket<?').bind(Math.floor(Date.now()/60000)-2)]);}};
+export default {fetch:handle,async scheduled(_event,env){await env.DB.batch([env.DB.prepare('DELETE FROM sessions WHERE expires_at>0 AND expires_at<=?').bind(Date.now()),env.DB.prepare('DELETE FROM api_limits WHERE bucket<?').bind(Math.floor(Date.now()/60000)-2)]);}};
+

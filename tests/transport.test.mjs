@@ -1,7 +1,7 @@
 import test, {afterEach} from 'node:test';
 import assert from 'node:assert/strict';
 import {createTransport} from '../src/transport.js';
-import {createSessionStore} from '../src/session-store.js';
+import {createSessionStore, validSession} from '../src/session-store.js';
 import {customKeyLink} from '../src/key-link.js';
 
 const origin = 'https://example-bank.workers.dev';
@@ -388,4 +388,37 @@ test('logout during renewal prevents credentials from being restored', async () 
   await transport.logout();gate.finish(json(saved()));
   await assert.rejects(pending,/login changed/);
   assert.equal(transport.getSavedKey(),'');assert.equal(store.value(),null);
+});
+
+
+test('permanent login and key survive years, reloads and network failures without renewal', async t => {
+ const calls=bridge(),store=memory(),started=Date.now();
+ globalThis.PDA_httpPost=async(url,headers,body)=>{calls.push({url,headers,body});return json({...saved(),expiresAt:0});};
+ const first=createTransport(origin,{native:true,store});
+ await first.request('link',{key:apiKey},{remember:true});
+ assert.equal(store.value().expiresAt,0);
+ for(const elapsed of [13*3600000,31*86400000,10*365*86400000]) {
+   t.mock.method(Date,'now',()=>started+elapsed);
+   const reopened=createTransport(origin,{native:true,store});
+   await reopened.request('bank');
+   assert.equal(reopened.hasSession(),true);
+   assert.equal(reopened.getSavedKey(),apiKey);
+ }
+ assert.equal(calls.filter(c=>c.url.endsWith('/link')).length,1);
+ const reopened=createTransport(origin,{native:true,store});
+ globalThis.PDA_httpGet=async()=>{throw Error('offline');};
+ await assert.rejects(reopened.request('bank'),/Connection interrupted/);
+ assert.equal(reopened.hasSession(),true);assert.equal(store.value().expiresAt,0);
+ await reopened.logout();
+ assert.equal(store.value(),null);assert.equal(reopened.getSavedKey(),'');
+ const afterLogout=createTransport(origin,{native:true,store});await afterLogout.ready;
+ assert.equal(afterLogout.canRestore(),false);
+});
+
+test('no-expiry sessions still require a valid token, matching bank, and explicit zero expiry',()=>{
+ const permanent={origin,token,expiresAt:0};
+ assert.equal(validSession(permanent,origin),true);
+ for(const patch of [{token:'invalid'},{origin:'https://other.workers.dev'},{expiresAt:null},{expiresAt:undefined},{expiresAt:'0'},{expiresAt:NaN},{expiresAt:Infinity},{expiresAt:-1}]) {
+   assert.equal(validSession({...permanent,...patch},origin),false);
+ }
 });

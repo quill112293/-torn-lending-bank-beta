@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {DatabaseSync} from 'node:sqlite';
 import {readFile} from 'node:fs/promises';
-import {handle,validateImport} from '../dist/worker.mjs';
+import worker,{handle,validateImport} from '../dist/worker.mjs';
 import TB from '../lib/engine.js';
 import {digest} from '../server/context.js';
 const schema=await readFile(new URL('../migrations/0001_bank.sql',import.meta.url),'utf8');
@@ -19,8 +19,16 @@ test('anonymous and forged platform headers cannot read the bank',async()=>{cons
 test('owner login uses Torn identity, stores only token digest, and no API key',async()=>{const e=fixture(),r=await login(e);assert.equal(r.status,200);const t=r.data.token;assert.match(t,/^[a-f0-9]{64}$/);const session=e.DB.sqlite.prepare('SELECT * FROM sessions').get();assert.equal(session.token_hash,await digest(t));assert.notEqual(session.token_hash,t);assert.equal((await call(e,'bank',{token:t})).data.role,'owner');const dump=['identities','sessions','bank_state','api_limits'].map(n=>e.DB.sqlite.prepare('SELECT * FROM '+n).all());assert.ok(!JSON.stringify(dump).includes('owner'.padEnd(16,'0')));});
 test('uninvited accounts cannot sign in; owner can invite a tester',async()=>{const e=fixture();assert.equal((await login(e,'borrower')).status,403);const owner=(await login(e)).data.token;assert.equal((await call(e,'access',{token:owner,body:{action:'invite',id:BORROWER}})).status,200);const borrower=(await login(e,'borrower')).data.token;const view=await call(e,'bank',{token:borrower});assert.equal(view.data.role,'borrower');assert.deepEqual(view.data.state.ledger,[]);assert.equal((await call(e,'access',{token:borrower})).status,403);});
 test('revoking invitation blocks an existing session immediately',async()=>{const e=fixture(),o=(await login(e)).data.token;await call(e,'access',{token:o,body:{action:'invite',id:BORROWER}});const b=(await login(e,'borrower')).data.token;await call(e,'access',{token:o,body:{action:'revoke',id:BORROWER}});assert.equal((await call(e,'bank',{token:b})).status,401);});
-test('new login rotates old session and logout revokes the new one',async()=>{const e=fixture(),first=(await login(e)).data.token,second=(await login(e)).data.token;assert.equal((await call(e,'bank',{token:first})).status,401);assert.equal((await call(e,'logout',{token:second,body:{}})).status,200);assert.equal((await call(e,'bank',{token:second})).status,401);});
-test('expired session cannot read records',async()=>{const e=fixture(),t=(await login(e)).data.token;e.DB.sqlite.exec('UPDATE sessions SET expires_at=0');assert.equal((await call(e,'bank',{token:t})).status,401);});
+test('multiple devices stay signed in and logout revokes only the chosen device',async()=>{
+ const e=fixture(),first=(await login(e)).data.token,second=(await login(e)).data.token;
+ assert.notEqual(first,second);
+ assert.equal((await call(e,'bank',{token:first})).status,200);
+ assert.equal((await call(e,'bank',{token:second})).status,200);
+ assert.equal((await call(e,'logout',{token:second,body:{}})).status,200);
+ assert.equal((await call(e,'bank',{token:second})).status,401);
+ assert.equal((await call(e,'bank',{token:first})).status,200);
+});
+test('expired legacy session cannot read records',async()=>{const e=fixture(),t=(await login(e)).data.token;e.DB.sqlite.exec('UPDATE sessions SET expires_at=1');assert.equal((await call(e,'bank',{token:t})).status,401);});
 test('cross-origin controls allow Torn and reject unexpected origins',async()=>{const e=fixture();const r=await call(e,'health');assert.equal(r.headers.get('access-control-allow-origin'),'https://www.torn.com');assert.equal((await call(e,'health',{origin:'https://attacker.example'})).status,403);});
 test('login rate limit applies before Torn API requests',async()=>{const e=fixture();for(let i=0;i<5;i++)await login(e);assert.equal((await login(e)).status,429);});
 test('borrower cannot change program rules or lift a restriction',async()=>{const e=fixture(),o=(await login(e)).data.token;await call(e,'access',{token:o,body:{action:'invite',id:BORROWER}});const b=(await login(e,'borrower')).data.token,v=(await call(e,'bank',{token:b})).data;for(const action of ['rules','lift']){const r=await call(e,'bank',{token:b,body:{action,payload:{rules:v.state.rules,borrowerId:BORROWER},revision:v.state.revision,requestId:action}});assert.equal(r.status,400);assert.match(r.data.error,/owner/i);}});
@@ -125,4 +133,30 @@ test('every beta invitation supplies a user card before applying and gains verif
  let members=(await call(e,'access',{token:owner})).data.members;assert.equal(members.length,1);assert.equal(members[0].torn_id,BORROWER);assert.equal(members[0].name,null);
  await login(e,'borrower');members=(await call(e,'access',{token:owner})).data.members;assert.equal(members[0].name,'Tester');assert.equal((await call(e,'bank',{token:owner})).data.state.applications.length,0);
  const s=(await call(e,'bank',{token:owner})).data.state;const assigned=await call(e,'bank',{token:owner,body:{action:'userStatus',payload:{id:BORROWER,testParticipant:true,assignedTiers:{faction:1},oilEligible:true,piRto:true,reason:'Beta participant setup'},revision:s.revision,requestId:'beta-user-card'}});assert.equal(assigned.status,200,assigned.data.error);assert.equal(assigned.data.state.borrowers[BORROWER].testParticipant,true);
+});
+
+
+test('login stays valid years later through scheduled cleanup until explicit logout',async t=>{
+ const e=fixture(),r=await login(e),token=r.data.token,started=Date.now();
+ assert.equal(r.data.expiresAt,0);
+ assert.equal(e.DB.sqlite.prepare('SELECT expires_at FROM sessions').get().expires_at,0);
+ t.mock.method(Date,'now',()=>started+10*365*86400000);
+ await worker.scheduled({},e);
+ assert.equal((await call(e,'bank',{token})).status,200);
+ // A new device login also runs cleanup without expiring existing permanent sessions.
+ const second=(await login(e)).data.token;
+ assert.equal((await call(e,'bank',{token})).status,200);
+ assert.equal((await call(e,'logout',{token,body:{}})).status,200);
+ assert.equal((await call(e,'bank',{token})).status,401);
+ assert.equal((await call(e,'bank',{token:second})).status,200);
+});
+
+test('cleanup removes only expired legacy sessions and preserves permanent and future sessions',async()=>{
+ const e=fixture(),token=(await login(e)).data.token;
+ const insert=e.DB.sqlite.prepare('INSERT INTO sessions(token_hash,torn_id,expires_at) VALUES(?,?,?)');
+ insert.run('old',OWNER,1);insert.run('future',OWNER,Date.now()+3600000);
+ await worker.scheduled({},e);
+ assert.equal(e.DB.sqlite.prepare("SELECT * FROM sessions WHERE token_hash='old'").get(),undefined);
+ assert.ok(e.DB.sqlite.prepare("SELECT * FROM sessions WHERE token_hash='future'").get());
+ assert.equal((await call(e,'bank',{token})).status,200);
 });

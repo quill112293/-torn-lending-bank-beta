@@ -1,12 +1,21 @@
 {
   "channel": "beta",
-  "basedOn": "1.1.0-beta.19",
+  "version": "1.1.0-beta.22",
+  "basedOn": "1.1.0-beta.21",
   "build": "passed",
   "tests": {
-    "passed": 113,
+    "passed": 122,
     "failed": 0
   },
-  "isolationChecks": "namespace, origin, update URL, host ID and missing-DB deployment rejection passed",
-  "deployment": "pending dedicated D1 ID and Cloudflare setup",
-  "deviceTesting": "pending"
+  "workerPackaging": "wrangler deploy --dry-run passed",
+  "sessionChecks": [
+    "No time limit, including simulated ten-year passage",
+    "Scheduled cleanup preserves permanent sessions",
+    "Second-device login preserves first-device session",
+    "Logout revokes only the selected session and clears local credentials",
+    "Invitation revocation still blocks existing sessions",
+    "Legacy timed sessions remain supported"
+  ],
+  "deployment": "Pending Cloudflare deployment; live health last reported beta.19",
+  "deviceTesting": "Pending Torn PDA installation and real-device verification"
 }

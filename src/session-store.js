@@ -17,5 +17,7 @@ export function createSessionStore(origin, {native = false} = {}) {
 
 export function validSession(value, origin, now = Date.now()) {
   return !!value && value.origin === origin && /^[a-f0-9]{64}$/.test(value.token) &&
-    Number.isFinite(value.expiresAt) && value.expiresAt > now && value.expiresAt <= now + 12 * 60 * 60 * 1000;
+    // New sessions have no expiry. Accept unexpired legacy sessions during updates.
+    (value.expiresAt === 0 || (Number.isFinite(value.expiresAt) && value.expiresAt > now && value.expiresAt <= now + 12 * 60 * 60 * 1000));
 }
+
