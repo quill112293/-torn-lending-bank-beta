@@ -53,3 +53,5 @@ Beta.30 expands Manage to 13 action-record categories, including collateral, tra
 Beta.31 adds press-and-hold tab reordering (hold about 0.4 seconds, drag, release). Quick swipes still scroll the mobile row; dragging near an edge reveals off-screen tabs. Order is stored per bank/account/role on this device. Desktop users can also hold and drag or use Alt + arrow keys. New tabs are appended and inaccessible tabs are excluded.
 
 Beta.32 removes Welcome lobby from the Lender userscript and opens it on Overview. The Borrower userscript keeps Welcome lobby. Saved tab orders automatically exclude the removed lender tab.
+
+Beta.33 simplifies the native panel header to one close (×) button. Closing retains the saved bank login; the BETA Bank launcher reopens the panel.
