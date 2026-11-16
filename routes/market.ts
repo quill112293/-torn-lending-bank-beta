@@ -26,20 +26,47 @@ export async function marketQuote(itemId:number,requestUrl:string,{allowSavedEst
 }
 
 async function fetchMarketQuote(itemId:number){
- const pages=new Map<number,any>();
  const deadline=AbortSignal.timeout(12000);
+ try{
+  return await fetchListingQuote(itemId,deadline);
+ }catch(primaryError){
+  try{
+   const shortUrl='https://weav3r.dev/api/marketplace/'+itemId+'?limit=1';
+   const item=await fetchWeav3rItem(shortUrl,itemId,deadline);
+   if(!usablePrice(item.market_price))throw Error('Weav3r did not provide a reference price.');
+   return makeQuote(itemId,item,null,item.market_price,'Torn market price reported by Weav3r');
+  }catch(retryError){
+   throw Error(primaryError.message+' Simple Weav3r lookup: '+retryError.message);
+  }
+ }
+}
+
+function usablePrice(price){
+ return Number.isSafeInteger(price)&&price>1;
+}
+
+async function fetchWeav3rItem(url:string,itemId:number,signal:AbortSignal){
+ const result=await fetch(url,{signal});
+ if(!result.ok)throw Error('Price feed returned HTTP '+result.status+'.');
+ const item=await result.json();
+ if(Number(item?.item_id)!==itemId||!item.item_name)throw Error('Market data did not match this Torn item.');
+ return item;
+}
+
+function makeQuote(itemId:number,item,median:number|null,reference:number,source:string){
+ return {itemId,name:item.item_name,median,reference,listingCount:Number(item.total_count)||0,source,checkedAt:new Date().toISOString(),generatedAt:item.generated_at,credit90:Math.floor(reference*.9)};
+}
+
+async function fetchListingQuote(itemId:number,deadline:AbortSignal){
+ const pages=new Map<number,Promise<any>>();
  async function get(page:number){
   if(pages.has(page))return pages.get(page);
   const url='https://weav3r.dev/api/marketplace/'+itemId+'?limit=100&page='+page+'&sortField=price&sortDirection=asc';
-  const request=fetch(url,{signal:deadline}).then(async result=>{
-   if(!result.ok)throw Error('Price feed returned HTTP '+result.status+'.');
-   return result.json();
-  });
+  const request=fetchWeav3rItem(url,itemId,deadline);
   pages.set(page,request);
   return request;
  }
  const first=await get(1);
- if(Number(first.item_id)!==itemId||!first.item_name)throw Error('Market data did not match this Torn item.');
  const count=Number(first.total_count);
  let reference,median=null;
  let source='Weav3r public listing unit-price median (unweighted)';
@@ -57,11 +84,11 @@ async function fetchMarketQuote(itemId:number){
   reference=Math.floor(median);
  }catch(error){
   // The feed includes a Torn market reference even when its bazaar pages disagree.
-  if(!Number.isSafeInteger(first.market_price)||first.market_price<=1)throw error;
+  if(!usablePrice(first.market_price))throw error;
   reference=first.market_price;
   source='Torn market price reported by Weav3r';
  }
- return {itemId,name:first.item_name,median,reference,listingCount:count,source,checkedAt:new Date().toISOString(),generatedAt:first.generated_at,credit90:Math.floor(reference*.9)};
+ return makeQuote(itemId,first,median,reference,source);
 }
 
 export async function loadTornItemCatalog(torn, key:string){

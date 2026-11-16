@@ -408,3 +408,27 @@ test('Torn fallback uses the sign-in catalog permission instead of the rejected 
   assert.equal((await call(env,'market',{token,body})).status,400);
  }finally{globalThis.fetch=previousFetch;}
 });
+
+test('Weav3r retries a quote with no listings or reference using its simpler item request',async()=>{
+ const env=fixture(),token=(await login(env)).data.token;
+ const previousFetch=globalThis.fetch,requests=[];
+ let fallbackItem=206;
+ globalThis.fetch=async url=>{
+  const parsed=new URL(url);
+  assert.equal(parsed.hostname,'weav3r.dev');
+  requests.push(parsed.searchParams.get('limit'));
+  if(parsed.searchParams.get('limit')==='100')return Response.json({item_id:206,item_name:'Xanax',total_count:0,market_price:0});
+  return Response.json({item_id:fallbackItem,item_name:'Xanax',total_count:199,market_price:838912,listings:[{price:1}]});
+ };
+ try{
+  const quote=await call(env,'market?id=206',{token});
+  assert.equal(quote.status,200,quote.data.error);
+  assert.deepEqual(requests,['100','1']);
+  assert.equal(quote.data.reference,838912);
+  assert.equal(quote.data.median,null);
+  fallbackItem=207;
+  const wrongItem=await call(env,'market?id=206',{token});
+  assert.equal(wrongItem.status,400);
+  assert.match(wrongItem.data.error,/Simple Weav3r lookup: Market data did not match/);
+ }finally{globalThis.fetch=previousFetch;}
+});
