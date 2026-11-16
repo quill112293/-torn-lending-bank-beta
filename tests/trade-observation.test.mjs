@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {currentTornAccount,observedTrade,chooseTradeControls,parseTradeHandoff,readTradeResume,rememberTradeResume} from '../src/trade-handoff.js';
+import {currentTornAccount,observedTrade,chooseTradeControls,parseTradeHandoff,readTradeResume,rememberTradeResume,clearTradeResume} from '../src/trade-handoff.js';
 
 const BORROWER='1234567',RECIPIENT='3542697',OTHER='7654321';
 const REFERENCE='TLB-0BE1AA730D7B',TRADE_ID='11687899';
@@ -126,6 +126,18 @@ test('trade observation matches the exact reference, recipient and numeric view 
  assert.deepEqual(observedTrade(document,intent,page),observation);
 });
 
+test('replacement observation skips every retired native ID even when earlier attempts share the reference and recipient',()=>{
+ const document=dom(),replacement={...intent,excludedNativeTradeIds:['100','101']};
+ addList(document,[tradeRow(document,{id:'100'}),tradeRow(document,{id:'101'}),tradeRow(document)]);
+ assert.deepEqual(observedTrade(document,replacement,page),observation);
+ const oldOnly=dom();addList(oldOnly,[tradeRow(oldOnly,{id:'100'}),tradeRow(oldOnly,{id:'101'})]);
+ assert.equal(observedTrade(oldOnly,replacement,page),null);
+ const retiredDetail=dom();detail(retiredDetail,{id:'100'});
+ assert.equal(observedTrade(retiredDetail,replacement,page+'#step=view&ID=100'),null);
+ const currentDetail=dom();detail(currentDetail);
+ assert.deepEqual(observedTrade(currentDetail,replacement,page+'#step=view&ID='+TRADE_ID),observation);
+});
+
 test('trade observation rejects an incorrect or non-exact reference, recipient or native ID',()=>{
  for(const change of [{reference:'TLB-OTHER'},{reference:REFERENCE+' extra'},{reference:'Mention '+REFERENCE},{recipient:OTHER},{id:'0'},{id:'11687899junk'},{id:'12345678901234567'}]){
   const document=dom();addList(document,[tradeRow(document,change)]);
@@ -248,8 +260,18 @@ test('handoff parsing restricts origin, path, port, unique parameters and bounde
 });
 
 function memoryStorage(){
- const entries=new Map();return {entries,getItem:key=>entries.get(key)??null,setItem:(key,value)=>entries.set(key,value)};
+ const entries=new Map();return {entries,getItem:key=>entries.get(key)??null,setItem:(key,value)=>entries.set(key,value),removeItem:key=>entries.delete(key)};
 }
+
+test('a stale handoff only clears its own observation resume and preserves a replacement attempt',()=>{
+ const storage=memoryStorage(),old={loanId:intent.loanId,intentId:intent.intentId,recipientId:RECIPIENT},replacement={...old,intentId:'TRADE-replacement'};
+ rememberTradeResume(storage,replacement);
+ assert.equal(clearTradeResume(storage,old),false);
+ assert.deepEqual(readTradeResume(storage,page),replacement);
+ assert.equal(clearTradeResume(storage,replacement),true);
+ assert.equal(readTradeResume(storage,page),null);
+ assert.equal(clearTradeResume(storage,replacement),false);
+});
 test('trade observation resume storage persists only public identifiers and validates them on read',()=>{
  const storage=memoryStorage(),handoff={loanId:intent.loanId,intentId:intent.intentId,recipientId:RECIPIENT};
  assert.equal(rememberTradeResume(storage,{...handoff,token:'session-secret',apiKey:'torn-api-secret',reference:REFERENCE,borrowerId:BORROWER}),true);

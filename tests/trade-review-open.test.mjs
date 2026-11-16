@@ -30,6 +30,15 @@ test('after observed creation the existing trade opens on the same Torn origin w
  }
 });
 
+test('an earlier creation result cannot open its review from a replacement handoff URL',()=>{
+ const f=fixture('https://www.torn.com/trade.php#step=start&userID=3542697&tlbLoan=LOAN-1&tlbIntent=TRADE-replacement');
+ assert.equal(f.run({recipientId:'3542697'}),false);
+ assert.equal(f.events.length,0);assert.equal(f.values.size,0);assert.equal(f.navigations.length,0);
+ assert.equal(f.run({intentId:'TRADE-replacement',recipientId:'3542697',uiTradeId:'999'}),true);
+ assert.equal(f.events.length,1);assert.equal(f.events[0].detail.intentId,'TRADE-replacement');
+ assert.deepEqual(f.navigations,['https://www.torn.com/trade.php#step=view&ID=999']);
+});
+
 test('withdrawn, funded, unconfirmed, foreign-account and unrelated-page results never open a review',()=>{
  for(const changes of [{status:'claimed'},{status:'cancelled'},{cancellationRequired:true},{reportedAfterFunding:true},{borrowerId:'invalid'},{uiTradeId:'javascript:bad'}]){
   const f=fixture();assert.equal(f.run(changes),false);assert.equal(f.events.length,0);assert.equal(f.values.size,0);assert.equal(f.navigations.length,0);

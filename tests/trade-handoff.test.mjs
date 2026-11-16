@@ -42,7 +42,7 @@ function scenario(reference='TLB-0BE1AA730D7B',options={}){
   submit(value){steps.push('initiate');assert.equal(value.reference,reference);submits++;},
   async waitForResult(){steps.push('observe');await options.beforeResult?.(fixture);return options.result===undefined?fixture.observation():options.result;}
  };
- fixture.run=()=>runTradeHandoff({handoff,transport:fixture.transport,page:fixture.page,now:()=>clock+1,requestId:()=>`handoff-${++sequence}`,onStatus:update=>statuses.push(clone(update))});
+ fixture.run=()=>runTradeHandoff({handoff,transport:fixture.transport,page:fixture.page,now:options.now||(()=>clock+1),requestId:()=>`handoff-${++sequence}`,onStatus:update=>statuses.push(clone(update))});
  fixture.resume=()=>resumeTradeObservation({handoff,transport:fixture.transport,page:fixture.page,requestId:()=>`resume-${++sequence}`,onStatus:update=>statuses.push(clone(update))});
  return fixture;
 }
@@ -98,6 +98,15 @@ test('a changed form after claim publishes claimed recovery state and cannot be 
  assert.equal(f.intent().status,'claimed');assert.equal(f.submits,0);
  assert.equal(f.statuses.at(-1).status,'claimed');assert.ok(f.statuses.at(-1).intent.claimedAt);
  await assert.rejects(f.run(),/already attempted/);assert.equal(f.submits,0);assert.equal(f.writes.length,1);
+});
+
+test('a delayed claim response cannot submit after the creation window expires and replacement becomes possible',async()=>{
+ let now=clock+1;
+ const f=scenario(undefined,{now:()=>now,afterClaim(){now=clock+120001;}});
+ await assert.rejects(f.run(),/setup expired while/);
+ assert.equal(f.intent().status,'claimed');assert.equal(f.submits,0);
+ assert.deepEqual(f.writes.map(write=>write.action),['claimCollateralTrade']);
+ assert.equal(f.statuses.at(-1).status,'claimed');
 });
 
 test('native user initiation during the bank claim is observed without a second helper click',async()=>{
@@ -160,6 +169,53 @@ test('a claim reported after recorded funding only adds the observed link and ne
 test('a remembered prepared intent can never initiate or report from observation-only resume',async()=>{
  const f=scenario();await assert.rejects(f.resume(),/no confirmed creation attempt/);
  assert.equal(f.submits,0);assert.deepEqual(f.steps,[]);assert.deepEqual(f.writes,[]);
+});
+
+test('replacement handoffs carry retired native IDs from every previous attempt into native observation',async()=>{
+ const f=scenario('TLB-FUTURE-LOAN');
+ f.state.loans[0].collateralTradeHistory=[
+  {intent:{intentId:'TRADE-old-1',uiTradeId:'101'},flow:{nativeTradeId:'101',apiTradeId:'9001'}},
+  {intent:{intentId:'TRADE-old-2',uiTradeId:'102'},flow:{nativeTradeId:'103',apiTradeId:'9002'}}
+ ];
+ const seen=[];
+ const waitForStart=f.page.waitForStart,waitForResult=f.page.waitForResult;
+ f.page.waitForStart=async intent=>{seen.push(clone(intent.excludedNativeTradeIds));return waitForStart(intent);};
+ f.page.waitForResult=async intent=>{seen.push(clone(intent.excludedNativeTradeIds));return waitForResult(intent);};
+ await f.run();
+ assert.deepEqual(seen,[['101','102','103'],['101','102','103']]);
+ assert.equal(f.intent().uiTradeId,'11687899');assert.equal(f.submits,1);
+ assert.equal(f.intent().excludedNativeTradeIds,undefined,'retired IDs are observation context and not written into the new intent');
+ assert.equal(f.state.loans[0].collateralTradeHistory.length,2);
+});
+
+test('an earlier observed trade cannot be recorded as the replacement even if a page adapter returns it',async()=>{
+ const f=scenario(undefined,{existing:true});
+ f.state.loans[0].collateralTradeHistory=[{intent:{uiTradeId:'11687899'}}];
+ await assert.rejects(f.run(),/earlier attempt/);
+ assert.equal(f.submits,0);assert.deepEqual(f.writes.map(write=>write.action),['claimCollateralTrade']);
+ assert.equal(f.intent().uiTradeId,undefined);
+});
+
+test('old handoff links and saved observation resumes cannot act after the loan has a replacement intent',async()=>{
+ for(const method of ['run','resume']){
+  const f=scenario();f.intent().intentId='TRADE-replacement';
+  await assert.rejects(f[method](),error=>{assert.equal(error.code,'trade_setup_changed');return true;});
+  assert.equal(f.submits,0);assert.deepEqual(f.writes,[]);assert.deepEqual(f.steps,[]);
+ }
+});
+
+test('a late native result from a retired attempt cannot overwrite or reopen the replacement',async()=>{
+ const f=scenario(undefined,{beforeResult(f){
+  const loan=f.state.loans[0];loan.collateralTradeHistory=[{intent:clone(loan.collateralTrade)}];
+  loan.collateralTrade={...loan.collateralTrade,intentId:'TRADE-new',status:'prepared'};delete loan.collateralTrade.claimedAt;
+  f.state.revision++;
+ }});
+ await assert.rejects(f.run(),error=>{assert.equal(error.code,'trade_setup_changed');return true;});
+ assert.equal(f.submits,1);assert.deepEqual(f.writes.map(write=>write.action),['claimCollateralTrade']);
+ assert.equal(f.intent().intentId,'TRADE-new');assert.equal(f.intent().status,'prepared');assert.equal(f.intent().uiTradeId,undefined);
+ assert.equal(f.statuses.some(update=>update.status==='recorded'),false);
+ await assert.rejects(f.resume(),/replaced or changed/);
+ assert.equal(f.submits,1);assert.equal(f.writes.length,1);
 });
 
 // Explicit native form fixture, grounded in Torn's trade_initiate.js:

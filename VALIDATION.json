@@ -1,10 +1,10 @@
 {
   "channel": "beta",
-  "version": "1.1.0-beta.67",
-  "basedOn": "1.1.0-beta.66",
+  "version": "1.1.0-beta.68",
+  "basedOn": "1.1.0-beta.67",
   "build": "passed",
-  "tests": 429,
-  "workerPackaging": "Production build and Wrangler 4.92.0 deploy --dry-run passed against the configured beta Worker and its dedicated database binding. Encrypted push delivery passed in local workerd with the existing 2026-05-22 runtime-test compatibility date.",
+  "tests": 473,
+  "workerPackaging": "Production build and Wrangler 4.92.0 deploy --dry-run passed against the configured beta Worker and its dedicated database binding after explicit release authorization. Encrypted push delivery passed in local workerd with the existing runtime-test compatibility date.",
   "sessionChecks": [
     "No time limit, including simulated ten-year passage",
     "Scheduled cleanup preserves permanent sessions",
@@ -13,7 +13,7 @@
     "Invitation revocation still blocks existing sessions",
     "Legacy timed sessions remain supported"
   ],
-  "deployment": "Publication is tracked separately by Workers Builds and /api/health; local validation does not assert the deployed result.",
+  "deployment": "Publication to the existing beta Cloudflare Worker and GitHub repository was explicitly authorized. The deployed result is verified separately through Workers Builds, /api/health and exact userscript download comparison.",
   "deviceTesting": "Collateral pricing interactions passed in mounted React DOM. Final iPhone/Torn PDA interaction remains to be confirmed on-device.",
   "lobbyChecks": [
     "Lender script omits Welcome lobby and starts on Overview",
@@ -251,5 +251,36 @@
     "fullSuite": 429,
     "encryptedPushRuntime": "passed",
     "workerDryRun": "passed"
+  },
+  "expiredTradeReplacement": {
+    "result": "passed",
+    "scope": "Every eligible approved unfunded loan, existing and future, automatic or staff approved; repeated replacements preserve the exact loan reference and create a new intent each time.",
+    "checks": [
+      "Borrower recovery is available in the bank loan record and native Loan details even when the old native view has no description. Offered cash/items must be explicitly confirmed returned.",
+      "Own-key and connected-account checks precede fresh ongoing, complete finished-history, and final ongoing reads. Any known API ID or matching reference in either ongoing snapshot or finished history blocks replacement.",
+      "Finished coverage starts at the earliest preparation or claim across all attempts. Exclusive lower/inclusive upper timestamp splits, documented ASC sort, complete pagination metadata and bounded fresh checks reject missing or incomplete evidence.",
+      "Receiving staff alone can reconcile committed funds, entering the exact full principal, return notes and an explicit return declaration. This records staff confirmation rather than treating trade absence as proof of a return.",
+      "Reconciliation preserves the original flow and audit evidence, clears its checks and commitment, and blocks further review of that expired attempt. Replacement then archives the old intent/flow and restarts every collateral/funds check.",
+      "Current identity, role, approved state, intent and financial evidence are rechecked after external reads. Concurrent replacement submissions save one new intent; a review begun before replacement cannot attach the retired trade afterward.",
+      "Retired native/API IDs remain blocked across current and archived loans. Old setup links, observation resumes, delayed claim responses and stale review-opening events cannot create or relink the old attempt.",
+      "A lost replacement response triggers a bank read without retrying the mutation; a saved prepared intent has a Continue in Torn fallback.",
+      "Malformed amounts, partial principal, overlong notes, missing acknowledgements and invalid keys show focused inline feedback. Temporary keys remain only in the password field during local corrections and clear before valid submission.",
+      "No collateral receipt, loan activation, disbursement, repayment or bank cash movement occurs during replacement or expired-funds reconciliation. Approved loan terms and expected collateral quantities are preserved."
+    ],
+    "newPersistentTests": 44,
+    "fullSuite": 473,
+    "encryptedPushRuntime": "passed",
+    "workerDryRun": "passed",
+    "productionDOM": {
+      "result": "passed",
+      "runtime": "Minified production React, actual bank CSS, closed shadow root, synthetic 390px DOM using existing jsdom 26.1.0.",
+      "checks": [
+        "Form focus and scrolling on open",
+        "Visible key, acknowledgement, principal and notes errors without submission",
+        "Temporary key preserved during malformed/partial amount and overlong-note correction, then cleared on valid submit",
+        "Synchronous duplicate submission produces one replacement callback and one navigation"
+      ]
+    },
+    "limits": "No signed-in Torn trade, real asset movement or iPhone/Torn PDA interaction was performed. Torn exposes ongoing and finished categories, without an explicit expired/cancelled status; actual asset return is explicitly attested by the relevant participant."
   }
 }

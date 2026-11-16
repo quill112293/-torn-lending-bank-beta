@@ -1,6 +1,8 @@
 import React,{useEffect,useRef,useState} from 'react';
 import {tradeRecipients,tradeCreationAllowed,tradeStartUrl,tradeViewUrl} from '../lib/collateral-trade.js';
 import {hasAcceptedCollateral} from './ApprovalProgress';
+import TradeReplacementForm from './TradeReplacementForm';
+import {tradeReplacementEligibility} from '../lib/trade-replacement.js';
 
 const tradesUrl='https://www.torn.com/trade.php';
 
@@ -37,15 +39,57 @@ export async function beginTradeNavigation({loanId,recipientId,native=false,demo
  }
 }
 
-export default function CollateralTradeAction({state,loan,userId,isStaff=false,busy=false,demo=false,native=false,onPrepare,onError}){
+export async function beginTradeReplacementNavigation({loan,recipientId,key='',checked=false,replace,...navigation}){
+ if(checked!==true)throw Error('Confirm that the expired trade did not complete and its cash and items have been returned.');
+ const previous=loan?.collateralTrade;
+ if(!loan||!previous?.intentId||!['claimed','created'].includes(previous.status))throw Error('Refresh this loan before replacing its expired trade.');
+ return beginTradeNavigation({...navigation,loanId:loan.id,recipientId,prepare:async()=>{
+  const intent=await replace({loanId:loan.id,intentId:previous.intentId,recipientId,key,checked:true});
+  if(!intent||intent.intentId===previous.intentId||intent.borrowerId!==loan.borrowerId||intent.reference!==loan.reference)throw Error('The replacement trade setup changed. Refresh the loan before continuing.');
+  return intent;
+ }});
+}
+
+export default function CollateralTradeAction({state,loan,userId,isStaff=false,busy=false,demo=false,native=false,savedKeyAvailable=false,onPrepare,onReplace,onReconcile,onError}){
  const recipients=tradeRecipients(state,loan),preferred=defaultTradeRecipient(state,loan);
- const [recipient,setRecipient]=useState(preferred),[starting,setStarting]=useState(false),[fallbackUrl,setFallbackUrl]=useState(''),[localError,setLocalError]=useState('');
+ const [recipient,setRecipient]=useState(preferred),[starting,setStarting]=useState(false),[fallbackUrl,setFallbackUrl]=useState(''),[localError,setLocalError]=useState(''),[replacing,setReplacing]=useState(false);
+ const feedback=useRef(null);
  const inFlight=useRef(false);
  const recipientIds=recipients.map(person=>person.id).join(',');
  useEffect(()=>{setRecipient(current=>recipients.some(person=>person.id===current)?current:preferred);},[loan?.id,preferred,recipientIds]);
- useEffect(()=>{setFallbackUrl('');setLocalError('');},[loan?.id]);
+ useEffect(()=>{setFallbackUrl('');setLocalError('');setReplacing(false);},[loan?.id]);
+ useEffect(()=>{setReplacing(false);},[loan?.collateralTrade?.intentId]);
+ useEffect(()=>{if(!localError)return;const node=feedback.current;node?.focus({preventScroll:true});node?.scrollIntoView?.({block:'nearest',inline:'nearest'});},[localError]);
  if(!loan||loan.borrowerId!==userId&&!isStaff)return null;
  const intent=loan.collateralTrade,own=loan.borrowerId===userId,needsCollateral=!hasAcceptedCollateral(loan);
+ const eligibility=tradeReplacementEligibility(state,loan,userId),mayReplace=eligibility.available&&own,mayReconcile=eligibility.canReconcile&&!own;
+ const replacementBlocked=eligibility.canReplace?'':eligibility.reason;
+ async function replace(input){
+  if(inFlight.current||busy||demo||!mayReplace)return;
+  inFlight.current=true;setStarting(true);setLocalError('');setFallbackUrl('');
+  try{
+   const result=await beginTradeReplacementNavigation({loan,...input,native,demo,replace:onReplace});
+   if(!result.opened)setFallbackUrl(result.url);
+  }catch(error){setLocalError(error.message);}
+  finally{inFlight.current=false;setStarting(false);}
+ }
+ async function reconcile(input){
+  if(inFlight.current||busy||demo||!mayReconcile)return;
+  inFlight.current=true;setStarting(true);setLocalError('');
+  try{await onReconcile({loanId:loan.id,intentId:intent.intentId,...input});setReplacing(false);}
+  catch(error){setLocalError(error.message);}
+  finally{inFlight.current=false;setStarting(false);}
+ }
+ const replacement=mayReplace||mayReconcile?<section className='stack tight' aria-label='Expired loan trade'>
+  {replacing?<TradeReplacementForm key={loan.id+':'+intent.intentId} action={mayReconcile?'reconcile-expired':'replace-expired'} state={state} loan={loan} keyRole={mayReconcile?'Lender':'Borrower'} savedKeyAvailable={savedKeyAvailable} saving={busy||starting} blockedReason={mayReconcile?'':replacementBlocked} onSubmit={mayReconcile?reconcile:replace} onCancel={()=>{setReplacing(false);setLocalError('');}}/>:<>
+   <p className='micro'>If this trade expired or was cancelled, create a replacement with the same loan reference.</p>
+   {mayReplace&&replacementBlocked&&<p className='notice amber'>{replacementBlocked}</p>}
+   {mayReconcile&&<p className='notice amber'>Check that Torn returned the reserved loan funds to you before the borrower replaces an expired trade.</p>}
+   <button type='button' className='secondary full' disabled={busy||starting||demo} onClick={()=>{setLocalError('');setReplacing(true);}}>{mayReconcile?'Confirm returned loan funds':'Replace expired trade'}</button>
+  </>}
+  {localError&&<p ref={feedback} tabIndex={-1} className='notice red' role='alert'>{localError}</p>}
+  {fallbackUrl&&<p className='notice amber'>The replacement trade setup is ready. <a href={fallbackUrl} target={native?'_self':'_blank'} rel='noopener noreferrer'>Continue in Torn</a> to open the new trade form.</p>}
+ </section>:null;
  const tradeLink=(url,text)=>demo?<button type='button' className='primary full' disabled>{text}</button>:<a className='primary full' href={url} target={native?'_self':'_blank'} rel='noopener noreferrer'>{text}</a>;
  let createdUrl='';
  if(intent?.uiTradeId&&['created','cancelled'].includes(intent.status)){
@@ -60,6 +104,7 @@ export default function CollateralTradeAction({state,loan,userId,isStaff=false,b
    {tradeLink(createdUrl,'Open trade')}
    {demo&&<p className='micro'>Demo records cannot open live Torn trades.</p>}
    <p className='micro'>Torn trade ID: {intent.uiTradeId}. The trade link does not verify receipt of collateral.</p>
+   {replacement}
   </section>;
  }
  if(intent?.status==='claimed'||intent?.status==='cancelled'&&intent.cancellationRequired){
@@ -69,6 +114,7 @@ export default function CollateralTradeAction({state,loan,userId,isStaff=false,b
    <p>{intent.status==='cancelled'?'This request is closed. Cancel any open trade with this reference in Torn.':'Trade setup has already started, but creation has not been confirmed. Check your Torn trades before continuing.'}</p>
    {tradeLink(tradesUrl,'Check trades in Torn')}
    {demo&&<p className='micro'>Demo records cannot open live Torn trades.</p>}
+   {replacement}
   </section>;
  }
  if(!own||!tradeCreationAllowed(state,loan,userId))return null;

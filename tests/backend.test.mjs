@@ -1122,6 +1122,140 @@ async function readyLoanTrade(f,placementExtra={}){
  assert.equal(f.read().loans[0].tradeFlow.stage,'funds_reviewed');
 }
 
+function ageTradeAttempt(f){
+ const state=f.read(),intent=state.loans.find(loan=>loan.id===f.loanId).collateralTrade,now=Date.now();
+ Object.assign(intent,{requestedAt:new Date(now-3600000).toISOString(),claimedAt:new Date(now-3599000).toISOString(),expiresAt:now-3480000});
+ f.env.DB.sqlite.prepare('UPDATE bank_state SET data=? WHERE id=?').run(JSON.stringify(state),'main');
+}
+async function withExpiredTradeAPI(f,run){
+ const original=globalThis.fetch;f.recoveryCalls=[];
+ globalThis.fetch=async(url,options)=>{
+  const parsed=new URL(url);
+  if(parsed.pathname==='/v2/user/trades'){
+   f.recoveryCalls.push({cat:parsed.searchParams.get('cat'),sort:parsed.searchParams.get('sort'),from:parsed.searchParams.get('from'),to:parsed.searchParams.get('to')});
+   const override=await f.onRecoveryRead?.(parsed,f.recoveryCalls.length);
+   if(override)return Response.json(override);
+   const finished=parsed.searchParams.get('cat')==='finished';
+   const rows=finished?(f.finishedTrades||[]).filter(trade=>trade.completed_at>Number(parsed.searchParams.get('from'))&&trade.completed_at<=Number(parsed.searchParams.get('to'))):(f.ongoingTrades||[]);
+   return Response.json({trades:rows,_metadata:{links:{prev:null,next:null}}});
+  }
+  return original(url,options);
+ };
+ f.recover=(token,action='replace-expired',extra={})=>call(f.env,'loan-trade',{token,body:{action,loanId:f.loanId,intentId:f.read().loans.find(loan=>loan.id===f.loanId).collateralTrade.intentId,key:(token===f.borrower?'borrower':'owner').padEnd(16,'0'),recipientId:OWNER,checked:true,...extra}});
+ try{return await run();}finally{globalThis.fetch=original;}
+}
+
+test('expired trades can be replaced repeatedly for automatic and staff approvals with the same loan reference',async()=>{
+ for(const automatic of [true,false]){
+  const f=await loanTradeScenario(automatic),before=f.read(),reference=before.loans[0].reference;
+  ageTradeAttempt(f);
+  await withExpiredTradeAPI(f,async()=>{
+   for(let attempt=1;attempt<=3;attempt++){
+    const prior=f.read().loans[0].collateralTrade,oldIntentId=prior.intentId;
+    const replaced=await f.recover(f.borrower);
+    assert.equal(replaced.status,200,replaced.data.error);
+    const loan=replaced.data.state.loans[0],intent=loan.collateralTrade;
+    assert.equal(loan.reference,reference);assert.equal(intent.reference,reference);assert.notEqual(intent.intentId,oldIntentId);
+    assert.equal(intent.status,'prepared');assert.equal(loan.collateralTradeHistory.length,attempt);assert.equal(loan.tradeFlow,undefined);
+    assert.equal(loan.collateralTradeHistory.at(-1).intent.intentId,oldIntentId);
+    assert.deepEqual(replaced.data.replacementCheck,{status:'prepared',previousIntentId:oldIntentId,intentId:intent.intentId,reference});
+    assert.equal((await f.save(f.borrower,'claimCollateralTrade',{loanId:f.loanId,intentId:oldIntentId})).status,400);
+    assert.equal((await f.save(f.borrower,'recordCollateralTrade',{loanId:f.loanId,intentId:oldIntentId,uiTradeId:String(11687900+attempt),reference})).status,400);
+    assert.equal((await f.save(f.borrower,'claimCollateralTrade',{loanId:f.loanId,intentId:intent.intentId})).status,200);
+    assert.equal((await f.save(f.borrower,'recordCollateralTrade',{loanId:f.loanId,intentId:intent.intentId,uiTradeId:prior.uiTradeId,reference})).status,400);
+    assert.equal((await f.save(f.borrower,'recordCollateralTrade',{loanId:f.loanId,intentId:intent.intentId,uiTradeId:String(11687900+attempt),reference})).status,200);
+    ageTradeAttempt(f);
+   }
+   const saved=f.read();assert.deepEqual(saved.ledger,before.ledger);assert.deepEqual(saved.receipts,before.receipts);assert.deepEqual(saved.collateral,before.collateral);
+   assert.deepEqual(saved.loans[0].expectedCollateral,before.loans[0].expectedCollateral);assert.deepEqual(saved.loans[0].borrowerConfirmed,before.loans[0].borrowerConfirmed);
+   assert.equal(saved.loans[0].status,'approved');assert.equal(new Set(saved.loans[0].collateralTradeHistory.map(entry=>entry.intent.intentId)).size,3);
+   assert.deepEqual(f.recoveryCalls.map(entry=>entry.cat),Array.from({length:3},()=>['ongoing','finished','ongoing']).flat());
+   assert.ok(f.recoveryCalls.filter(entry=>entry.cat==='finished').every(entry=>entry.sort==='ASC'));
+  });
+ }
+});
+
+test('replacement checks reject live trades, completed trades, unavailable history and a trade appearing during the scan',async()=>{
+ for(const mode of ['ongoing','finished','metadata','api-error','appears-late']){
+  const f=await loanTradeScenario();ageTradeAttempt(f);const before=f.read();
+  if(mode==='ongoing')f.ongoingTrades=[f.trade];
+  if(mode==='finished')f.finishedTrades=[{...f.trade,completed_at:Math.floor(Date.now()/1000)}];
+  if(mode==='metadata')f.onRecoveryRead=url=>url.searchParams.get('cat')==='finished'?{trades:[]}:null;
+  if(mode==='api-error')f.onRecoveryRead=()=>({error:{error:'Trade access unavailable'}});
+  if(mode==='appears-late')f.onRecoveryRead=(url,count)=>count===3?{trades:[f.trade],_metadata:{links:{next:null,prev:null}}}:null;
+  await withExpiredTradeAPI(f,async()=>{
+   const result=await f.recover(f.borrower);assert.equal(result.status,400,mode);
+   assert.match(result.data.error,mode==='finished'?/completed/:mode==='ongoing'||mode==='appears-late'?/ongoing/:mode==='metadata'?/complete/:/access unavailable/);
+   assert.deepEqual(f.read(),before);
+  });
+ }
+});
+
+test('expired trades with committed funds require receiving-staff return confirmation before replacement',async()=>{
+ const f=await loanTradeScenario();await withLoanTradeAPI(f,()=>readyLoanTrade(f));ageTradeAttempt(f);
+ const before=f.read();assert.equal(TB.reserved(before,OWNER),before.loans[0].principal);
+ await withExpiredTradeAPI(f,async()=>{
+  const blocked=await f.recover(f.borrower);assert.equal(blocked.status,400);assert.match(blocked.data.error,/staff member.*returned/);
+  const borrower=await f.recover(f.borrower,'reconcile-expired',{returnedAmount:before.loans[0].principal,notes:'Confirmed full returned loan cash.'});assert.equal(borrower.status,400);
+  const partial=await f.recover(f.owner,'reconcile-expired',{returnedAmount:1,notes:'Confirmed partial returned cash.'});assert.equal(partial.status,400);
+  const wrongKey=await f.recover(f.owner,'reconcile-expired',{returnedAmount:before.loans[0].principal,notes:'Confirmed full returned loan cash.',key:'borrower'.padEnd(16,'0')});assert.equal(wrongKey.status,400);
+  assert.deepEqual(f.read(),before);
+  const returned=await f.recover(f.owner,'reconcile-expired',{returnedAmount:before.loans[0].principal,notes:'Checked Torn cash and confirmed the entire loan amount returned.'});
+  assert.equal(returned.status,200,returned.data.error);
+  const reconciled=f.read(),confirmation=reconciled.loans[0].collateralTrade.fundsReturnReconciled;
+  assert.equal(confirmation.by,OWNER);assert.equal(confirmation.source,'Staff confirmed expired trade funds returned');assert.equal(confirmation.amount,before.loans[0].principal);
+  assert.equal(confirmation.previousFlow.reservedBy,OWNER);assert.equal(TB.reserved(reconciled,OWNER),0);
+  assert.deepEqual(reconciled.ledger,before.ledger);assert.deepEqual(reconciled.collateral,before.collateral);assert.equal(reconciled.loans[0].status,'approved');
+  const oldReview=await f.step(f.borrower,'collateral-placed');assert.equal(oldReview.status,400);assert.match(oldReview.data.error,/replacement/);
+  const replaced=await f.recover(f.borrower);assert.equal(replaced.status,200,replaced.data.error);
+  assert.equal(replaced.data.state.loans[0].tradeFlow,undefined);assert.equal(replaced.data.state.loans[0].collateralTradeHistory[0].intent.fundsReturnReconciled.by,OWNER);
+ });
+});
+
+test('replacement authorization, explicit acknowledgement and old-attempt binding are checked before external reads',async()=>{
+ const f=await loanTradeScenario();ageTradeAttempt(f);const before=f.read();
+ await withExpiredTradeAPI(f,async()=>{
+  for(const [token,extra] of [[f.owner,{}],[f.borrower,{checked:false}],[f.borrower,{intentId:'TRADE-STALE'}],[f.borrower,{recipientId:BORROWER}]]){
+   const result=await f.recover(token,'replace-expired',extra);assert.equal(result.status,400,result.data.error);
+  }
+  assert.equal(f.recoveryCalls.length,0);assert.deepEqual(f.read(),before);
+ });
+});
+
+test('replacement rechecks changed loan attempts and participant permissions after Torn reads',async()=>{
+ for(const mode of ['changed-attempt','withdrawn','staff-disabled']){
+  const f=await loanTradeScenario();ageTradeAttempt(f);
+  f.onRecoveryRead=(url,count)=>{
+   if(count===3){const state=f.read();if(mode==='changed-attempt')state.loans[0].collateralTrade.intentId='TRADE-CHANGED';if(mode==='withdrawn'){state.loans[0].status='withdrawn';state.applications[0].status='withdrawn';}if(mode==='staff-disabled')state.staff.find(person=>person.id===OWNER).disabled=true;f.env.DB.sqlite.prepare('UPDATE bank_state SET data=? WHERE id=?').run(JSON.stringify(state),'main');}
+  };
+  await withExpiredTradeAPI(f,async()=>{
+   const result=await f.recover(f.borrower);assert.equal(result.status,400,mode);assert.equal(f.read().loans[0].collateralTradeHistory,undefined);
+  });
+ }
+});
+
+test('a normal review begun before replacement cannot attach the retired API trade after the replacement saves',async()=>{
+ const f=await loanTradeScenario();ageTradeAttempt(f);const before=f.read(),oldIntentId=before.loans[0].collateralTrade.intentId;
+ f.onTradeDetailRead=async()=>{
+  await withExpiredTradeAPI(f,async()=>{const result=await f.recover(f.borrower);assert.equal(result.status,200,result.data.error);});
+ };
+ await withLoanTradeAPI(f,async()=>{
+  const result=await f.step(f.borrower,'collateral-placed',{intentId:oldIntentId});assert.equal(result.status,400);assert.match(result.data.error,/attempt changed/);
+ });
+ const after=f.read();assert.equal(after.loans[0].collateralTrade.status,'prepared');assert.equal(after.loans[0].tradeFlow,undefined);assert.deepEqual(after.ledger,before.ledger);
+});
+
+test('competing replacement submissions produce only one new intent and one preserved prior attempt',async()=>{
+ const f=await loanTradeScenario();ageTradeAttempt(f);const before=f.read(),intentId=before.loans[0].collateralTrade.intentId;
+ await withExpiredTradeAPI(f,async()=>{
+  const results=await Promise.all([f.recover(f.borrower,'replace-expired',{intentId}),f.recover(f.borrower,'replace-expired',{intentId})]);
+  assert.equal(results.filter(result=>result.status===200).length,1);
+  assert.ok(results.some(result=>result.status===400||result.status===409));
+  const after=f.read();assert.equal(after.loans[0].collateralTradeHistory.length,1);assert.equal(after.loans[0].collateralTradeHistory[0].intent.intentId,intentId);
+  assert.equal(after.loans[0].collateralTrade.status,'prepared');assert.deepEqual(after.ledger,before.ledger);assert.deepEqual(after.collateral,before.collateral);
+ });
+});
+
 test('a staff-approved loan accepts terms explicitly with borrower collateral placement and reserves its principal once',async()=>{
  const f=await loanTradeScenario(false),before=f.read();
  assert.equal(before.loans[0].issuer,OWNER);assert.ok(!before.loans[0].borrowerConfirmed);assert.ok(!before.loans[0].autoApproved);

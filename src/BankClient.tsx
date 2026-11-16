@@ -186,6 +186,39 @@ export default function BankClient({demo=false,transport,bankOrigin,active=true,
    setError(error.message);throw error;
   }finally{tradePreparation.current=false;setBusy(false);}
  }
+ async function recoverCollateralTrade(action,input){
+  if(demo)throw Error('Trade replacement is unavailable in demo mode.');
+  if(tradePreparation.current)throw Error('A trade check is already in progress.');
+  const loan=s.loans.find(entry=>entry.id===input.loanId),previous=loan?.collateralTrade;
+  if(!loan||previous?.intentId!==input.intentId)throw Error('This trade attempt changed. Refresh the loan before continuing.');
+  let key=String(input.key||'').trim()||apiKey;
+  if(!validTornKey(key))throw Error('Enter a valid 16-character Torn API key for your current account.');
+  if(input.checked!==true)throw Error('Confirm that the previous trade did not complete and its offered assets have been returned.');
+  const payload={action,loanId:loan.id,intentId:previous.intentId,key,checked:true};
+  if(action==='replace-expired')payload.recipientId=String(input.recipientId||'');
+  else{
+   payload.returnedAmount=amount(input.returnedAmount);payload.notes=String(input.notes||'').trim();
+   if(payload.returnedAmount!==loan.principal)throw Error('Enter the full loan principal returned to you before confirming the expired trade.');
+   if(payload.notes.length<10||payload.notes.length>1000)throw Error('Add return verification notes of 10 to 1,000 characters.');
+  }
+  tradePreparation.current=true;setBusy(true);setError('');
+  try{
+   const result=await request('loan-trade',payload),updated=result.state?.loans.find(entry=>entry.id===loan.id),intent=updated?.collateralTrade,check=result.replacementCheck;
+   if(String(result.user?.id)!==String(user.id)||updated?.status!=='approved'||updated.reference!==loan.reference||updated.borrowerId!==loan.borrowerId||updated.principal!==loan.principal||!intent||intent.loanId!==loan.id||intent.borrowerId!==loan.borrowerId||intent.reference!==loan.reference||check?.previousIntentId!==previous.intentId||check.intentId!==intent.intentId||check.reference!==loan.reference)throw Error('The bank did not return a matching expired trade result. Refresh the loan before continuing.');
+   if(action==='replace-expired'){
+    if(check.status!=='prepared'||intent.status!=='prepared'||intent.intentId===previous.intentId||intent.recipientId!==payload.recipientId||updated.tradeFlow||!(updated.collateralTradeHistory||[]).some(entry=>entry.intent?.intentId===previous.intentId))throw Error('The replacement trade was not confirmed. Refresh the loan before continuing.');
+   }else if(check.status!=='reconciled'||check.reconciled!==true||intent.intentId!==previous.intentId||updated.tradeFlow?.reservedBy||String(intent.fundsReturnReconciled?.by)!==String(user.id)||intent.fundsReturnReconciled?.amount!==loan.principal||intent.fundsReturnReconciled?.source!=='Staff confirmed expired trade funds returned')throw Error('The returned funds confirmation was not recorded. Refresh the loan before continuing.');
+   setData(result);
+   if(action==='reconcile-expired')setToast('Returned loan funds confirmed. The borrower can create a replacement trade.');
+   return action==='replace-expired'?intent:result;
+  }catch(error){
+   try{setData(await request('bank'));}catch{}
+   let message=String(error.message||'The expired trade check failed.');
+   for(const secret of [key,apiKey])if(secret)message=message.split(secret).join('[redacted]');
+   message=message.replace(/([?&](?:key|api_?key)=)[^&#\s]+/gi,'$1[redacted]');
+   setError(message);throw Error(message);
+  }finally{key='';payload.key='';tradePreparation.current=false;setBusy(false);}
+ }
  async function itemQuote(id){
   if(demo)return {reference:820000,source:'Fictional demo reference',checkedAt:TB.today()};
   try{
@@ -233,7 +266,7 @@ export default function BankClient({demo=false,transport,bankOrigin,active=true,
  const nav=(isStaff?[['Welcome lobby',Landmark],['Overview',LayoutDashboard],['Applications',FileText],['Loans',Wallet],['Bank',Landmark],['Staff',Users],['Rules',Settings],['Connections',Link2],['Settings',Settings],['Users',Users],...(isOwner?[['Manage',Settings]]:[])]:[['Welcome lobby',Landmark],['Overview',LayoutDashboard],['Applications',FileText],['Apply',FileText],['Loans',Wallet],['My Profile',Users],['Connections',Link2]]).filter(([name])=>showWelcome||name!=='Welcome lobby');
  function staffName(id){return s.staff.find(p=>p.id===id)?.name||id;}
  function gradePill(id){const g=TB.grade(s,id);return <Badge tone={g.color}>{g.label} · {g.strikes}/3</Badge>;}
- function collateralTradeAction(loan){return <LoanCollateralDetails key={loan?.id||'no-loan'} state={s} loan={loan} userId={user.id} isStaff={!!isStaff} busy={busy} demo={demo} native={native} onPrepare={prepareCollateralTrade} onError={setError}/>;}
+ function collateralTradeAction(loan){return <LoanCollateralDetails key={loan?.id||'no-loan'} state={s} loan={loan} userId={user.id} isStaff={!!isStaff} busy={busy} demo={demo} native={native} savedKeyAvailable={keyReady} onPrepare={prepareCollateralTrade} onReplace={input=>recoverCollateralTrade('replace-expired',input)} onReconcile={input=>recoverCollateralTrade('reconcile-expired',input)} onError={setError}/>;}
  function applicationCard(a){return <button className='record' key={a.id} onClick={()=>go('Applications',a.id)}><span className='avatar'>{a.name.slice(0,2).toUpperCase()}</span><span className='record-main'><strong>{a.name} <small>[{a.borrowerId}]</small></strong><span>{a.isTest?'TEST · ':''}{a.reference} · {a.kind==='exception'?'Above-limit request · ':''}{a.lane==='faction'?'Faction VIP+':'Non-faction'} · {label(a.product)}</span></span><span className='record-end'><strong>{a.requested?short(a.requested):'Maximum'}</strong><Badge tone={a.status==='pending'?'amber':a.status==='approved'?'green':''}>{applicationStatus(a)}</Badge></span><ChevronRight size={16}/></button>;}
  function loanCard(l){const approved=l.status==='approved',withdrawn=l.status==='withdrawn',b=approved||withdrawn?null:TB.balance(l,s.testDate);return <button className='record' key={l.id} onClick={()=>go('Loans',l.id)}><span className='avatar soft'><Wallet size={20}/></span><span className='record-main'><strong>{l.name}</strong><span>{l.isTest?'TEST · ':''}{l.reference} · {label(l.product)} · {l.maturity||'Ongoing schedule'}</span></span><span className='record-end'><strong>{short(approved?l.principal:withdrawn?0:b.total)}</strong>{approved&&<small>Approved amount</small>}{withdrawn&&<small>No funded balance</small>}{l.collateralReturnRequired&&<small>Collateral return required</small>}<Badge tone={l.status==='repaid'?'green':''}>{loanStatus(l)}</Badge></span><ChevronRight size={16}/></button>;}
  if(restoring&&!data)return <main className='welcome'><section className='welcome-card'><h1>Torn Lending Bank</h1><p role='status'>Restoring your bank login…</p>{keyRole!=='Lender'&&<DiagnosticsButton getReport={diagnosticReport}/>}</section></main>;

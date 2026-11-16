@@ -93,6 +93,7 @@ function exactDescription(node,reference){
 
 export function observedTrade(document,intent,href){
  if(!tornTradePage(href)||currentTornAccount(document)!==String(intent.borrowerId))return null;
+ const excluded=new Set((intent.excludedNativeTradeIds||[]).map(uiId).filter(Boolean));
  const matches=[];
  // These same-row selectors are used by TornW3B's active trade list. An exact
  // native description, recipient and view link must all belong to one row.
@@ -101,7 +102,7 @@ export function observedTrade(document,intent,href){
   const descriptions=[...row.querySelectorAll('.desc p')].filter(visible);
   const people=[...row.querySelectorAll('a.user.name[href*="XID="]')].filter(visible).map(a=>profileId(a.getAttribute('href'),href)).filter(Boolean);
   const ids=[...row.querySelectorAll('.view a[href*="ID="]')].filter(visible).map(a=>activeTradeId(a.getAttribute('href'),href)).filter(Boolean);
-  if(descriptions.length===1&&exactDescription(descriptions[0],intent.reference)&&people.length===1&&people[0]===String(intent.recipientId)&&ids.length===1)matches.push(ids[0]);
+  if(descriptions.length===1&&exactDescription(descriptions[0],intent.reference)&&people.length===1&&people[0]===String(intent.recipientId)&&ids.length===1&&!excluded.has(ids[0]))matches.push(ids[0]);
  }
  if(matches.length>1)return null;
  if(matches.length===1)return {uiTradeId:matches[0],reference:intent.reference,recipientId:String(intent.recipientId)};
@@ -117,7 +118,7 @@ export function observedTrade(document,intent,href){
  // Read existing native links only. Never click accept, cancel, or asset controls.
  const ids=[...root.querySelectorAll('.trade-cancel a[href]')].filter(visible).map(a=>activeTradeId(a.getAttribute('href'),href)).filter(Boolean);
  const currentId=activeTradeId(href,href);
- if(!ids.length||new Set(ids).size!==1||currentId&&currentId!==ids[0])return null;
+ if(!ids.length||new Set(ids).size!==1||currentId&&currentId!==ids[0]||excluded.has(ids[0]))return null;
  return {uiTradeId:ids[0],reference:intent.reference,recipientId:String(intent.recipientId)};
 }
 
@@ -132,6 +133,14 @@ export function readTradeResume(storage,href){
 
 export function rememberTradeResume(storage,handoff){
  try{storage.setItem(resumeKey,JSON.stringify({loanId:handoff.loanId,intentId:handoff.intentId,recipientId:handoff.recipientId}));return true;}catch{return false;}
+}
+
+export function clearTradeResume(storage,handoff){
+ try{
+  const pending=JSON.parse(storage.getItem(resumeKey));
+  if(!pending||!handoff||['loanId','intentId','recipientId'].some(key=>pending[key]!==handoff[key]))return false;
+  storage.removeItem(resumeKey);return true;
+ }catch{return false;}
 }
 
 function createdReviewDetail(value){
@@ -160,6 +169,8 @@ export function clearCreatedTradeReview(storage,detail){
 export function announceCreatedTradeReview({document,window,storage,intent,now=Date.now()}){
  const detail=createdReviewDetail({...intent,nativeTradeId:intent?.uiTradeId});
  if(!detail||intent.status!=='created'||intent.cancellationRequired||intent.reportedAfterFunding||!tornTradePage(window.location.href)||window.top!==window.self||currentTornAccount(document)!==detail.borrowerId)return false;
+ const handoff=parseTradeHandoff(window.location.href);
+ if(handoff&&(handoff.loanId!==intent.loanId||handoff.intentId!==intent.intentId||handoff.recipientId!==String(intent.recipientId)))return false;
  const currentId=activeTradeId(window.location.href,window.location.href);
  if(currentId&&currentId!==detail.nativeTradeId)return false;
  const location=new URL(window.location.href),params=location.hash?new URLSearchParams(location.hash.slice(1)):location.searchParams;
@@ -289,14 +300,17 @@ export function createTornTradePage(document,window){
 function matchedIntent(data,handoff){
  const loan=data?.state?.loans?.find(record=>record.id===handoff.loanId),intent=loan?.collateralTrade;
  need(loan&&String(data.user?.id)===String(loan.borrowerId),'Sign in to the beta bank in Torn as the borrower, then reopen Create a trade.');
- need(intent&&intent.intentId===handoff.intentId&&intent.loanId===loan.id&&String(intent.borrowerId)===String(loan.borrowerId)&&String(intent.recipientId)===handoff.recipientId,'This trade setup no longer matches the approved request. Reopen it from the bank.');
+ if(!intent||intent.intentId!==handoff.intentId||intent.loanId!==loan.id||String(intent.borrowerId)!==String(loan.borrowerId)||String(intent.recipientId)!==handoff.recipientId)throw Object.assign(Error('This trade setup was replaced or changed. Open the current trade from Loan details or the bank.'),{code:'trade_setup_changed'});
  need(intent.reference===loan.reference&&/^TLB-[A-Za-z0-9_-]+$/.test(intent.reference),'The loan reference could not be confirmed.');
- return {loan,intent};
+ const excludedNativeTradeIds=[...new Set((loan.collateralTradeHistory||[]).flatMap(entry=>[entry.intent?.uiTradeId,entry.flow?.nativeTradeId]).map(uiId).filter(Boolean))];
+ need(!intent.uiTradeId||!excludedNativeTradeIds.includes(String(intent.uiTradeId)),'The current setup points to an earlier trade attempt. Refresh this loan before continuing.');
+ return {loan,intent:excludedNativeTradeIds.length?{...intent,excludedNativeTradeIds}:intent};
 }
 
 async function saveObservedTrade(transport,handoff,observed,requestId){
  const latest=await transport.request('bank'),{intent}=matchedIntent(latest,handoff);
  need(observed&&observed.reference===intent.reference&&String(observed.recipientId)===String(intent.recipientId)&&uiId(observed.uiTradeId),'Torn has not shown a matching created trade yet.');
+ need(!intent.excludedNativeTradeIds?.includes(String(observed.uiTradeId)),'That trade belongs to an earlier attempt. Open the current loan trade before continuing.');
  const saved=await transport.request('bank',{action:'recordCollateralTrade',payload:{loanId:handoff.loanId,intentId:handoff.intentId,reference:intent.reference,uiTradeId:observed.uiTradeId},revision:latest.state.revision,requestId:requestId()});
  return matchedIntent(saved,handoff).intent;
 }
@@ -316,6 +330,7 @@ export async function runTradeHandoff({handoff,transport,page,onStatus=()=>{},no
  onStatus({status:'claimed',intent:current.intent});
  need(current.intent.status==='claimed'&&tradeLoanEligible(claimed.state,current.loan,claimed.user.id),'The request changed before trade creation. Check its current status in the bank.');
  if(!start.existing&&!page.hasInitiated()){
+  need(Number.isSafeInteger(current.intent.expiresAt)&&current.intent.expiresAt>now(),'This trade setup expired while the bank was checking it. Check your trades before preparing a replacement.');
   page.assertReady(current.intent);
   onStatus({status:'submitting',intent:current.intent});
   page.submit(current.intent);
@@ -385,7 +400,7 @@ export function installTradeHandoff({document,window,transport}){
   else if(update.status==='submitted')message.textContent='Trade setup was submitted once. Waiting for Torn to show its reference and link; you can also open Check trades in Torn.';
   else if(update.status==='observed')message.textContent='Torn is showing the trade. Saving its link to your loan…';
   else if(update.status==='recorded'){
-   page.dispose();attemptPending=false;try{storage.removeItem(resumeKey);}catch{}
+   page.dispose();attemptPending=false;clearTradeResume(storage,handoff);
    message.textContent=intent.cancellationRequired||intent.status==='cancelled'?'This loan request was withdrawn. Open the Torn trade and cancel it; the bank request remains withdrawn.':intent.reportedAfterFunding?'The trade link is saved. Loan funding is already recorded; review any open trade with the receiving lender.':'Your loan trade is created with the reference shown above. Its collateral review opens in Loan details. Add the required collateral in this trade, then confirm it in the review form.';
    if(!reviewAnnounced)reviewAnnounced=announceCreatedTradeReview({document,window,storage,intent});
   }
@@ -398,8 +413,10 @@ export function installTradeHandoff({document,window,transport}){
   try{
    const latest=await transport.request('bank');intent=matchedIntent(latest,handoff).intent;
    if(intent)reference.textContent='Loan / trade reference: '+intent.reference;
-   if(!intent.claimedAt){attemptPending=false;try{storage.removeItem(resumeKey);}catch{}}
-  }catch{}
+   if(!intent.claimedAt){attemptPending=false;clearTradeResume(storage,handoff);}
+  }catch(latestError){
+   if(latestError.code==='trade_setup_changed'){attemptPending=false;clearTradeResume(storage,handoff);page.dispose();}
+  }
   title.textContent='Torn Lending Bank · Check trade setup';
   message.textContent=tradeHandoffFailureMessage(error,{attempted:attemptPending||!!intent?.claimedAt||page.hasInitiated()});
   drawActions(true);

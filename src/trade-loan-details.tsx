@@ -2,6 +2,8 @@ import React,{useEffect,useRef} from 'react';
 import {createRoot} from 'react-dom/client';
 import ExpectedCollateral from './ExpectedCollateral';
 import TradeFlowForm,{tradeFlowLabels} from './TradeFlowForm';
+import TradeReplacementForm,{tradeReplacementLabels} from './TradeReplacementForm';
+import {tradeReplacementEligibility} from '../lib/trade-replacement.js';
 import {createNativeTradeAccept} from './trade-accept.js';
 import {readCreatedTradeReview,clearCreatedTradeReview} from './trade-handoff.js';
 import {createTradeLoanDetailsController,readTradeLoanContext,tradeDetailLoans,tradeLoanSelectionNotice,loanTradeActions} from './trade-loan-match.js';
@@ -49,6 +51,7 @@ export function TradeLoanDetails({model,onOpen=()=>{},onRefresh=()=>{},onSelect=
  const isStaff=['owner','vault','staff'].includes(model.data?.role);
  const historical=loan&&(loan.status!=='approved'||!!loan.collateralConfirmed);
  const eligible=loanTradeActions(model.data,loan),flow=loan?.tradeFlow;
+ const replacement=loan?tradeReplacementEligibility(model.data.state,loan,String(model.data.user.id)):{available:false,canReplace:false,canReconcile:false,reason:''};
  const review=model.review&&model.review.loanId===loan?.id&&eligible[model.review.action]&&(model.review.action!=='accept-ready'||model.nativeAcceptAvailable)?model.review:null;
  const invalidReason=flow?.invalidReason||model.tradeCheck?.reason;
  const completion=flow?.stage==='completed'?flow.completion:null;
@@ -59,6 +62,7 @@ export function TradeLoanDetails({model,onOpen=()=>{},onRefresh=()=>{},onSelect=
    {model.loading&&<p role='status'>Loading your bank loans…</p>}
    {model.error&&<p role='alert' className='notice amber'>{model.error}</p>}
    {model.success&&<p role='status' className='notice'>{model.success}</p>}
+   {model.preparedTradeUrl&&<p className='notice'><a className='primary' href={model.preparedTradeUrl}>Continue in Torn</a> to create the replacement trade.</p>}
    {model.data&&<>
     <label className='field'>Select loan<select value={model.selectedLoanId} disabled={model.saving} onChange={event=>onSelect(event.target.value)}>
      <option value=''>Choose a loan</option>
@@ -78,6 +82,11 @@ export function TradeLoanDetails({model,onOpen=()=>{},onRefresh=()=>{},onSelect=
      </dl>
      {loan.status==='withdrawn'&&<p className='notice amber'>This request was withdrawn. Review any existing trade or collateral return with the bank before continuing.</p>}
      <ExpectedCollateral state={model.data.state} loan={loan} userId={String(model.data.user.id)} isStaff={isStaff} compact/>
+     {replacement.available&&<section aria-label='Expired loan trade' className='stack tight'>
+      <p>If this trade expired or was cancelled, you can create a replacement with the same loan reference after its cash and items have been returned.</p>
+      {replacement.reason&&<p className='notice amber'>{replacement.reason}</p>}
+      {!review&&<div className='actions'>{['replace-expired','reconcile-expired'].filter(action=>eligible[action]).map(action=><button type='button' key={action} className='secondary' disabled={model.saving} onClick={()=>onBeginReview(action)}>{tradeReplacementLabels[action]}</button>)}</div>}
+     </section>}
      {loan.collateralConfirmed&&!flow&&<p className='notice'>Collateral was already recorded for this loan. Continue its existing workflow in the bank; do not place the same collateral again.</p>}
      {loan.status==='approved'&&!loan.borrowerConfirmed&&<p className='notice amber'>{!flow?.stage?'The borrower reviews and accepts the approved loan terms in the first collateral placement step.':'The current approved loan terms need the borrower’s confirmation in the bank before this trade can continue.'}</p>}
      {(flow||loan.status==='approved'&&!loan.collateralConfirmed)&&<TradeProgress data={model.data} loan={loan}/>}
@@ -96,7 +105,7 @@ export function TradeLoanDetails({model,onOpen=()=>{},onRefresh=()=>{},onSelect=
      {eligible['accept-ready']&&!model.nativeAcceptAvailable&&<p className='notice amber'>{model.nativeAcceptReason||'Waiting for Torn’s initial Accept control. Complete any existing Torn confirmation before checking the transfer.'}</p>}
      {eligible.complete&&!completion&&<p className='micro'>Finish both sides of Torn’s acceptance, then staff can verify the completed transfer.</p>}
      {!review&&<div className='actions'>{['refresh','reset'].filter(action=>eligible[action]).map(action=><button type='button' key={action} className='secondary' disabled={model.saving} onClick={()=>onBeginReview(action)}>{tradeFlowLabels[action]}</button>)}</div>}
-     {review&&<TradeFlowForm key={loan.id+':'+review.action} action={review.action} loan={loan} keyRole={String(loan.borrowerId)===String(model.data.user.id)?'Borrower':'Lender'} piAllowed={eligible.piAllowed} savedKeyAvailable={!!model.savedKeyAvailable} saving={!!model.saving} onSubmit={onSubmitReview} onCancel={onCancelReview}/>}
+     {review&&(tradeReplacementLabels[review.action]?<TradeReplacementForm key={loan.id+':'+loan.collateralTrade?.intentId+':'+review.action} action={review.action} state={model.data.state} loan={loan} keyRole={String(loan.borrowerId)===String(model.data.user.id)?'Borrower':'Lender'} savedKeyAvailable={!!model.savedKeyAvailable} saving={!!model.saving} blockedReason={review.action==='replace-expired'&&!replacement.canReplace?replacement.reason:''} onSubmit={onSubmitReview} onCancel={onCancelReview}/>:<TradeFlowForm key={loan.id+':'+review.action} action={review.action} loan={loan} keyRole={String(loan.borrowerId)===String(model.data.user.id)?'Borrower':'Lender'} piAllowed={eligible.piAllowed} savedKeyAvailable={!!model.savedKeyAvailable} saving={!!model.saving} onSubmit={onSubmitReview} onCancel={onCancelReview}/>)}
     </>}
    </>}
    {model.reviewError&&<p ref={reviewFeedback} tabIndex={-1} role='alert' className='notice amber'>{model.reviewError}</p>}
@@ -126,7 +135,7 @@ export function installTradeLoanDetails({document,window,transport,css=''}){
  const readContext=()=>readTradeLoanContext(document,window.location.href),nativeAccept=createNativeTradeAccept({document,window,readContext});
  const render=model=>root.render(<TradeLoanDetails model={model} onOpen={open=>controller.setOpen(open)} onRefresh={()=>controller.refresh()} onSelect={id=>controller.select(id)} onBeginReview={action=>controller.beginReview(action)} onCancelReview={()=>controller.cancelReview()} onSubmitReview={input=>controller.submitReview(input)}/>);
  let reviewStorage;try{reviewStorage=window.sessionStorage;}catch{}
- controller=createTradeLoanDetailsController({transport,readContext,nativeAccept,onChange:render,onCreatedTradeReviewConsumed:detail=>clearCreatedTradeReview(reviewStorage,detail)});
+ controller=createTradeLoanDetailsController({transport,readContext,nativeAccept,onChange:render,navigateToTrade:url=>window.location.assign(url),onCreatedTradeReviewConsumed:detail=>clearCreatedTradeReview(reviewStorage,detail)});
  render(controller.getState());
  let timer=null;
  const update=()=>{timer=null;const context=readTradeLoanContext(document,window.location.href);if(host.hidden===context.page)host.hidden=!context.page;controller.contextChanged();};
