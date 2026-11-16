@@ -247,23 +247,26 @@ test('borrower requests persist across reloads and lender decisions reach the bo
  assert.equal(TB.balance(final.loans[0],today).total,90e6);
 });
 
-test('bank reset requires owner, exact confirmation and current revision; retries cannot erase later writes',async()=>{
+test('bank reset requires owner, exact passcode and current revision; retries cannot erase later writes',async()=>{
  const e=fixture(),o=(await login(e)).data.token;
  await call(e,'access',{token:o,body:{action:'invite',lane:'faction',id:BORROWER}});
  const b=(await login(e,'borrower')).data.token;
  const send=async(token,action,payload,requestId,revision)=>call(e,'bank',{token,body:{action,payload,requestId,revision}});
  let s=(await call(e,'bank',{token:o})).data.state;
  let r=await send(o,'topup',{amount:1000,reference:'test funding'},'fund1',s.revision);s=r.data.state;
- assert.equal((await send(b,'resetBank',{confirm:'RESET BANK'},'bad-role',s.revision)).status,400);
- assert.equal((await send(o,'resetBank',{confirm:'RESET'},'bad-confirm',s.revision)).status,400);
- assert.equal((await send(o,'resetBank',{confirm:'RESET BANK'},'stale',s.revision-1)).status,409);
+ assert.equal((await send(b,'resetBank',{confirm:'1234'},'bad-role',s.revision)).status,400);
+ for(const [index,confirm] of ['', 'RESET BANK', '123', '12345', '4321', 1234].entries()){
+  const rejected=await send(o,'resetBank',{confirm},'bad-confirm-'+index,s.revision);
+  assert.equal(rejected.status,400);assert.match(rejected.data.error,/reset passcode/);
+ }
+ assert.equal((await send(o,'resetBank',{confirm:'1234'},'stale',s.revision-1)).status,409);
  assert.equal((await call(e,'bank',{token:o})).data.state.ledger.length,1);
- r=await send(o,'resetBank',{confirm:'RESET BANK'},'reset-once',s.revision);assert.equal(r.status,200,r.data.error);s=r.data.state;
+ r=await send(o,'resetBank',{confirm:'1234'},'reset-once',s.revision);assert.equal(r.status,200,r.data.error);s=r.data.state;
  for(const key of ['loans','applications','ledger','transfers','pendingPayments','paymentIntents','extensionRequests','collateral','receipts'])assert.deepEqual(s[key],[]);
  assert.equal(s.staff.length,1);assert.equal(s.staff[0].id,OWNER);assert.equal(s.bankOnline,false);assert.equal(s.audit[0].event,'Bank records reset');
  assert.equal((await call(e,'bank',{token:b})).status,200);
  r=await send(o,'topup',{amount:2000,reference:'new funding'},'fund2',s.revision);s=r.data.state;
- r=await send(o,'resetBank',{confirm:'RESET BANK'},'reset-once',s.revision);assert.equal(r.status,200);assert.equal(r.data.state.ledger.length,1);
+ r=await send(o,'resetBank',{confirm:'1234'},'reset-once',s.revision);assert.equal(r.status,200);assert.equal(r.data.state.ledger.length,1);
 });
 
 test('application API ignores forged net worth, identity and eligibility and persists its reference',async()=>{
