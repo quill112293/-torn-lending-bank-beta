@@ -112,7 +112,7 @@ export function ApplicationForm({user,rules,initial,onSave,onMarket,onItemQuote,
  let q=null,err='',requested=0;
  try{const app=normalized();requested=app.requested;q=TB.quote(app,rules);}catch(e){err=e.message;}
  const wrongAmount=!!q&&requested>0&&(exception?requested<=q.preapprovalMaximum:requested>q.preapprovalMaximum);
- const requiresReview=exception||!!q&&(q.credited<q.required||borrowerOnly&&a.items.some(item=>item.name.trim()&&(!item.reference||item.savedEstimate||item.officialEstimate))||q.blockers.length>0||q.warnings.length>0);
+ const requiresReview=exception||!!q&&(q.credited<q.required||borrowerOnly&&a.items.some(item=>item.name.trim()&&(!item.reference||item.savedEstimate||item.officialEstimate||item.manualEstimate))||q.blockers.length>0||q.warnings.length>0);
  const input=(name,caption,type='text',hint='')=><Field label={caption} hint={hint}><input name={name} type={type} value={a[name]??''} readOnly={borrowerOnly&&['networth','name','borrowerId','evidence','open'].includes(name)} onChange={e=>set(name,e.target.value)}/></Field>;
  const check=(name,caption)=><label className='check'><input type='checkbox' checked={a[name]} disabled={borrowerOnly&&['factionMember','oilEligible','piRto'].includes(name)} onChange={e=>set(name,e.target.checked)}/>{caption}</label>;
  const formRef=React.useRef<HTMLFormElement>(null);
@@ -175,7 +175,7 @@ export default function BankClient({demo=false,transport,bankOrigin,active=true,
    if(!transport.hasSession())throw error;
    try{return await request('market',{itemId:id,...(keyReady?{key:apiKey}:{})});}
    catch(fallbackError){
-    throw Error(fallbackError.message==='Torn has no market price for this item.'?fallbackError.message:error.message);
+    throw Error('Weav3r: '+error.message+' Torn fallback: '+fallbackError.message);
    }
   }
  }

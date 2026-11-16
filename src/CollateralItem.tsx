@@ -5,12 +5,13 @@ export default function CollateralItem({item,catalog,catalogStatus,loadCatalog,o
  const [status,setStatus]=useState('');
  const [failed,setFailed]=useState(false);
  const [attempt,setAttempt]=useState(0);
+ const [manualPrice,setManualPrice]=useState('');
  const name=item.name.trim();
  const itemId=item.itemId??catalog.find(entry=>entry.name.toLowerCase()===name.toLowerCase())?.id
   ?? (/^[1-9]\d{0,5}$/.test(name)?Number(name):null);
 
  useEffect(()=>{
-  if(!itemId||item.reference>0)return;
+  if(!itemId||(item.reference>0&&!item.manualEstimate))return;
   onChange({itemId});
   let cancelled=false;
   const timer=setTimeout(async()=>{
@@ -18,8 +19,10 @@ export default function CollateralItem({item,catalog,catalogStatus,loadCatalog,o
    try{
     const quote=await onQuote(itemId);
     if(cancelled)return;
-    onChange({itemId,reference:quote.reference,source:quote.source,checked:quote.checkedAt,savedEstimate:quote.savedEstimate===true,officialEstimate:quote.officialEstimate===true});
+    onChange({itemId,reference:quote.reference,source:quote.source,checked:quote.checkedAt,savedEstimate:quote.savedEstimate===true,officialEstimate:quote.officialEstimate===true,manualEstimate:false});
     setStatus('');
+    setFailed(false);
+    setManualPrice('');
    }catch(error){
     if(!cancelled){
      setFailed(true);
@@ -28,7 +31,7 @@ export default function CollateralItem({item,catalog,catalogStatus,loadCatalog,o
    }
   },400);
   return ()=>{cancelled=true;clearTimeout(timer);};
- },[itemId,item.reference,name,attempt]);
+ },[itemId,name,attempt]);
 
  const query=name.toLowerCase();
  const matches=catalog.filter(entry=>entry.name.toLowerCase().includes(query));
@@ -38,7 +41,8 @@ export default function CollateralItem({item,catalog,catalogStatus,loadCatalog,o
   if(value!==item.name||id!==item.itemId){
    setStatus('');
    setFailed(false);
-   onChange({name:value,itemId:id,reference:0,source:'',checked:'',savedEstimate:false,officialEstimate:false});
+   setManualPrice('');
+   onChange({name:value,itemId:id,reference:0,source:'',checked:'',savedEstimate:false,officialEstimate:false,manualEstimate:false});
   }
  }
  const quantity=Number(item.qty);
@@ -64,13 +68,26 @@ export default function CollateralItem({item,catalog,catalogStatus,loadCatalog,o
    <label className='field'><span>Quantity</span><input type='number' min={1} step={1} value={item.qty} onChange={event=>onChange({qty:event.target.value})}/></label>
   </div>
   {item.reference>0?<div role='status'>
-   <p>{item.savedEstimate?'Last saved price':item.officialEstimate?'Torn market estimate':'Market price'} {formatMoney(item.reference)} each · {formatMoney(total)} total · {formatMoney(Math.floor(total*creditRate))} credited</p>
-   {(item.savedEstimate||item.officialEstimate)&&<p className='muted'>The bank checks for a live quote at submission. Staff review items without a live quote.</p>}
+   <p>{item.manualEstimate?'Your estimated unit price':item.savedEstimate?'Last saved price':item.officialEstimate?'Torn market estimate':'Market price'} {formatMoney(item.reference)} each · {formatMoney(total)} total · {formatMoney(Math.floor(total*creditRate))} credited</p>
+   {(item.savedEstimate||item.officialEstimate||item.manualEstimate)&&<p className='muted'>The bank checks for a live quote at submission. Staff review items without a live quote.</p>}
    {moreNeeded>0&&<p><strong>About {moreNeeded.toLocaleString('en-US')} more needed</strong> if you cover the remaining collateral with this item.</p>}
    {remainingCollateral===0&&<p>Estimated collateral requirement covered.</p>}
   </div>:
    <p className='muted' role='status'>{status||(name&&!itemId&&!showSuggestions?'Unpriced items go to staff review.':'')}</p>}
-  {failed&&<button type='button' className='secondary' onClick={()=>{setFailed(false);setStatus('Checking market price…');setAttempt(previous=>previous+1);}}>Retry market price</button>}
+  {failed&&<>
+   {item.reference>0&&<p className='muted' role='status'>{status}</p>}
+   <label className='field'><span>Estimated price per item (optional)</span>
+    <input inputMode='numeric' value={manualPrice} placeholder='Enter a whole-dollar amount' onChange={event=>{
+     const value=event.target.value;
+     const digits=value.replace(/[,\s$]/g,'');
+     const reference=/^\d+$/.test(digits)?Number(digits):0;
+     setManualPrice(value);
+     onChange({reference:Number.isSafeInteger(reference)&&reference<=1e14?reference:0,manualEstimate:true,savedEstimate:false,officialEstimate:false});
+    }}/>
+    <small>Used to estimate how many more items you need. Staff review applies if the bank cannot verify a price.</small>
+   </label>
+   <button type='button' className='secondary' onClick={()=>{setStatus('Checking market price…');setAttempt(previous=>previous+1);}}>Retry market price</button>
+  </>}
   <button type='button' className='subtle danger' onClick={onRemove}>Remove</button>
  </div>;
 }

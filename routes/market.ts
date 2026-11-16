@@ -32,7 +32,7 @@ async function fetchMarketQuote(itemId:number){
   if(pages.has(page))return pages.get(page);
   const url='https://weav3r.dev/api/marketplace/'+itemId+'?limit=100&page='+page+'&sortField=price&sortDirection=asc';
   const request=fetch(url,{signal:deadline}).then(async result=>{
-   if(!result.ok)throw Error('Market prices are temporarily unavailable.');
+   if(!result.ok)throw Error('Price feed returned HTTP '+result.status+'.');
    return result.json();
   });
   pages.set(page,request);
