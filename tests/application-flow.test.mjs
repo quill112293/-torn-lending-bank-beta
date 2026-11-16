@@ -4,6 +4,7 @@ import TB from '../lib/engine.js';
 import {applyAction,project} from '../lib/operations.js';
 import {verifyCollateral} from '../lib/collateral-proof.js';
 import {preapprovalFor,loanSlots} from '../lib/preapproval.js';
+import {loanCounts} from '../lib/loan-counts.js';
 const owner='3542697',borrower='9000001';
 const verified={networth:1e9,factionMember:true,checkedAt:new Date().toISOString()};
 function base(){const s=TB.newState();s.bankOnline=true;TB.topup(s,1e9,'initial');TB.person(s,borrower).memberProgram='faction';return s;}
@@ -120,4 +121,37 @@ test('staff count corrections affect loan slots and preserve tracked loans',()=>
  const funded=apply(s);
  funded.loans[0].status='active';
  assert.throws(()=>applyAction(funded,owner,'adjustLoanCounts',{...payload,active:0}),/recorded active loans/);
+});
+
+test('remaining slots include adjusted active loans and reservations, and follow the current level',()=>{
+ let s=base();
+ const terms={lane:'faction',tier:1};
+ s.loans=[{id:'reserved',borrowerId:borrower,status:'approved'}];
+ s=applyAction(s,owner,'adjustLoanCounts',{id:borrower,completed:4,active:1,reason:'Existing loan'});
+ assert.deepEqual(loanSlots(s,borrower,terms),{open:2,limit:3,remaining:1});
+ s=applyAction(s,owner,'adjustLoanCounts',{id:borrower,completed:4,active:3,reason:'Corrected total'});
+ assert.deepEqual(loanSlots(s,borrower,terms),{open:4,limit:3,remaining:0});
+ assert.deepEqual(loanSlots(s,borrower,{lane:'faction',tier:2}),{open:4,limit:5,remaining:1});
+ assert.deepEqual(loanSlots(s,borrower,{lane:'external',tier:0}),{open:4,limit:null,remaining:null});
+ s.loans[0].status='repaid';
+ assert.equal(loanSlots(s,borrower,{lane:'faction',tier:2}).remaining,2);
+});
+
+test('test member profile adjustments use the same count scope as borrower slots and approvals',()=>{
+ let s=base();
+ s.borrowers[borrower].testParticipant=true;
+ s.borrowers[borrower].additionalActiveLoans=2;
+ const payload={id:borrower,completed:0,active:1,reason:'Test loan history'};
+ s=applyAction(s,owner,'adjustLoanCounts',payload);
+ assert.equal(loanSlots(s,borrower,{lane:'faction',tier:0}).remaining,0);
+ assert.equal(loanSlots(project(s,borrower).state,borrower,{lane:'faction',tier:0}).remaining,0);
+ assert.equal(loanCounts(s,borrower,false).active,2);
+ assert.equal(apply(s).loans.length,0);
+ assert.equal(s.audit.at(-1).loanCountChanges.isTest,true);
+ s.loans=[{id:'test-active',borrowerId:borrower,status:'active',isTest:true}];
+ assert.throws(()=>applyAction(s,owner,'adjustLoanCounts',{...payload,active:0}),/recorded active loans/);
+ s=applyAction(s,owner,'adjustLoanCounts',payload);
+ assert.equal(loanCounts(s,borrower).active,1);
+ s.borrowers[borrower].testParticipant=false;
+ assert.equal(loanCounts(s,borrower).active,2);
 });
