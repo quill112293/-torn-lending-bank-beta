@@ -283,3 +283,34 @@ test('cleanup removes only expired legacy sessions and preserves permanent and f
  assert.equal((await call(e,'bank',{token})).status,200);
 });
 
+
+test('Xanax lookup uses a reported market price when listing pages disagree or cache fails',async()=>{
+ const env=fixture(),token=(await login(env)).data.token;
+ const previousFetch=globalThis.fetch,previousCaches=globalThis.caches;
+ const pages=[];
+ globalThis.caches={default:{
+  match:async()=>{throw Error('Cache unavailable');},
+  put:async()=>{throw Error('Cache unavailable');}
+ }};
+ globalThis.fetch=async url=>{
+  const page=Number(new URL(url).searchParams.get('page'));
+  pages.push(page);
+  return Response.json({
+   item_id:206,item_name:'Xanax',market_price:838912,total_count:200,generated_at:page,
+   listings:Array.from({length:100},()=>({price:820000}))
+  });
+ };
+ try{
+  const result=await call(env,'market?id=206',{token});
+  assert.equal(result.status,200,result.data.error);
+  assert.deepEqual(pages,[1,2]);
+  assert.equal(result.data.reference,838912);
+  assert.equal(result.data.median,null);
+  assert.match(result.data.source,/Torn market price/);
+  assert.equal(65e6-20e6-Math.floor(result.data.reference*50*.9),7248960);
+ }finally{
+  globalThis.fetch=previousFetch;
+  if(previousCaches===undefined)delete globalThis.caches;
+  else globalThis.caches=previousCaches;
+ }
+});

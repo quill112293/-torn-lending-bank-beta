@@ -3,32 +3,48 @@ import {createServer} from '../server/context.js';
 export async function marketQuote(itemId:number){
  const cache=globalThis.caches?.default;
  const key=new Request('https://tlb-market-cache.local/item/'+itemId);
- const cached=await cache?.match(key);
- if(cached)return cached.json();
+ try{
+  const cached=await cache?.match(key);
+  if(cached)return await cached.json();
+ }catch(error){console.warn('Market cache read failed',error);}
  const pages=new Map<number,any>();
+ const deadline=AbortSignal.timeout(12000);
  async function get(page:number){
   if(pages.has(page))return pages.get(page);
   const url='https://weav3r.dev/api/marketplace/'+itemId+'?limit=100&page='+page+'&sortField=price&sortDirection=asc';
-  const result=await fetch(url,{signal:AbortSignal.timeout(10000)});
-  if(!result.ok)throw Error('Market prices are temporarily unavailable.');
-  const data=await result.json();
-  if(!Array.isArray(data.listings))throw Error('Market listing data is unavailable.');
-  pages.set(page,data);
-  return data;
+  const request=fetch(url,{signal:deadline}).then(async result=>{
+   if(!result.ok)throw Error('Market prices are temporarily unavailable.');
+   return result.json();
+  });
+  pages.set(page,request);
+  return request;
  }
- const first=await get(1),count=Number(first.total_count);
- if(Number(first.item_id)!==itemId||!first.item_name||!Number.isInteger(count)||count<1)throw Error('No public listings are available for this item.');
- const prices=[];
- for(const index of [Math.floor((count-1)/2),Math.floor(count/2)]){
-  const page=await get(Math.floor(index/100)+1);
-  if(Number(page.total_count)!==count||page.generated_at!==first.generated_at)throw Error('Listings changed during this check. Try again shortly.');
-  const price=page.listings[index%100]?.price;
-  if(!Number.isSafeInteger(price)||price<=1)throw Error('A complete median could not be calculated.');
-  prices.push(price);
+ const first=await get(1);
+ if(Number(first.item_id)!==itemId||!first.item_name)throw Error('Market data did not match this Torn item.');
+ const count=Number(first.total_count);
+ let reference,median=null;
+ let source='Weav3r public listing unit-price median (unweighted)';
+ try{
+  if(!Number.isSafeInteger(count)||count<1)throw Error('No listing median available.');
+  const indices=[Math.floor((count-1)/2),Math.floor(count/2)];
+  const prices=await Promise.all(indices.map(async index=>{
+   const page=await get(Math.floor(index/100)+1);
+   if(Number(page.item_id)!==itemId||Number(page.total_count)!==count||page.generated_at!==first.generated_at)throw Error('Listings changed during this check.');
+   const price=page.listings?.[index%100]?.price;
+   if(!Number.isSafeInteger(price)||price<=1)throw Error('Listing price unavailable.');
+   return price;
+  }));
+  median=prices[0]/2+prices[1]/2;
+  reference=Math.floor(median);
+ }catch(error){
+  // The feed includes a Torn market reference even when its bazaar pages disagree.
+  if(!Number.isSafeInteger(first.market_price)||first.market_price<=1)throw error;
+  reference=first.market_price;
+  source='Torn market price reported by Weav3r';
  }
- const median=(prices[0]+prices[1])/2;
- const quote={itemId,name:first.item_name,median,reference:Math.floor(median),listingCount:count,source:'Weav3r public listing unit-price median (unweighted)',checkedAt:new Date().toISOString(),generatedAt:first.generated_at,credit90:Math.floor(median*.9)};
- await cache?.put(key,Response.json(quote,{headers:{'Cache-Control':'public, max-age=300'}}));
+ const quote={itemId,name:first.item_name,median,reference,listingCount:count,source,checkedAt:new Date().toISOString(),generatedAt:first.generated_at,credit90:Math.floor(reference*.9)};
+ try{await cache?.put(key,Response.json(quote,{headers:{'Cache-Control':'public, max-age=300'}}));}
+ catch(error){console.warn('Market cache write failed',error);}
  return quote;
 }
 
