@@ -1583,3 +1583,20 @@ test('restock status is persisted and shared with borrowers, and unauthorized ch
  const offline=await save(owner,'offline','status-offline');assert.equal(offline.status,200,offline.data.error);state=offline.data.state;
  const after=await call(env,'bank',{token:borrower});assert.equal(after.data.state.bankOnline,false);assert.equal(after.data.state.bankRestocking,false);
 });
+
+test('reserve balances persist with owner-only adjustment, idempotent withdrawals and stale-write protection',async()=>{
+ const env=fixture(),owner=(await login(env)).data.token;
+ await call(env,'access',{token:owner,body:{action:'invite',lane:'faction',id:BORROWER}});
+ const borrower=(await login(env,'borrower')).data.token;
+ const save=async(token,action,payload,requestId)=>call(env,'bank',{token,body:{action,payload,requestId,revision:(await call(env,'bank',{token})).data.state.revision}});
+ const opening=await save(owner,'setBankBalance',{amount:2e9,reference:'Opening'},'reserve-open');assert.equal(opening.status,200,opening.data.error);
+ assert.equal(TB.cash(opening.data.state,OWNER),0);assert.equal(TB.cash(opening.data.state,'bank'),2e9);
+ const denied=await save(borrower,'takeBankFunds',{amount:500e6,reference:'Forged'},'reserve-forged');assert.equal(denied.status,400);
+ const body={action:'takeBankFunds',payload:{amount:500e6,reference:'Owner draw'},requestId:'reserve-draw',revision:opening.data.state.revision};
+ const draw=await call(env,'bank',{token:owner,body});assert.equal(draw.status,200,draw.data.error);
+ const retry=await call(env,'bank',{token:owner,body});assert.equal(retry.status,200,retry.data.error);assert.equal(TB.cash(retry.data.state,OWNER),500e6);assert.equal(TB.cash(retry.data.state,'bank'),1.5e9);
+ const stale=await call(env,'bank',{token:owner,body:{...body,requestId:'reserve-stale'}});assert.equal(stale.status,409);
+ const off=await save(owner,'availability',{available:false},'reserve-offline');assert.equal(off.status,200,off.data.error);assert.equal(TB.cash(off.data.state,OWNER),0);assert.equal(TB.cash(off.data.state,'bank'),2e9);
+ const reload=(await call(env,'bank',{token:owner})).data.state;assert.equal(TB.overview(reload).cash,2e9);assert.equal(reload.ledger.length,3);
+ assert.ok(reload.audit.some(e=>e.event==='Bank funds taken'&&e.actor===OWNER));
+});

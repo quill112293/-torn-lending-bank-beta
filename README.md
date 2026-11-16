@@ -248,3 +248,11 @@ The status is controlled manually, and changes are audited and shared across acc
 ## Beta.77 automatic low-funds status
 
 Online banks automatically display yellow **Awaiting funds** below $250 million in available lending funds. At $250 million or above they return to green Online. Manual Awaiting funds and Offline selections remain in place until changed. The threshold uses the shared available lending balance after commitments, so all accounts see the same status. Applications remain available while awaiting funds. Update both scripts to **1.1.0-beta.77**.
+
+## Beta.78 separate bank reserve and shift accounting
+
+The Bank tab separates the reserve from each person's holdings. Only the owner can **Set bank balance**; this sets an absolute reserve balance and records the difference as an external adjustment, without changing anybody's holdings. The owner and vault handlers can **Take bank funds**, recording a reference and moving that amount from Bank to themselves. Taking funds marks that person available. Staff cannot set or draw from the reserve; the owner may fund staff directly, and vault handlers fund their assigned staff through existing receipt-confirmed handovers.
+
+Setting personal availability to Offline returns the full recorded balance to Bank and leaves that holder at zero. Bank is also a destination in Transfer / end shift. Pending handovers and committed loan funds block ending a shift until resolved; they cannot be silently erased. Global bank Online/Offline status does not end everybody's shift. Reserve returns and withdrawals are accounting movements, not Torn money transfers. No existing balance is migrated automatically. Reserve and staff balances both count toward available lending funds; moving cash between them does not change total funds or the restock threshold.
+
+Update both scripts to **1.1.0-beta.78** and reload Torn. No database migration is required.
