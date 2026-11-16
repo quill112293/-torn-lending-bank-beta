@@ -1,9 +1,59 @@
 import {createServer} from '../server/context.js';
+
+export async function marketQuote(itemId:number){
+ const cache=globalThis.caches?.default;
+ const key=new Request('https://tlb-market-cache.local/item/'+itemId);
+ const cached=await cache?.match(key);
+ if(cached)return cached.json();
+ const pages=new Map<number,any>();
+ async function get(page:number){
+  if(pages.has(page))return pages.get(page);
+  const url='https://weav3r.dev/api/marketplace/'+itemId+'?limit=100&page='+page+'&sortField=price&sortDirection=asc';
+  const result=await fetch(url,{signal:AbortSignal.timeout(10000)});
+  if(!result.ok)throw Error('Market prices are temporarily unavailable.');
+  const data=await result.json();
+  if(!Array.isArray(data.listings))throw Error('Market listing data is unavailable.');
+  pages.set(page,data);
+  return data;
+ }
+ const first=await get(1),count=Number(first.total_count);
+ if(Number(first.item_id)!==itemId||!first.item_name||!Number.isInteger(count)||count<1)throw Error('No public listings are available for this item.');
+ const prices=[];
+ for(const index of [Math.floor((count-1)/2),Math.floor(count/2)]){
+  const page=await get(Math.floor(index/100)+1);
+  if(Number(page.total_count)!==count||page.generated_at!==first.generated_at)throw Error('Listings changed during this check. Try again shortly.');
+  const price=page.listings[index%100]?.price;
+  if(!Number.isSafeInteger(price)||price<=1)throw Error('A complete median could not be calculated.');
+  prices.push(price);
+ }
+ const median=(prices[0]+prices[1])/2;
+ const quote={itemId,name:first.item_name,median,reference:Math.floor(median),listingCount:count,source:'Weav3r public listing unit-price median (unweighted)',checkedAt:new Date().toISOString(),generatedAt:first.generated_at,credit90:Math.floor(median*.9)};
+ await cache?.put(key,Response.json(quote,{headers:{'Cache-Control':'public, max-age=300'}}));
+ return quote;
+}
+
 export function route(env){
-const {identity,response,rateLimit}=createServer(env);
-async function GET(req:Request){try{const u=await identity(req);const itemId=new URL(req.url).searchParams.get('id');if(!/^\d{1,6}$/.test(itemId||''))throw Error('Enter a Torn item ID.');await rateLimit(u.platformId+':market',3);const cache=(caches as any).default,key=new Request('https://tlb-market-cache.local/item/'+itemId);const hit=await cache?.match(key);if(hit)return hit;
- const pages=new Map<number,any>();const get=async(page:number)=>{if(pages.has(page))return pages.get(page);const r=await fetch('https://weav3r.dev/api/marketplace/'+itemId+'?limit=100&page='+page+'&sortField=price&sortDirection=asc',{signal:AbortSignal.timeout(15000)});if(!r.ok)throw Error('Weav3r is unavailable or rate limited. Enter a verified reference manually.');const d:any=await r.json();if(!Array.isArray(d.listings))throw Error('Unexpected Weav3r response.');pages.set(page,d);return d;};
- const first=await get(1),n=Number(first.total_count);if(!Number.isInteger(n)||n<1)throw Error('No public listings are available for this item.');const indices=[Math.floor((n-1)/2),Math.floor(n/2)],prices=[];for(const index of indices){const p=await get(Math.floor(index/100)+1);if(p.total_count!==n||p.generated_at!==first.generated_at)throw Error('Listings changed during this check. Try again shortly.');const price=p.listings[index%100]?.price;if(!Number.isSafeInteger(price)||price<=1)throw Error('A complete median could not be calculated.');prices.push(price);}const median=(prices[0]+prices[1])/2;const data={itemId:Number(itemId),name:first.item_name,median,reference:Math.floor(median),listingCount:n,source:'Weav3r public listing unit-price median (unweighted)',checkedAt:new Date().toISOString(),generatedAt:first.generated_at,credit90:Math.floor(median*.9)};const result=Response.json(data,{headers:{'Cache-Control':'public, max-age=300'}});if(cache)await cache.put(key,result.clone());return result;
- }catch(e:any){return response({error:e.message},e.status||400);}}
-return { GET };
+ const srv=createServer(env);
+ return {
+  async GET(req:Request){
+   try{
+    const user=await srv.identity(req);
+    const id=new URL(req.url).searchParams.get('id');
+    if(!/^\d{1,6}$/.test(id||'')||Number(id)<1)throw Error('Enter a Torn item ID.');
+    await srv.rateLimit(user.platformId+':market',15);
+    return srv.response(await marketQuote(Number(id)));
+   }catch(e:any){return srv.response({error:e.message},e.status||400);}
+  },
+  async POST(req:Request){
+   try{
+    const user=await srv.identity(req);
+    const {key}=await srv.body(req);
+    await srv.rateLimit(user.platformId+':item-catalog',3);
+    await srv.ownKey(key,user.torn_id);
+    const catalog=await srv.torn(key,'torn/items');
+    if(!Array.isArray(catalog.items))throw Error('Torn item names are temporarily unavailable.');
+    return srv.response({items:catalog.items.filter(item=>Number.isSafeInteger(item.id)&&typeof item.name==='string').map(({id,name})=>({id,name}))});
+   }catch(e:any){return srv.response({error:e.message},e.status||400);}
+  }
+ };
 }

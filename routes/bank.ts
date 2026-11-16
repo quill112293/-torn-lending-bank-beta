@@ -1,5 +1,6 @@
 import {createServer} from '../server/context.js';
 import {applyAction,role} from '../lib/operations.js';
+import {marketQuote} from './market.ts';
 import TB from '../lib/engine.js';
 export function route(env){
 const {body,identity,loadState,saveState,response,view,rateLimit}=createServer(env);
@@ -11,7 +12,20 @@ async function POST(req:Request){try{const u=await identity(req),a=await body(re
  if(!fresh||!Number.isFinite(p.networth))throw Error('Refresh your verified net worth in Connections before applying.');
  const owner=await createServer(env).database().prepare('SELECT profile FROM identities WHERE torn_id=?').bind('3542697').first();const op=owner?JSON.parse(owner.profile):{};
  verified={...p,factionMember:!!p.faction_id&&p.faction_id===op.faction_id};
- if(a.action==='apply')a.payload.networth=p.networth;
+ a.payload.networth=p.networth;
+ if(Array.isArray(a.payload.items)){
+  const prices=new Map();
+  a.payload.items=await Promise.all(a.payload.items.slice(0,30).map(async item=>{
+   const id=item?.itemId;
+   if(Number.isSafeInteger(id)&&id>0&&id<=999999&&!prices.has(id)&&prices.size<10){
+    prices.set(id,marketQuote(id).catch(()=>null));
+   }
+   const quote=await prices.get(id);
+   if(quote)return {...item,name:quote.name,reference:quote.reference,source:quote.source,checked:quote.checkedAt};
+   verified.itemPricesNeedReview=true;
+   return {...item,reference:0,source:'Market price needs staff review',checked:''};
+  }));
+ }
  }
  const next=applyAction(s,u.torn_id,a.action,a.payload,TB.today(),verified);next.processedRequests??=[];next.processedRequests.push(u.torn_id+':'+a.requestId);await saveState(next,s.revision);return response(view(next,u));}catch(e:any){return response({error:TB.text(e.message,500)},e.status||400);}}
 return { GET, POST };

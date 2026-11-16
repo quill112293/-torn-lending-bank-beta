@@ -205,7 +205,7 @@ test('bank reset requires owner, exact confirmation and current revision; retrie
 test('application API ignores forged net worth, identity and eligibility and persists its reference',async()=>{
  const e=fixture(),owner=(await login(e)).data.token;
  await call(e,'access',{token:owner,body:{action:'invite',lane:'faction',id:BORROWER}});const borrower=(await login(e,'borrower')).data.token;
- const s=(await call(e,'bank',{token:owner})).data.state;s.bankOnline=true;TB.topup(s,1e9,'test funding');
+ const s=(await call(e,'bank',{token:owner})).data.state;s.bankOnline=true;s.rules.faction[0].open=3;TB.topup(s,1e9,'test funding');
  e.DB.sqlite.prepare('UPDATE bank_state SET data=? WHERE id=?').run(JSON.stringify(s),'main');
  const profile={id:Number(BORROWER),name:'Tester',networth:1e9,faction_id:1,checkedAt:new Date().toISOString()};e.DB.sqlite.prepare('UPDATE identities SET profile=? WHERE torn_id=?').run(JSON.stringify(profile),BORROWER);
  async function save(action,payload,requestId){const rev=(await call(e,'bank',{token:borrower})).data.state.revision;return call(e,'bank',{token:borrower,body:{action,payload,requestId,revision:rev}});}
@@ -214,6 +214,30 @@ test('application API ignores forged net worth, identity and eligibility and per
  const result=await save('apply',body,'submit');assert.equal(result.status,200,result.data.error);
  const a=result.data.state.applications[0];assert.equal(a.networth,1e9);assert.equal(a.borrowerId,BORROWER);assert.equal(a.name,'Tester');assert.equal(a.reference,d.reference);assert.equal(a.decision.automatic,true);assert.equal(result.data.state.loans[0].status,'approved');
  const retry=await save('apply',body,'submit');assert.equal(retry.data.state.loans.length,1);
+ const tornFetch=globalThis.fetch;
+ globalThis.fetch=async url=>{
+  assert.equal(new URL(url).pathname,'/api/marketplace/206');
+  return Response.json({item_id:206,item_name:'Xanax',total_count:3,generated_at:1,listings:[{price:800000},{price:820000},{price:840000}]});
+ };
+ try{
+  const item={itemId:206,name:'Forged name',qty:15,reference:100e6,source:'Fake price'};
+  const submitted=await save('apply',{...body,id:'items-app',cashCollateral:64e6,items:[item]},'submit-items');
+  assert.equal(submitted.status,200,submitted.data.error);
+  const quote=submitted.data.state.applications.at(-1);
+  assert.equal(quote.items[0].name,'Xanax');
+  assert.equal(quote.items[0].reference,820000);
+  assert.equal(TB.quote(quote,s.rules).credited,75070000);
+  assert.equal(quote.decision.automatic,true);
+  const loan=submitted.data.state.loans.at(-1);
+  assert.equal(loan.collateralConfirmed,false);
+  const unverified=await save('apply',{...body,id:'unpriced',items:[{...item,itemId:undefined}]},'submit-unpriced');
+  assert.equal(unverified.status,200,unverified.data.error);
+  const pending=unverified.data.state.applications.at(-1);
+  assert.equal(pending.items[0].reference,0);
+  assert.match(pending.reviewReasons.join(' '),/market price review/);
+  assert.equal(pending.status,'pending');
+ }finally{globalThis.fetch=tornFetch;}
+
 });
 test('staff cash API saves only own wallet and never exposes owner wallet to vault or borrower',async()=>{
  const e=fixture(),owner=(await login(e)).data.token;await call(e,'access',{token:owner,body:{action:'invite',lane:'faction',id:BORROWER}});const borrower=(await login(e,'borrower')).data.token;
