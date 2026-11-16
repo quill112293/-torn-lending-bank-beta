@@ -1,4 +1,4 @@
-import {currentTornAccount} from './trade-handoff.js';
+import {currentTornAccount,isGenericTradeHeading} from './trade-handoff.js';
 
 const hosts=new Set(['torn.com','www.torn.com']);
 const id=value=>/^[1-9]\d{0,15}$/.test(String(value??''))?String(value):null;
@@ -21,7 +21,8 @@ export function nativeAcceptControl({document,window,context,loan,flow,userId}){
  need(loan&&flow?.stage==='funds_reviewed'&&flow.reference===loan.reference&&String(flow.borrowerId)===String(loan.borrowerId),'The loan trade is not ready for acceptance.');
  need([String(flow.borrowerId),String(flow.staffId)].includes(String(userId)),'Only the borrower or receiving staff can accept this loan trade.');
  const nativeTradeId=id(flow.nativeTradeId);
- need(nativeTradeId&&context.tradeId===nativeTradeId&&context.reference===loan.reference,'Open the native Torn trade linked to this loan. Its reference and trade number must match.');
+ const genericHeading=context.referenceEvidence==='unclassified'&&isGenericTradeHeading(context.reference);
+ need(nativeTradeId&&context.tradeId===nativeTradeId&&(context.reference===loan.reference||genericHeading),'Open the native Torn trade linked to this loan. Its reference and trade number must match.');
  const roots=[...document.querySelectorAll('#trade-container')].filter(visible);
  need(roots.length===1,'The Torn trade screen could not be identified.');
  const root=roots[0];

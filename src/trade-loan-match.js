@@ -1,4 +1,4 @@
-import {currentTornAccount} from './trade-handoff.js';
+import {currentTornAccount,isGenericTradeHeading} from './trade-handoff.js';
 import {validTornKey} from './api-key.js';
 import {hasPIStatus} from '../lib/pi-collateral.js';
 import {tradeRecipients,tradeStartUrl} from '../lib/collateral-trade.js';
@@ -223,7 +223,7 @@ export function createTradeLoanDetailsController({transport,readContext,nativeAc
   if(!flowActions.has(action)||!context.page||!context.accountId||contextKey(context)!==contextKey(model.context)||String(model.data?.user?.id??'')!==context.accountId||!loanTradeActions(model.data,loan)[action]){
    publish({...resetReview(),reviewError:'This loan is not ready for that trade step. Refresh its details.'});return false;
   }
-  if(nativeConflict(context,loan,action!=='accept-ready')){publish({...resetReview(),reviewError:'The selected loan does not match the current Torn trade. Open its matching trade before continuing.'});return false;}
+  if(nativeConflict(context,loan,action!=='accept-ready'||isGenericTradeHeading(context.reference))){publish({...resetReview(),reviewError:'The selected loan does not match the current Torn trade. Open its matching trade before continuing.'});return false;}
   if(recoveryActions.has(action)){
    let step;try{const url=new URL(context.route);step=(url.hash?new URLSearchParams(url.hash.slice(1)):url.searchParams).get('step');}catch{}
    if(['accept','accept2','cancel'].includes(step)){publish({...resetReview(),reviewError:'Finish or leave Torn’s current trade confirmation, then open Loan details on the trade page to replace an expired trade.'});return false;}

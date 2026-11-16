@@ -4,7 +4,7 @@ import TB from '../lib/engine.js';
 import {applyAction} from '../lib/operations.js';
 import {canWithdrawApplication} from '../lib/application-withdrawal.js';
 import {reconcileTrade} from '../lib/trades.js';
-import {inspectLoanTrade,selectLoanTrade,applyLoanTrade} from '../lib/loan-trade.js';
+import {inspectLoanTrade,selectLoanTrade,applyLoanTrade,verifyClaimedTradeDescription} from '../lib/loan-trade.js';
 
 const owner='3542697',borrower='9000001',other='9000002',vault='9000101';
 const apiTradeId='88444',nativeTradeId='11687899',itemReference=14*800000,notes='Reviewed 14 Xanax in this trade at the accepted reference value.';
@@ -67,6 +67,16 @@ test('API trade selection requires exact reference and participants and keeps na
  state.loans[0].tradeFlow={apiTradeId,staffId:owner};
  assert.throws(()=>selectLoanTrade(state,borrower,state.loans[0].id,[],nativeTradeId),/different Torn API/);
  assert.equal(selectLoanTrade(state,borrower,state.loans[0].id,[],apiTradeId),apiTradeId);
+});
+
+test('mobile link recovery requires a unique ongoing API description and the assigned staff member',()=>{
+ const state=approved(),loan=state.loans[0],offer=trade(state);
+ loan.collateralTrade={intentId:'trade-attempt',status:'claimed',recipientId:owner};
+ const input={loanId:loan.id,intentId:'trade-attempt'};
+ assert.doesNotThrow(()=>verifyClaimedTradeDescription(state,borrower,input,[offer]));
+ for(const records of [[{...offer,description:'Other'}],[{...offer,trader:{id:other}}],[offer,{...offer,id:88445}],[{...offer,completed_at:100}]]){
+  assert.throws(()=>verifyClaimedTradeDescription(state,borrower,input,records),/exactly one ongoing/);
+ }
 });
 
 test('manual terms require separate explicit borrower consent and audit the actual approved terms',async()=>{

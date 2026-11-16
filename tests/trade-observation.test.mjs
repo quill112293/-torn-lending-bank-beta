@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import {JSDOM} from 'jsdom';
 import {currentTornAccount,observedTrade,chooseTradeControls,parseTradeHandoff,readTradeResume,rememberTradeResume,clearTradeResume} from '../src/trade-handoff.js';
 
 const BORROWER='1234567',RECIPIENT='3542697',OTHER='7654321';
@@ -63,6 +64,9 @@ function query(root,selector){
   case 'a.user.name[href*="XID="]':return links.filter(node=>classes(node,'user','name')&&node.getAttribute('href').includes('XID='));
   case '.view a[href*="ID="]':return links.filter(node=>node.getAttribute('href').includes('ID=')&&ancestor(node,root,parent=>classes(parent,'view')));
   case '.trade-status-indicator':return nodes.filter(node=>classes(node,'trade-status-indicator'));
+  case '.log > li':return nodes.filter(node=>node.tagName==='LI'&&node.parentElement.classList.contains('log'));
+  case '.desc':return nodes.filter(node=>classes(node,'desc'));
+  case 'a[href]':return links;
   case '.trade-cont':return nodes.filter(node=>classes(node,'trade-cont'));
   case ':scope > .title-black':return root.children.filter(node=>classes(node,'title-black'));
   case '.log > li .desc a[href], .user.left a[href], .user.right a[href]':return links.filter(node=>
@@ -205,6 +209,25 @@ test('opened trade evidence must have an exact native heading, one visible trade
  opened.link.parentElement.append(conflicting);assert.equal(observedTrade(document,intent,href),null);conflicting.remove();
  opened.root.append(new ElementDouble(document,'div',{class:'trade-cont'}));
  assert.equal(observedTrade(document,intent,href),null,'multiple visible trade sections are ambiguous');
+});
+
+test('the generic mobile heading and oldest borrower entry require API confirmation',()=>{
+ const href=page+'#step=view&ID='+TRADE_ID;
+ const {window}=new JSDOM(`<script uid="${BORROWER}" name="Borrower"></script><div id="trade-container">
+  <div class="title-black">Trade between Borrower &amp; Recipient</div>
+  <div class="trade-cont"></div>
+  <ul class="log">
+   <li><div class="desc"><a href="/profiles.php?XID=${BORROWER}">Borrower</a> added 14x Xanax to the trade.</div></li>
+   <li><div class="desc"><a href="/profiles.php?XID=${BORROWER}">Borrower</a> says: ${REFERENCE}</div></li>
+  </ul></div>`,{url:href});
+ window.HTMLElement.prototype.getClientRects=()=>[{}];
+ const {document}=window;
+ assert.deepEqual(observedTrade(document,intent,href),{...observation,verifyDescription:true});
+ assert.equal(observedTrade(document,intent,href+'&ID=321'),null);
+ const log=document.querySelector('.log');
+ log.prepend(log.lastElementChild);
+ assert.equal(observedTrade(document,intent,href),null,'a subsequent comment cannot identify a trade');
+ window.close();
 });
 
 test('trade observation never treats a URL, chat message or unrelated page text as creation evidence',()=>{

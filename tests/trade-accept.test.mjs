@@ -31,6 +31,15 @@ test('one explicit native Accept forwards the existing initial link once and pre
  assert.throws(()=>f.adapter.accept(input),/already sent/);assert.equal(f.clicks,1);
 });
 
+test('a generic mobile heading can accept only with matching stored native trade evidence',()=>{
+ const f=fixture();
+ Object.assign(f.context,{reference:'Trade between Borrower & Lender',referenceEvidence:'unclassified'});
+ assert.equal(f.adapter.availability(f.input()).ready,true);
+ f.context.tradeId=API;
+ assert.equal(f.adapter.availability(f.input()).ready,false);
+ assert.equal(f.clicks,0);
+});
+
 test('unready, stale or mismatched API readiness proof never clicks a native control',()=>{
  for(const change of [f=>{f.check.ready=false;},f=>{f.check.stage='funds_added';},f=>{f.check.apiTradeId='1';},f=>{f.check.nativeTradeId='2';},f=>{f.flow.stage='completed';},f=>{f.flow.reference='TLB-OTHER';}]){
   const f=fixture();change(f);assert.throws(()=>f.adapter.accept(f.input()));assert.equal(f.clicks,0);

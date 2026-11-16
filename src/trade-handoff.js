@@ -1,3 +1,4 @@
+import {validTornKey} from './api-key.js';
 import {tradeLoanEligible,tradeViewUrl} from '../lib/collateral-trade.js';
 
 const hosts=new Set(['torn.com','www.torn.com']);
@@ -6,6 +7,7 @@ const playerId=value=>/^[1-9]\d{0,9}$/.test(String(value??''))?String(value):nul
 const uiId=value=>/^[1-9]\d{0,15}$/.test(String(value??''))?String(value):null;
 const need=(condition,message)=>{if(!condition)throw Error(message);};
 const normalized=value=>String(value??'').replace(/\s+/g,' ').trim();
+export const isGenericTradeHeading=value=>/^trade between /i.test(value||'');
 const resumeKey='tlb-beta-trade-observation';
 const reviewKey='tlb-beta-created-trade-review',reviewLifetime=10*60*1000;
 
@@ -74,19 +76,19 @@ function activeTradeId(href,base){
  try{
   const url=new URL(href,base);if(url.protocol!=='https:'||!hosts.has(url.hostname)||url.port||url.pathname!=='/trade.php')return null;
   const params=url.hash?new URLSearchParams(url.hash.slice(1)):url.searchParams;
-  return ['view','accept','accept2','cancel'].includes(params.get('step'))?uiId(params.get('ID')):null;
+  return params.getAll('step').length===1&&params.getAll('ID').length===1&&['view','accept','accept2','cancel'].includes(params.get('step'))?uiId(params.get('ID')):null;
  }catch{return null;}
 }
 
-function exactDescription(node,reference){
- if(!visible(node))return false;
+function renderedText(current){
  // Read only rendered text. Hidden descendants and TornW3B's appended status
  // indicator must not supply a reference that the borrower cannot see.
- function renderedText(current){
-  if(current.nodeType===3)return current.textContent;
-  if(current.nodeType!==1||!visible(current)||current.classList.contains('trade-status-indicator'))return '';
-  return [...current.childNodes].map(renderedText).join('');
- }
+ if(current.nodeType===3)return current.textContent;
+ if(current.nodeType!==1||!visible(current)||current.classList.contains('trade-status-indicator'))return '';
+ return [...current.childNodes].map(renderedText).join('');
+}
+
+function exactDescription(node,reference){
  const text=normalized(renderedText(node)).replace(/^(?:trade\s+)?description\s*:\s*/i,'');
  return text===reference;
 }
@@ -112,14 +114,30 @@ export function observedTrade(document,intent,href){
  const roots=[...document.querySelectorAll('#trade-container')].filter(visible);
  if(roots.length!==1)return null;
  const root=roots[0],trades=[...root.querySelectorAll('.trade-cont')].filter(visible),headings=[...root.querySelectorAll(':scope > .title-black')].filter(visible);
- if(trades.length!==1||headings.length!==1||!exactDescription(headings[0],intent.reference))return null;
- const participants=[...root.querySelectorAll('.log > li .desc a[href], .user.left a[href], .user.right a[href]')].filter(visible).map(a=>profileId(a.getAttribute('href'),href)).filter(id=>id&&id!==String(intent.borrowerId));
- if(!participants.length||new Set(participants).size!==1||participants[0]!==String(intent.recipientId))return null;
- // Read existing native links only. Never click accept, cancel, or asset controls.
- const ids=[...root.querySelectorAll('.trade-cancel a[href]')].filter(visible).map(a=>activeTradeId(a.getAttribute('href'),href)).filter(Boolean);
+ if(trades.length!==1||headings.length!==1)return null;
  const currentId=activeTradeId(href,href);
- if(!ids.length||new Set(ids).size!==1||currentId&&currentId!==ids[0]||excluded.has(ids[0]))return null;
- return {uiTradeId:ids[0],reference:intent.reference,recipientId:String(intent.recipientId)};
+ const ids=[...root.querySelectorAll('.trade-cancel a[href]')].filter(visible).map(a=>activeTradeId(a.getAttribute('href'),href)).filter(Boolean);
+ if(new Set(ids).size>1||ids.length&&currentId&&currentId!==ids[0])return null;
+ const id=ids[0]||currentId;
+ if(!id||excluded.has(id))return null;
+ if(exactDescription(headings[0],intent.reference)){
+  const participants=[...root.querySelectorAll('.log > li .desc a[href], .user.left a[href], .user.right a[href]')].filter(visible).map(a=>profileId(a.getAttribute('href'),href)).filter(peer=>peer&&peer!==String(intent.borrowerId));
+  if(ids.length&&participants.length&&new Set(participants).size===1&&participants[0]===String(intent.recipientId))return {uiTradeId:id,reference:intent.reference,recipientId:String(intent.recipientId)};
+ }
+ // On mobile Torn can use a generic heading and render the initial trade
+ // description as the oldest log entry. Treat that entry only as a candidate.
+ // The bank independently verifies the actual description and both players.
+ const url=new URL(href),params=url.hash?new URLSearchParams(url.hash.slice(1)):url.searchParams;
+ if(params.has('ID')&&(!currentId||params.get('step')!=='view'))return null;
+ if(!isGenericTradeHeading(normalized(renderedText(headings[0]))))return null;
+ const first=[...root.querySelectorAll('.log > li')].filter(visible).at(-1);
+ const descriptions=[...(first?.querySelectorAll('.desc')||[])].filter(visible);
+ if(descriptions.length!==1)return null;
+ const description=descriptions[0],authors=[...description.querySelectorAll('a[href]')].filter(visible);
+ if(authors.length!==1||profileId(authors[0].getAttribute('href'),href)!==String(intent.borrowerId))return null;
+ const entry=normalized(renderedText(description)),author=normalized(renderedText(authors[0]));
+ if(!author||entry!==author+' says: '+intent.reference)return null;
+ return {uiTradeId:id,reference:intent.reference,recipientId:String(intent.recipientId),verifyDescription:true};
 }
 
 export function readTradeResume(storage,href){
@@ -311,7 +329,13 @@ async function saveObservedTrade(transport,handoff,observed,requestId){
  const latest=await transport.request('bank'),{intent}=matchedIntent(latest,handoff);
  need(observed&&observed.reference===intent.reference&&String(observed.recipientId)===String(intent.recipientId)&&uiId(observed.uiTradeId),'Torn has not shown a matching created trade yet.');
  need(!intent.excludedNativeTradeIds?.includes(String(observed.uiTradeId)),'That trade belongs to an earlier attempt. Open the current loan trade before continuing.');
- const saved=await transport.request('bank',{action:'recordCollateralTrade',payload:{loanId:handoff.loanId,intentId:handoff.intentId,reference:intent.reference,uiTradeId:observed.uiTradeId},revision:latest.state.revision,requestId:requestId()});
+ const payload={loanId:handoff.loanId,intentId:handoff.intentId,reference:intent.reference,uiTradeId:observed.uiTradeId};
+ if(observed.verifyDescription){
+  const key=transport.getSavedKey?.();
+  need(validTornKey(key),'Open the bank and remember your Torn API key on this device, then return to this trade so its description can be verified.');
+  Object.assign(payload,{verifyDescription:true,key});
+ }
+ const saved=await transport.request('bank',{action:'recordCollateralTrade',payload,revision:latest.state.revision,requestId:requestId()});
  return matchedIntent(saved,handoff).intent;
 }
 
