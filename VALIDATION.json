@@ -1,10 +1,10 @@
 {
   "channel": "beta",
-  "version": "1.1.0-beta.59",
-  "basedOn": "1.1.0-beta.58",
+  "version": "1.1.0-beta.62",
+  "basedOn": "1.1.0-beta.61",
   "build": "passed",
-  "tests": 196,
-  "workerPackaging": "Production build and encrypted push delivery pass in local workerd. Runtime regression reproduces the original invalid redirect error and passes with manual redirect handling. The installed workerd uses compatibility date 2026-05-22.",
+  "tests": 238,
+  "workerPackaging": "Production build and Wrangler 4.92.0 deploy --dry-run passed against the configured beta Worker and its dedicated database binding. Encrypted push delivery passed in local workerd with the existing 2026-05-22 runtime-test compatibility date.",
   "sessionChecks": [
     "No time limit, including simulated ten-year passage",
     "Scheduled cleanup preserves permanent sessions",
@@ -82,5 +82,17 @@
     "Existing quotes can be explicitly refreshed; source, check time and retained estimates are shown.",
     "Mounted React DOM checks passed fallback recovery, quantity edits during requests, failed-refresh retention, retry recovery and stale-result cancellation."
   ],
-  "collateralTotalDisplay": "Application detail shows the combined face-value total and the existing credited collateral separately. Screenshot example: $20,000,000 cash + 31 \u00d7 $838,912 + $24,244,000 = $70,250,272; credited at 90% for items = $65,225,244. No valuation or approval rule changed."
+  "collateralTotalDisplay": "Application detail shows the combined face-value total and the existing credited collateral separately. Screenshot example: $20,000,000 cash + 31 \u00d7 $838,912 + $24,244,000 = $70,250,272; credited at 90% for items = $65,225,244. No valuation or approval rule changed.",
+  "withdrawalChecks": [
+    "Only the application borrower may withdraw a pending or approved, unfunded request; existing withdrawals are idempotent.",
+    "Original request, approval, notes and collateral evidence remain; status-based loan slots and lender reservations are released without changing cash or successful repayment counts.",
+    "Withdrawn loans have no outstanding balance, accrued interest, repayment schedule or new late strikes.",
+    "Funded, closed, archived funded and ledger-backed requests cannot be withdrawn; stale approval, funding, collateral verification, terms and payment actions are rejected.",
+    "API persistence, reload, new applications after withdrawal and exactly one activity notification passed.",
+    "Competing funding and withdrawal saves were tested in both orders, including a conflict at the conditional database update; only the winning state and notification persist.",
+    "A failed database batch rolls back withdrawal and its activity notification.",
+    "Received cash, item and PI collateral remain recorded for complete return per holder, including unknown legacy and disabled historical holders; archived unresolved custody requires staff reconciliation.",
+    "Owner cleanup still archives a withdrawn unfunded loan only when it has no protected payment, ledger or collateral evidence."
+  ],
+  "withdrawalUI": "19 focused rendered UI tests passed, including the six new withdrawal component tests plus approval-progress and member-program regressions. Full mounted interaction was attempted but Chromium could not create its process-singleton socket in this environment. No interactive browser or iPhone/Torn PDA withdrawal result is claimed."
 }

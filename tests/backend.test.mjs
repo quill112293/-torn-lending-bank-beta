@@ -601,3 +601,114 @@ test('application submission shares one Weav3r catalog fallback and retains staf
   assert.equal(saved.data.state.loans[0].collateralConfirmed,false);
  }finally{globalThis.fetch=previousFetch;}
 });
+
+async function withdrawalScenario(accepted=true){
+ const env=fixture(),owner=(await login(env)).data.token;
+ assert.equal((await call(env,'access',{token:owner,body:{action:'invite',lane:'faction',id:BORROWER}})).status,200);
+ const borrower=(await login(env,'borrower')).data.token;
+ const initial=(await call(env,'bank',{token:owner})).data.state;
+ initial.bankOnline=true;
+ TB.topup(initial,1e9,'Withdrawal test bank funds');
+ env.DB.sqlite.prepare('UPDATE bank_state SET data=? WHERE id=?').run(JSON.stringify(initial),'main');
+ env.DB.sqlite.prepare('UPDATE identities SET profile=? WHERE torn_id=?').run(JSON.stringify({id:Number(BORROWER),name:'Tester',networth:1e9,faction_id:1,checkedAt:new Date().toISOString()}),BORROWER);
+ const read=()=>JSON.parse(env.DB.sqlite.prepare('SELECT data FROM bank_state WHERE id=?').get('main').data);
+ const save=(token,action,payload,revision=read().revision,requestId=crypto.randomUUID())=>call(env,'bank',{token,body:{action,payload,revision,requestId}});
+ const application={...TB.sampleApp({borrowerId:BORROWER,name:'Tester',tier:0,requested:100e6,cashCollateral:100e6,items:[]}),acceptPreapproval:accepted};
+ const submitted=await save(borrower,'apply',application);
+ assert.equal(submitted.status,200,submitted.data.error);
+ return {env,owner,borrower,read,save,application,appId:submitted.data.state.applications[0].id,loanId:submitted.data.state.loans[0]?.id};
+}
+
+test('pending and approved withdrawals persist once, notify staff and free the slot for a fresh application',async()=>{
+ for(const accepted of [false,true]){
+  const f=await withdrawalScenario(accepted),before=f.read(),requestId='withdraw-once';
+  const withdrawn=await f.save(f.borrower,'withdrawApplication',{id:f.appId},before.revision,requestId);
+  assert.equal(withdrawn.status,200,withdrawn.data.error);
+  assert.equal(withdrawn.data.state.applications[0].status,'withdrawn');
+  assert.equal(withdrawn.data.state.applications[0].withdrawal.by,BORROWER);
+  if(accepted)assert.equal(withdrawn.data.state.loans[0].status,'withdrawn');
+  const repeated=await f.save(f.borrower,'withdrawApplication',{id:f.appId},before.revision,requestId);
+  assert.equal(repeated.status,200,repeated.data.error);
+  const freshRetry=await f.save(f.borrower,'withdrawApplication',{id:f.appId});
+  assert.equal(freshRetry.status,200,freshRetry.data.error);
+  const state=f.read();
+  assert.equal(state.audit.filter(e=>e.event==='Application withdrawn').length,1);
+  const events=f.env.DB.sqlite.prepare('SELECT data FROM push_events').all().map(row=>JSON.parse(row.data));
+  assert.equal(events.filter(e=>e.event==='Application withdrawn').length,1);
+  assert.deepEqual(state.ledger,before.ledger);
+  assert.equal(loanSlots(state,BORROWER,{lane:'faction',tier:0}).open,0);
+  const reloaded=await call(f.env,'bank',{token:f.borrower});
+  assert.equal(reloaded.data.state.applications[0].status,'withdrawn');
+  const replacement=await f.save(f.borrower,'apply',{...f.application,id:crypto.randomUUID(),acceptPreapproval:true});
+  assert.equal(replacement.status,200,replacement.data.error);
+  assert.equal(replacement.data.state.applications.at(-1).status,'approved');
+  assert.equal(loanSlots(f.read(),BORROWER,{lane:'faction',tier:0}).open,1);
+ }
+});
+
+test('withdrawal API authenticates the borrower and rejects stale approval decisions',async()=>{
+ const f=await withdrawalScenario(false);
+ assert.equal((await call(f.env,'access',{token:f.owner,body:{action:'invite',lane:'faction',id:OTHER}})).status,200);
+ const other=(await login(f.env,'other')).data.token;
+ for(const token of [other,f.owner]){
+  const result=await f.save(token,'withdrawApplication',{id:f.appId});
+  assert.equal(result.status,400);
+  assert.equal(f.read().applications[0].status,'pending');
+ }
+ const oldRevision=f.read().revision;
+ assert.equal((await f.save(f.borrower,'withdrawApplication',{id:f.appId})).status,200);
+ const approval={id:f.appId,amount:100e6,reason:'Stale staff approval',checks:true};
+ assert.equal((await f.save(f.owner,'approve',approval,oldRevision)).status,409);
+ assert.equal((await f.save(f.owner,'approve',approval)).status,400);
+ assert.equal(f.read().loans.length,0);
+});
+
+test('withdrawal and recorded funding races commit only the winning action and notification',async()=>{
+ for(const winner of ['withdrawApplication','fund']){
+  const f=await withdrawalScenario(),ready=f.read(),loan=ready.loans[0];
+  loan.collateralConfirmed={by:OWNER,amount:loan.collateralRequired,reference:'TEST-RECEIVED-COLLATERAL'};
+  ready.collateral=[{id:'test-custody',loanId:loan.id,borrowerId:BORROWER,event:'received',holder:OWNER,amount:loan.collateralRequired,reference:'TEST-RECEIVED-COLLATERAL',date:TB.today(),by:OWNER}];
+  f.env.DB.sqlite.prepare('UPDATE bank_state SET data=? WHERE id=?').run(JSON.stringify(ready),'main');
+  const revision=ready.revision;
+  const requests={
+   withdrawApplication:{token:f.borrower,payload:{id:f.appId}},
+   fund:{token:f.owner,payload:{id:f.loanId,reference:'TEST-COMPLETED-DISBURSEMENT'}}
+  };
+  const loser=winner==='fund'?'withdrawApplication':'fund';
+  const originalBatch=f.env.DB.batch;
+  // Commit the competing request after the outer request's pre-save read,
+  // immediately before its conditional update reaches the database.
+  f.env.DB.batch=async statements=>{
+   f.env.DB.batch=originalBatch;
+   const competing=await f.save(requests[winner].token,winner,requests[winner].payload,revision,'race-winner');
+   assert.equal(competing.status,200,competing.data.error);
+   return originalBatch.call(f.env.DB,statements);
+  };
+  const losing=await f.save(requests[loser].token,loser,requests[loser].payload,revision,'race-loser');
+  assert.equal(losing.status,409,losing.data.error);
+  const state=f.read(),funded=winner==='fund';
+  assert.equal(state.revision,revision+1);
+  assert.equal(state.loans[0].status,funded?'active':'withdrawn');
+  assert.equal(state.applications[0].status,funded?'approved':'withdrawn');
+  assert.equal(state.ledger.filter(e=>e.type==='disbursement').length,funded?1:0);
+  assert.equal(state.audit.filter(e=>e.event==='Application withdrawn').length,funded?0:1);
+  const events=f.env.DB.sqlite.prepare('SELECT data FROM push_events').all().map(row=>JSON.parse(row.data));
+  assert.equal(events.filter(e=>e.event==='Application withdrawn').length,funded?0:1);
+  assert.equal(events.filter(e=>e.event==='Disbursement recorded').length,funded?1:0);
+  const retry=await f.save(requests[loser].token,loser,requests[loser].payload);
+  assert.equal(retry.status,400,retry.data.error);
+  assert.equal(f.read().loans[0].status,funded?'active':'withdrawn');
+ }
+});
+
+test('failed withdrawal persistence rolls back the request and its activity notification',async()=>{
+ const f=await withdrawalScenario(),before=f.read(),originalBatch=f.env.DB.batch;
+ const eventCount=f.env.DB.sqlite.prepare('SELECT count(*) AS n FROM push_events').get().n;
+ f.env.DB.batch=statements=>originalBatch.call(f.env.DB,[...statements,f.env.DB.prepare('INSERT INTO missing_table VALUES (1)')]);
+ const result=await f.save(f.borrower,'withdrawApplication',{id:f.appId});
+ assert.equal(result.status,400);
+ assert.deepEqual(f.read(),before);
+ assert.equal(f.env.DB.sqlite.prepare('SELECT count(*) AS n FROM push_events').get().n,eventCount);
+ f.env.DB.batch=originalBatch;
+ assert.equal((await f.save(f.borrower,'withdrawApplication',{id:f.appId})).status,200);
+});
