@@ -1,3 +1,4 @@
+import {assignMemberProgram,memberProgram} from '../lib/member-program.js';
 import TB from '../lib/engine.js';
 import {notificationRoute,drainPush} from './push.js';
 import {role} from '../lib/operations.js';
@@ -19,7 +20,7 @@ export async function handle(request,env,ctx){
  let result;const srv=createServer(env);const {database,response,body,identity,rateLimit,loadState,saveState,allowed,torn,flagConfirmedProfile}=srv;
  try{
   if(request.method==='OPTIONS')result=new Response(null,{status:204});
-  else if(path==='/api/health'&&request.method==='GET'){let notificationsReady=false;try{await database().prepare('SELECT id FROM push_devices LIMIT 1').first();notificationsReady=true;}catch{}result=response({ok:true,version:'1.1.0-beta.36',notificationsReady});}
+  else if(path==='/api/health'&&request.method==='GET'){let notificationsReady=false;try{await database().prepare('SELECT id FROM push_devices LIMIT 1').first();notificationsReady=true;}catch{}result=response({ok:true,version:'1.1.0-beta.37',notificationsReady});}
   else if(path==='/api/notifications')result=await notificationRoute(request,srv);
   else if(path==='/api/link'&&request.method==='POST'){
    const ip=request.headers.get('cf-connecting-ip')||'local';await rateLimit('login:'+await digest(ip),5);
@@ -37,11 +38,22 @@ export async function handle(request,env,ctx){
   }else if(path==='/api/logout'&&request.method==='POST'){
    const u=await identity(request);await body(request);await database().batch([database().prepare('DELETE FROM sessions WHERE token_hash=?').bind(u.sessionHash),database().prepare('DELETE FROM push_devices WHERE session_hash=?').bind(u.sessionHash)]);result=response({ok:true});
   }else if(path==='/api/access'){
-   const u=await identity(request);if(u.torn_id!==OWNER_ID)fail('Only the owner can manage invitations.',403);
-   if(request.method==='GET')result=response({members:(await database().prepare('SELECT a.torn_id,a.created_at,i.name FROM allowed_members a LEFT JOIN identities i ON i.torn_id=a.torn_id ORDER BY a.created_at').all()).results});
+   const u=await identity(request),s=await loadState();if(role(s,u.torn_id)==='borrower')fail('Staff permission is required.',403);
+   if(request.method==='GET'){const members=(await database().prepare('SELECT a.torn_id,a.created_at,i.name FROM allowed_members a LEFT JOIN identities i ON i.torn_id=a.torn_id ORDER BY a.created_at').all()).results;result=response({members:members.map(m=>({...m,memberProgram:memberProgram(s,m.torn_id)}))});}
    else if(request.method==='POST'){
+    if(u.torn_id!==OWNER_ID)fail('Only the owner can manage invitations.',403);
     await rateLimit(u.platformId+':access',15);const a=await body(request),id=TB.ident(a.id);if(id===OWNER_ID)fail('The owner always has access.');
-    if(a.action==='invite')await database().prepare('INSERT OR IGNORE INTO allowed_members(torn_id,created_at,created_by) VALUES(?,?,?)').bind(id,new Date().toISOString(),u.torn_id).run();
+    if(a.action==='invite'){
+     TB.need(['faction','external'].includes(a.lane),'Select faction or non-faction when adding the member.');
+     const existing=await database().prepare('SELECT torn_id FROM allowed_members WHERE torn_id=?').bind(id).first();
+     if(existing){TB.need(memberProgram(s,id)===a.lane,'This member already has access. Set or change their member type in Users.');}
+     else{
+      s.actorId=u.torn_id;assignMemberProgram(s,id,a.lane,'Assigned when joining the bank');
+      await saveState(s,s.revision,(serialized,revision)=>[
+       database().prepare('INSERT OR IGNORE INTO allowed_members(torn_id,created_at,created_by) SELECT ?,?,? WHERE EXISTS (SELECT 1 FROM bank_state WHERE id=? AND revision=? AND data=?)').bind(id,new Date().toISOString(),u.torn_id,'main',revision,serialized)
+      ]);
+     }
+    }
     else if(a.action==='revoke'){if(role(await loadState(),id)!=='borrower')fail('Disable this staff member in Team first.');await database().batch([database().prepare('DELETE FROM allowed_members WHERE torn_id=?').bind(id),database().prepare('DELETE FROM sessions WHERE torn_id=?').bind(id),database().prepare('DELETE FROM push_devices WHERE torn_id=?').bind(id)]);}
     else fail('Choose invite or revoke.');result=response({ok:true});
    }else fail('Method not allowed.',405);

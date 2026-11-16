@@ -5,7 +5,7 @@ import {applyAction,project} from '../lib/operations.js';
 import {verifyCollateral} from '../lib/collateral-proof.js';
 const owner='3542697',borrower='9000001';
 const verified={networth:1e9,factionMember:true,checkedAt:new Date().toISOString()};
-function base(){const s=TB.newState();s.bankOnline=true;TB.topup(s,1e9,'initial');return s;}
+function base(){const s=TB.newState();s.bankOnline=true;TB.topup(s,1e9,'initial');TB.person(s,borrower).memberProgram='faction';return s;}
 function input(overrides={}){return {...TB.sampleApp({tier:0,items:[],cashCollateral:100e6,requested:100e6,...overrides}),acceptPreapproval:true};}
 function apply(s,a=input(),who=borrower,v=verified){return applyAction(s,who,'apply',a,TB.today(),v);}
 function trade(s,id=123,cash=100e6){return {id,completed_at:Math.ceil(Date.parse(s.applications[0].created)/1000)+1,user:{id:Number(owner)},trader:{id:Number(borrower)},items:[{user_id:Number(borrower),type:'Money',details:{amount:cash}}]};}

@@ -1,8 +1,9 @@
 import React,{useState,useEffect,useRef} from 'react';
+import {programLabel} from '../lib/member-program.js';
 import {parseInviteId} from './invite-id.js';
 
-export default function OwnerAccess({request,onImported}){
- const [members,setMembers]=useState([]),[id,setId]=useState(''),[error,setError]=useState('');
+export default function OwnerAccess({request,onImported,onChanged}){
+ const [members,setMembers]=useState([]),[id,setId]=useState(''),[lane,setLane]=useState(''),[error,setError]=useState('');
  const [pending,setPending]=useState(''),[message,setMessage]=useState('');
  const [file,setFile]=useState(null),[confirm,setConfirm]=useState('');
  const working=useRef(false),busy=!!pending;
@@ -18,13 +19,14 @@ export default function OwnerAccess({request,onImported}){
   if(working.current)return;
   setError('');setMessage('');
   let targetId;
-  try{targetId=parseInviteId(target);}catch(e){setError(e.message);return;}
+  try{targetId=parseInviteId(target);if(action==='invite'&&!lane)throw Error('Select faction or non-faction for this member.');}catch(e){setError(e.message);return;}
   working.current=true;setPending(action);
   try{
-   await request('access',{action,id:targetId});
+   await request('access',{action,id:targetId,...(action==='invite'?{lane}:{})});
    // The POST confirms the write. Update this list immediately without a second request.
-   setMembers(current=>action==='invite'?(current.some(m=>m.torn_id===targetId)?current:[...current,{torn_id:targetId}]):current.filter(m=>m.torn_id!==targetId));
-   if(action==='invite')setId('');
+   setMembers(current=>action==='invite'?(current.some(m=>m.torn_id===targetId)?current:[...current,{torn_id:targetId,memberProgram:lane}]):current.filter(m=>m.torn_id!==targetId));
+   if(action==='invite'){setId('');setLane('');}
+   await onChanged?.();
    setMessage(action==='invite'?'Borrower access enabled for Torn ID '+targetId+'. Share the borrower script with this tester; they sign in with their own Torn API key.':'Access removed for Torn ID '+targetId+'.');
   }catch(e){setError(e.message);}
   finally{working.current=false;setPending('');}
@@ -44,13 +46,15 @@ export default function OwnerAccess({request,onImported}){
   <p className='muted'>Only you, your active staff and the Torn IDs added here can sign in. This enables borrower access; it does not send a Torn message. Staff roles are managed in Team.</p>
   <form className='stack tight' noValidate onSubmit={e=>{e.preventDefault();change('invite',id);}}>
    <label className='field'><span>Tester’s Torn ID or profile link</span><input aria-label='Invite Torn ID' placeholder='1234567 or Name [1234567]' inputMode='numeric' maxLength={500} value={id} onChange={e=>setId(e.target.value)}/></label>
+   <label className='field'><span>Member type</span><select aria-label='Member type' value={lane} onChange={e=>setLane(e.target.value)}><option value=''>Select member type</option><option value='faction'>Faction VIP+</option><option value='external'>Non-faction secured</option></select></label>
+   <p className='micro'>Saved when they join. Their loan applications use this status automatically.</p>
    <button type='button' className='primary' disabled={busy} onClick={()=>change('invite',id)}>{pending==='invite'?'Adding access…':'Invite borrower'}</button>
   </form>
   {error&&<p role='alert' className='notice red'>{error}</p>}
   {message&&<p role='status' className='notice'>{message}</p>}
   <div className='actions'><button type='button' className='subtle' disabled={busy} onClick={reload}>Refresh access list</button></div>
   {!members.length&&!busy&&!error&&<p className='muted'>No beta borrowers added yet.</p>}
-  {members.map(m=><div className='record static' key={m.torn_id}><span className='record-main'>Torn ID {m.torn_id}</span><button type='button' className='subtle danger' disabled={busy} onClick={()=>change('revoke',m.torn_id)}>Remove access</button></div>)}
+  {members.map(m=><div className='record static' key={m.torn_id}><span className='record-main'>Torn ID {m.torn_id}<small>{programLabel(m.memberProgram)}</small></span><button type='button' className='subtle danger' disabled={busy} onClick={()=>change('revoke',m.torn_id)}>Remove access</button></div>)}
  </section><section className='card'>
   <h2>Move existing bank records</h2><p className='muted'>Export your records from Connections on the old bank. Import that owner export here before creating new applications, loans, funding or staff. Import is blocked once this bank has activity.</p>
   <input aria-label='Owner bank export' type='file' accept='.json,application/json' onChange={e=>setFile(e.target.files?.[0]||null)}/>

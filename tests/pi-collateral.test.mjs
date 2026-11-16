@@ -7,7 +7,7 @@ import {filterHistory} from '../lib/history.js';
 
 const owner='3542697',borrower='9000001';
 const verified={networth:1e9,factionMember:true,checkedAt:new Date().toISOString()};
-function base(){const s=TB.newState();s.bankOnline=true;TB.topup(s,1e9,'initial');TB.person(s,borrower).piRto=true;return s;}
+function base(){const s=TB.newState();s.bankOnline=true;TB.topup(s,1e9,'initial');TB.person(s,borrower).piRto=true;s.borrowers[borrower].memberProgram='external';return s;}
 function proposal(overrides={}){return {...TB.sampleApp({lane:'external',tier:4,product:'bank',piRto:true,networth:1e9,requested:100e6,items:[],cashCollateral:0,piCollateral:10e6,...overrides}),acceptPreapproval:true};}
 function pending(s=base()){return applyAction(s,borrower,'apply',proposal(),TB.today(),verified);}
 function approved(){let s=pending();return applyAction(s,owner,'approve',{id:s.applications[0].id,amount:100e6,checks:true});}
@@ -47,7 +47,7 @@ test('manual PI collateral needs no trade or reference and enables ordinary fund
 
 test('current saved PI status is required for proposal, edits, approval and confirmation',()=>{
  const s=base();s.borrowers[borrower].piRto=false;
- assert.throws(()=>applyAction(s,borrower,'apply',proposal({lane:'faction',tier:0,product:'house'}),TB.today(),verified),/saved Private Island status/);
+ assert.throws(()=>applyAction(s,borrower,'apply',proposal({tier:0}),TB.today(),verified),/saved Private Island status/);
  assert.throws(()=>applyAction(s,owner,'apply',proposal()),/saved Private Island status/);
  const p=pending();p.borrowers[borrower].piRto=false;
  assert.throws(()=>applyAction(p,owner,'editApplication',{id:p.applications[0].id,application:p.applications[0]}),/saved Private Island status/);
@@ -77,7 +77,7 @@ test('PI collateral is recorded once, cannot replace Torn confirmation, and reta
 });
 
 test('existing waiting loans accept PI value after the user is labelled, including archived applications',()=>{
- let s=base();s.borrowers[borrower].piRto=false;
+ let s=base();s.borrowers[borrower].piRto=false;s.borrowers[borrower].memberProgram='faction';
  s=applyAction(s,borrower,'apply',{...proposal({lane:'faction',tier:0,product:'house',piCollateral:0,cashCollateral:100e6,piRto:false})},TB.today(),verified);
  assert.equal(s.loans.length,1);const appId=s.applications[0].id;
  s=applyAction(s,owner,'userStatus',{id:borrower,piRto:true,reason:'Confirmed PI rental participant'});

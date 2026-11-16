@@ -1,6 +1,6 @@
 # Torn Lending Bank — BETA
 
-Standalone beta bank. Beta.36 adds lender-reviewed PI payment collateral for users with the saved Private Island status. The lender opens on Overview, borrowers retain Welcome lobby, and sign-in lasts until logout; deployment is tracked separately from source validation.
+Standalone beta bank. Beta.37 moves faction/non-faction selection to member setup; loan applications use the saved assignment. The lender opens on Overview, borrowers retain Welcome lobby, and sign-in lasts until logout; deployment is tracked separately from source validation.
 
 ## Setup
 
@@ -80,3 +80,14 @@ Replaces the unsupported `redirect: "error"` fetch option with Cloudflare-compat
 Users with Private Island status saved in Users can propose a PI payment collateral value on an application. It counts toward the preliminary collateral calculation and always requires lender review. For an approved loan awaiting collateral, staff can choose **Record PI payment collateral**, enter the accepted value and valuation notes, select the responsible lender and confirm that the value is available for this loan. A payment/agreement reference is optional; no Torn trade ID or API check is needed. The accepted value must cover the loan's required collateral.
 
 The server checks the borrower's current saved PI status and staff permissions. Application checkboxes alone do not authorize this path. Confirmation is recorded once against the loan with its value, reviewer, responsible lender, time and notes, and appears in collateral custody and user history. It does not add bank cash or repay the loan; funding still requires borrower confirmation and a separate disbursement record. Payment values are entered and reviewed by the lender, not automatically calculated from PI payments. Existing Torn trade verification remains available. No database migration is required.
+
+
+## Beta.37 member type at signup
+
+The owner selects **Faction VIP+** or **Non-faction secured** when inviting a member. The invitation and member type are saved together. Repeating an invitation cannot change an existing member's type. Active owner, vault and staff accounts can assign or correct it in **Users → Member type**, with a reason recorded in user history. Other user statuses, trust overrides, invitations, access removal and history clearing retain their owner-only permissions.
+
+Applications have no faction/non-faction dropdown. They display the saved member type and automatically use the matching loan product and eligibility rules. The server validates that assignment for new submissions, pending application edits and approvals; a borrower cannot override it in a request. Eligible cash requests still use automatic approval after the member's setup is complete. Existing loans retain their saved terms.
+
+Existing members need a one-time assignment in Users before submitting a new application. Their old self-selected applications are not treated as staff-confirmed membership. If staff change the member type while an application is pending, review and save that application's details before approving it. No database migration is needed. Rebuild and update both userscripts along with the Worker; older scripts may still display the old dropdown, but the updated server rejects mismatched selections.
+
+Validation: `npm run build` and `npm test`, including signup persistence, transaction rollback/concurrent saves, staff/borrower permissions, both application programs, unchanged existing loans, and rendered forms.

@@ -18,7 +18,7 @@ test.after(()=>{globalThis.fetch=realFetch;});
 test('anonymous and forged platform headers cannot read the bank',async()=>{const e=fixture();assert.equal((await call(e,'bank',{extra:{'oai-authenticated-user-id':OWNER}})).status,401);});
 test('PI collateral saves through the bank API without Torn trade access and survives reload',async()=>{
  const e=fixture(),owner=(await login(e)).data.token;
- await call(e,'access',{token:owner,body:{action:'invite',id:BORROWER}});
+ await call(e,'access',{token:owner,body:{action:'invite',lane:'faction',id:BORROWER}});
  const borrower=(await login(e,'borrower')).data.token;
  const s=(await call(e,'bank',{token:owner})).data.state;
  TB.person(s,BORROWER).piRto=true;
@@ -37,8 +37,8 @@ test('PI collateral saves through the bank API without Torn trade access and sur
  }finally{globalThis.fetch=originalFetch;}
 });
 test('owner login uses Torn identity, stores only token digest, and no API key',async()=>{const e=fixture(),r=await login(e);assert.equal(r.status,200);const t=r.data.token;assert.match(t,/^[a-f0-9]{64}$/);const session=e.DB.sqlite.prepare('SELECT * FROM sessions').get();assert.equal(session.token_hash,await digest(t));assert.notEqual(session.token_hash,t);assert.equal((await call(e,'bank',{token:t})).data.role,'owner');const dump=['identities','sessions','bank_state','api_limits'].map(n=>e.DB.sqlite.prepare('SELECT * FROM '+n).all());assert.ok(!JSON.stringify(dump).includes('owner'.padEnd(16,'0')));});
-test('uninvited accounts cannot sign in; owner can invite a tester',async()=>{const e=fixture();assert.equal((await login(e,'borrower')).status,403);const owner=(await login(e)).data.token;assert.equal((await call(e,'access',{token:owner,body:{action:'invite',id:BORROWER}})).status,200);const borrower=(await login(e,'borrower')).data.token;const view=await call(e,'bank',{token:borrower});assert.equal(view.data.role,'borrower');assert.deepEqual(view.data.state.ledger,[]);assert.equal((await call(e,'access',{token:borrower})).status,403);});
-test('revoking invitation blocks an existing session immediately',async()=>{const e=fixture(),o=(await login(e)).data.token;await call(e,'access',{token:o,body:{action:'invite',id:BORROWER}});const b=(await login(e,'borrower')).data.token;await call(e,'access',{token:o,body:{action:'revoke',id:BORROWER}});assert.equal((await call(e,'bank',{token:b})).status,401);});
+test('uninvited accounts cannot sign in; owner can invite a tester',async()=>{const e=fixture();assert.equal((await login(e,'borrower')).status,403);const owner=(await login(e)).data.token;assert.equal((await call(e,'access',{token:owner,body:{action:'invite',lane:'faction',id:BORROWER}})).status,200);const borrower=(await login(e,'borrower')).data.token;const view=await call(e,'bank',{token:borrower});assert.equal(view.data.role,'borrower');assert.deepEqual(view.data.state.ledger,[]);assert.equal((await call(e,'access',{token:borrower})).status,403);});
+test('revoking invitation blocks an existing session immediately',async()=>{const e=fixture(),o=(await login(e)).data.token;await call(e,'access',{token:o,body:{action:'invite',lane:'faction',id:BORROWER}});const b=(await login(e,'borrower')).data.token;await call(e,'access',{token:o,body:{action:'revoke',id:BORROWER}});assert.equal((await call(e,'bank',{token:b})).status,401);});
 test('multiple devices stay signed in and logout revokes only the chosen device',async()=>{
  const e=fixture(),first=(await login(e)).data.token,second=(await login(e)).data.token;
  assert.notEqual(first,second);
@@ -51,7 +51,7 @@ test('multiple devices stay signed in and logout revokes only the chosen device'
 test('expired legacy session cannot read records',async()=>{const e=fixture(),t=(await login(e)).data.token;e.DB.sqlite.exec('UPDATE sessions SET expires_at=1');assert.equal((await call(e,'bank',{token:t})).status,401);});
 test('cross-origin controls allow Torn and reject unexpected origins',async()=>{const e=fixture();const r=await call(e,'health');assert.equal(r.headers.get('access-control-allow-origin'),'https://www.torn.com');assert.equal((await call(e,'health',{origin:'https://attacker.example'})).status,403);});
 test('login rate limit applies before Torn API requests',async()=>{const e=fixture();for(let i=0;i<5;i++)await login(e);assert.equal((await login(e)).status,429);});
-test('borrower cannot change program rules or lift a restriction',async()=>{const e=fixture(),o=(await login(e)).data.token;await call(e,'access',{token:o,body:{action:'invite',id:BORROWER}});const b=(await login(e,'borrower')).data.token,v=(await call(e,'bank',{token:b})).data;for(const action of ['rules','lift']){const r=await call(e,'bank',{token:b,body:{action,payload:{rules:v.state.rules,borrowerId:BORROWER},revision:v.state.revision,requestId:action}});assert.equal(r.status,400);assert.match(r.data.error,/owner/i);}});
+test('borrower cannot change program rules or lift a restriction',async()=>{const e=fixture(),o=(await login(e)).data.token;await call(e,'access',{token:o,body:{action:'invite',lane:'faction',id:BORROWER}});const b=(await login(e,'borrower')).data.token,v=(await call(e,'bank',{token:b})).data;for(const action of ['rules','lift']){const r=await call(e,'bank',{token:b,body:{action,payload:{rules:v.state.rules,borrowerId:BORROWER},revision:v.state.revision,requestId:action}});assert.equal(r.status,400);assert.match(r.data.error,/owner/i);}});
 test('stale saves are rejected and repeated request IDs do not duplicate funding',async()=>{const e=fixture(),t=(await login(e)).data.token,s=(await call(e,'bank',{token:t})).data.state;const data={action:'topup',payload:{amount:1000000,reference:'TEST RECEIPT'},revision:s.revision,requestId:'same-request'};assert.equal((await call(e,'bank',{token:t,body:data})).status,200);const retry=await call(e,'bank',{token:t,body:data});assert.equal(retry.data.state.ledger.length,1);assert.equal((await call(e,'bank',{token:t,body:{...data,requestId:'new-request'}})).status,409);});
 test('owner migration imports once into an empty bank and preserves ledger',async()=>{const e=fixture(),t=(await login(e)).data.token;await call(e,'bank',{token:t});const s=TB.newState();TB.topup(s,1000000,'Earlier recorded funds');const backup={role:'owner',user:{id:OWNER},state:s};const first=await call(e,'import',{token:t,body:{confirm:'IMPORT',export:backup}});assert.equal(first.status,200,first.data.error);assert.equal((await call(e,'bank',{token:t})).data.state.ledger.length,1);assert.equal((await call(e,'import',{token:t,body:{confirm:'IMPORT',export:backup}})).status,400);});
 test('import rejects a changed owner',()=>{const s=TB.newState();s.staff[0].id=OTHER;assert.throws(()=>validateImport(s),/owner/);});
@@ -65,21 +65,70 @@ test('an empty check key returns the reported 400 shape without ending the bank 
 });
 test('owner beta invitations use only the bank session, persist once and appear in the access list',async()=>{
  const e=fixture(),token=(await login(e)).data.token;
- for(let i=0;i<2;i++)assert.equal((await call(e,'access',{token,body:{action:'invite',id:BORROWER}})).status,200);
+ for(let i=0;i<2;i++)assert.equal((await call(e,'access',{token,body:{action:'invite',lane:'faction',id:BORROWER}})).status,200);
  const list=await call(e,'access',{token});
  assert.equal(list.status,200);assert.equal(list.data.members.length,1);assert.equal(list.data.members[0].torn_id,BORROWER);
  const signedIn=await login(e,'borrower');assert.equal(signedIn.status,200);
  assert.equal((await call(e,'bank',{token:signedIn.data.token})).data.role,'borrower');
- assert.equal((await call(e,'access',{token:signedIn.data.token,body:{action:'invite',id:OTHER}})).status,403);
+ assert.equal((await call(e,'access',{token:signedIn.data.token,body:{action:'invite',lane:'faction',id:OTHER}})).status,403);
 });
 test('invalid beta invitation IDs cannot grant access',async()=>{
  const e=fixture(),token=(await login(e)).data.token;
- for(const id of ['', 'Tester', '0', '12345678901'])assert.equal((await call(e,'access',{token,body:{action:'invite',id}})).status,400);
+ for(const id of ['', 'Tester', '0', '12345678901'])assert.equal((await call(e,'access',{token,body:{action:'invite',lane:'faction',id}})).status,400);
  assert.deepEqual((await call(e,'access',{token})).data.members,[]);
+});
+test('joining requires a staff-selected member type and persists it with access atomically',async()=>{
+ const e=fixture(),token=(await login(e)).data.token;
+ for(const lane of [undefined,'',null,'vip']){
+  const r=await call(e,'access',{token,body:{action:'invite',id:BORROWER,lane}});
+  assert.equal(r.status,400);assert.match(r.data.error,/Select faction or non-faction/);
+ }
+ assert.equal(e.DB.sqlite.prepare('SELECT count(*) AS n FROM allowed_members').get().n,0);
+ const originalBatch=e.DB.batch;
+ e.DB.batch=statements=>originalBatch.call(e.DB,[...statements,e.DB.prepare('INSERT INTO missing_table VALUES (1)')]);
+ assert.equal((await call(e,'access',{token,body:{action:'invite',id:BORROWER,lane:'external'}})).status,400);
+ assert.equal(e.DB.sqlite.prepare('SELECT count(*) AS n FROM allowed_members').get().n,0);
+ assert.equal(JSON.parse(e.DB.sqlite.prepare('SELECT data FROM bank_state').get().data).borrowers[BORROWER],undefined);
+ e.DB.batch=originalBatch;
+ assert.equal((await call(e,'access',{token,body:{action:'invite',id:BORROWER,lane:'external'}})).status,200);
+ const member=(await call(e,'access',{token})).data.members[0];assert.equal(member.memberProgram,'external');
+ const borrower=(await login(e,'borrower')).data.token;
+ assert.equal((await call(e,'bank',{token:borrower})).data.state.borrowers[BORROWER].memberProgram,'external');
+ assert.equal((await call(e,'access',{token,body:{action:'invite',id:BORROWER,lane:'faction'}})).status,400);
+ assert.equal((await call(e,'access',{token})).data.members[0].memberProgram,'external');
+});
+test('an invitation racing another bank save cannot grant access without its member assignment',async()=>{
+ const e=fixture(),token=(await login(e)).data.token,originalBatch=e.DB.batch;
+ e.DB.batch=async statements=>{
+  e.DB.sqlite.prepare('UPDATE bank_state SET revision=revision+1').run();
+  return originalBatch.call(e.DB,statements);
+ };
+ const result=await call(e,'access',{token,body:{action:'invite',id:BORROWER,lane:'faction'}});
+ assert.equal(result.status,409);
+ assert.equal(e.DB.sqlite.prepare('SELECT count(*) AS n FROM allowed_members').get().n,0);
+ assert.equal(JSON.parse(e.DB.sqlite.prepare('SELECT data FROM bank_state').get().data).borrowers[BORROWER],undefined);
+});
+test('staff can assign member types through Users without gaining owner-only permissions',async()=>{
+ const e=fixture(),owner=(await login(e)).data.token;
+ await call(e,'access',{token:owner,body:{action:'invite',id:BORROWER,lane:'external'}});
+ const s=(await call(e,'bank',{token:owner})).data.state;
+ s.staff.push({id:OTHER,role:'staff',name:'Bank staff'});
+ e.DB.sqlite.prepare('UPDATE bank_state SET data=? WHERE id=?').run(JSON.stringify(s),'main');
+ const staff=(await login(e,'other')).data.token,borrower=(await login(e,'borrower')).data.token;
+ assert.equal((await call(e,'access',{token:staff})).status,200);
+ const payload={id:BORROWER,lane:'faction',reason:'Checked member at onboarding'};
+ const denied=await call(e,'bank',{token:borrower,body:{action:'memberProgram',payload,revision:s.revision,requestId:'deny-program'}});
+ assert.equal(denied.status,400);assert.match(denied.data.error,/Staff permission/);
+ const saved=await call(e,'bank',{token:staff,body:{action:'memberProgram',payload,revision:s.revision,requestId:'set-program'}});
+ assert.equal(saved.status,200,saved.data.error);assert.equal(saved.data.state.borrowers[BORROWER].memberProgram,'faction');
+ const status=await call(e,'bank',{token:staff,body:{action:'userStatus',payload:{id:BORROWER,piRto:true,reason:'blocked'},revision:saved.data.state.revision,requestId:'deny-vip'}});
+ assert.equal(status.status,400);assert.match(status.data.error,/owner/);
+ assert.equal((await call(e,'access',{token:staff,body:{action:'revoke',id:BORROWER}})).status,403);
+ assert.equal((await call(e,'bank',{token:borrower})).data.state.borrowers[BORROWER].memberProgram,'faction');
 });
 test('borrower requests persist across reloads and lender decisions reach the borrower without a Torn key',async()=>{
  const e=fixture(),owner=(await login(e)).data.token;
- await call(e,'access',{token:owner,body:{action:'invite',id:BORROWER}});
+ await call(e,'access',{token:owner,body:{action:'invite',lane:'faction',id:BORROWER}});
  const borrower=(await login(e,'borrower')).data.token;
  const s=(await call(e,'bank',{token:owner})).data.state,today=TB.today(),maturity=TB.addDays(today,60);
  s.loans=[{id:'request-flow-loan',borrowerId:BORROWER,name:'Tester',product:'bank',principal:100e6,rate:.005,freeDays:0,start:today,maturity,status:'active',payments:[],extensions:[],rules:TB.clone(s.rules),issuer:OWNER}];
@@ -107,7 +156,7 @@ test('borrower requests persist across reloads and lender decisions reach the bo
 
 test('bank reset requires owner, exact confirmation and current revision; retries cannot erase later writes',async()=>{
  const e=fixture(),o=(await login(e)).data.token;
- await call(e,'access',{token:o,body:{action:'invite',id:BORROWER}});
+ await call(e,'access',{token:o,body:{action:'invite',lane:'faction',id:BORROWER}});
  const b=(await login(e,'borrower')).data.token;
  const send=async(token,action,payload,requestId,revision)=>call(e,'bank',{token,body:{action,payload,requestId,revision}});
  let s=(await call(e,'bank',{token:o})).data.state;
@@ -126,7 +175,7 @@ test('bank reset requires owner, exact confirmation and current revision; retrie
 
 test('application API ignores forged net worth, identity and eligibility and persists its reference',async()=>{
  const e=fixture(),owner=(await login(e)).data.token;
- await call(e,'access',{token:owner,body:{action:'invite',id:BORROWER}});const borrower=(await login(e,'borrower')).data.token;
+ await call(e,'access',{token:owner,body:{action:'invite',lane:'faction',id:BORROWER}});const borrower=(await login(e,'borrower')).data.token;
  const s=(await call(e,'bank',{token:owner})).data.state;s.bankOnline=true;TB.topup(s,1e9,'test funding');
  e.DB.sqlite.prepare('UPDATE bank_state SET data=? WHERE id=?').run(JSON.stringify(s),'main');
  const profile={id:Number(BORROWER),name:'Tester',networth:1e9,faction_id:1,checkedAt:new Date().toISOString()};e.DB.sqlite.prepare('UPDATE identities SET profile=? WHERE torn_id=?').run(JSON.stringify(profile),BORROWER);
@@ -138,7 +187,7 @@ test('application API ignores forged net worth, identity and eligibility and per
  const retry=await save('apply',body,'submit');assert.equal(retry.data.state.loans.length,1);
 });
 test('staff cash API saves only own wallet and never exposes owner wallet to vault or borrower',async()=>{
- const e=fixture(),owner=(await login(e)).data.token;await call(e,'access',{token:owner,body:{action:'invite',id:BORROWER}});const borrower=(await login(e,'borrower')).data.token;
+ const e=fixture(),owner=(await login(e)).data.token;await call(e,'access',{token:owner,body:{action:'invite',lane:'faction',id:BORROWER}});const borrower=(await login(e,'borrower')).data.token;
  const s=(await call(e,'bank',{token:owner})).data.state;s.staff.push({id:OTHER,role:'vault',name:'Vault',available:false});e.DB.sqlite.prepare('UPDATE bank_state SET data=? WHERE id=?').run(JSON.stringify(s),'main');
  const vault=(await login(e,'other')).data.token;
  const checked=await call(e,'staff-cash',{token:owner,body:{key:'owner'.padEnd(16,'0'),id:OTHER}});assert.equal(checked.status,200,checked.data.error);assert.equal(checked.data.state.staff[0].verifiedCash.amount,987654321);assert.equal(checked.data.state.staff[1].verifiedCash,undefined);
@@ -149,7 +198,7 @@ test('staff cash API saves only own wallet and never exposes owner wallet to vau
 });
 
 test('every beta invitation supplies a user card before applying and gains verified name after login',async()=>{
- const e=fixture(),owner=(await login(e)).data.token;await call(e,'access',{token:owner,body:{action:'invite',id:BORROWER}});
+ const e=fixture(),owner=(await login(e)).data.token;await call(e,'access',{token:owner,body:{action:'invite',lane:'faction',id:BORROWER}});
  let members=(await call(e,'access',{token:owner})).data.members;assert.equal(members.length,1);assert.equal(members[0].torn_id,BORROWER);assert.equal(members[0].name,null);
  await login(e,'borrower');members=(await call(e,'access',{token:owner})).data.members;assert.equal(members[0].name,'Tester');assert.equal((await call(e,'bank',{token:owner})).data.state.applications.length,0);
  const s=(await call(e,'bank',{token:owner})).data.state;const assigned=await call(e,'bank',{token:owner,body:{action:'userStatus',payload:{id:BORROWER,testParticipant:true,assignedTiers:{faction:1},oilEligible:true,piRto:true,reason:'Beta participant setup'},revision:s.revision,requestId:'beta-user-card'}});assert.equal(assigned.status,200,assigned.data.error);assert.equal(assigned.data.state.borrowers[BORROWER].testParticipant,true);

@@ -6,7 +6,7 @@ import {eligibility} from '../lib/eligibility.js';
 import {removalPlan} from '../lib/manage.js';
 import {reconcileTrade} from '../lib/trades.js';
 const O='3542697',B='4334282',V={networth:1e9,factionMember:true,checkedAt:new Date().toISOString()};
-function state(){const s=TB.newState();s.bankOnline=true;TB.topup(s,1e9,'actual incoming funding');return s;}
+function state(){const s=TB.newState();s.bankOnline=true;TB.topup(s,1e9,'actual incoming funding');TB.person(s,B).memberProgram='faction';return s;}
 const act=(s,id,a,p)=>applyAction(s,id,a,p,TB.today(),V);
 const app=(extra={})=>({...TB.sampleApp({borrowerId:B,name:'Sillyslaya',tier:0,items:[],cashCollateral:100e6,requested:100e6,...extra}),acceptPreapproval:true});
 function status(s,extra={}){return act(s,O,'userStatus',{id:B,reason:'Owner verified test statuses',testParticipant:true,assignedTiers:{faction:0,external:0},piRto:false,oilEligible:false,...extra});}
@@ -21,7 +21,7 @@ test('borrower application detects owner assignments and ignores submitted statu
  const live=act(state(),B,'apply',{...app(),isTest:true,oilEligible:true,piRto:true});assert.equal(live.applications[0].isTest,false);assert.equal(live.applications[0].oilEligible,false);
 });
 test('manually assigned external level overrides completed-loan threshold but not collateral rules',()=>{
- const s=status(state(),{assignedTiers:{external:3}}),a=app({lane:'external',product:'bank',tier:3});const out=act(s,B,'apply',a);assert.equal(out.applications[0].completed,0);assert.equal(out.applications[0].decision.automatic,true);
+ const s=status(state(),{assignedTiers:{external:3}}),a=app({lane:'external',product:'bank',tier:3});s.borrowers[B].memberProgram='external';const out=act(s,B,'apply',a);assert.equal(out.applications[0].completed,0);assert.equal(out.applications[0].decision.automatic,true);
 });
 test('test status does not relabel old real loans and ending it does not relabel test loans',()=>{
  let s=act(state(),B,'apply',app());const live=s.loans[0].id;s=status(s);s=act(s,B,'apply',app());const testLoan=s.loans[1].id;
