@@ -6,7 +6,7 @@ import {createServer,OWNER_ID,SESSION_NO_EXPIRY,digest,token,fail} from './conte
 import {route as bank} from '../routes/bank.ts';
 import {route as check} from '../routes/check.ts';
 import {route as trades} from '../routes/trades.ts';
-import {loadTornItemCatalog,route as market} from '../routes/market.ts';
+import {loadTornItemCatalog,marketQuote,route as market} from '../routes/market.ts';
 import {route as staffCash} from '../routes/staff-cash.ts';
 import {route as collateralCheck} from '../routes/collateral-check.ts';
 const routes={bank,check,trades,market,'staff-cash':staffCash,'collateral-check':collateralCheck};
@@ -20,7 +20,17 @@ export async function handle(request,env,ctx){
  let result;const srv=createServer(env);const {database,response,body,identity,rateLimit,loadState,saveState,allowed,torn,flagConfirmedProfile}=srv;
  try{
   if(request.method==='OPTIONS')result=new Response(null,{status:204});
-  else if(path==='/api/health'&&request.method==='GET'){let notificationsReady=false;try{await database().prepare('SELECT id FROM push_devices LIMIT 1').first();notificationsReady=true;}catch{}result=response({ok:true,version:'1.1.0-beta.56',notificationsReady});}
+  else if(path==='/api/health'&&request.method==='GET'){let notificationsReady=false;try{await database().prepare('SELECT id FROM push_devices LIMIT 1').first();notificationsReady=true;}catch{}result=response({ok:true,version:'1.1.0-beta.57',notificationsReady});}
+  else if(path==='/api/health/market'&&request.method==='GET'){
+   // Fixed public item and a shared rate limit keep this check independent of bank accounts.
+   await rateLimit('public-market-health',3);
+   try{
+    const quote=await marketQuote(206,request.url);
+    result=response({ok:true,source:quote.source,price:quote.reference,listingCount:quote.listingCount,checkedAt:quote.checkedAt});
+   }catch(error){
+    result=response({ok:false,error:TB.text(error.message,240)},502);
+   }
+  }
   else if(path==='/api/notifications')result=await notificationRoute(request,srv);
   else if(path==='/api/link'&&request.method==='POST'){
    const ip=request.headers.get('cf-connecting-ip')||'local';await rateLimit('login:'+await digest(ip),5);

@@ -33,8 +33,8 @@ async function fetchMarketQuote(itemId:number){
   try{
    const shortUrl='https://weav3r.dev/api/marketplace/'+itemId+'?limit=1';
    const item=await fetchWeav3rItem(shortUrl,itemId,deadline);
-   if(!usablePrice(item.market_price))throw Error('Weav3r did not provide a reference price.');
-   return makeQuote(itemId,item,null,item.market_price,'Torn market price reported by Weav3r');
+   if(!usablePrice(Number(item.market_price)))throw Error('Weav3r did not provide a reference price.');
+   return makeQuote(itemId,item,null,Number(item.market_price),'Torn market price reported by Weav3r');
   }catch(retryError){
    throw Error(primaryError.message+' Simple Weav3r lookup: '+retryError.message);
   }
@@ -46,7 +46,7 @@ function usablePrice(price){
 }
 
 async function fetchWeav3rItem(url:string,itemId:number,signal:AbortSignal){
- const result=await fetch(url,{signal});
+ const result=await fetch(url,{signal,headers:{Accept:'application/json','User-Agent':'TornLendingBank/1.1'}});
  if(!result.ok)throw Error('Price feed returned HTTP '+result.status+'.');
  const item=await result.json();
  if(Number(item?.item_id)!==itemId||!item.item_name)throw Error('Market data did not match this Torn item.');
@@ -76,7 +76,7 @@ async function fetchListingQuote(itemId:number,deadline:AbortSignal){
   const prices=await Promise.all(indices.map(async index=>{
    const page=await get(Math.floor(index/100)+1);
    if(Number(page.item_id)!==itemId||Number(page.total_count)!==count||page.generated_at!==first.generated_at)throw Error('Listings changed during this check.');
-   const price=page.listings?.[index%100]?.price;
+   const price=Number(page.listings?.[index%100]?.price);
    if(!Number.isSafeInteger(price)||price<=1)throw Error('Listing price unavailable.');
    return price;
   }));
@@ -84,8 +84,9 @@ async function fetchListingQuote(itemId:number,deadline:AbortSignal){
   reference=Math.floor(median);
  }catch(error){
   // The feed includes a Torn market reference even when its bazaar pages disagree.
-  if(!usablePrice(first.market_price))throw error;
-  reference=first.market_price;
+  const marketPrice=Number(first.market_price);
+  if(!usablePrice(marketPrice))throw error;
+  reference=marketPrice;
   source='Torn market price reported by Weav3r';
  }
  return makeQuote(itemId,first,median,reference,source);

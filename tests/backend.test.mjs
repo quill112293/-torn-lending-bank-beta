@@ -418,7 +418,7 @@ test('Weav3r retries a quote with no listings or reference using its simpler ite
   assert.equal(parsed.hostname,'weav3r.dev');
   requests.push(parsed.searchParams.get('limit'));
   if(parsed.searchParams.get('limit')==='100')return Response.json({item_id:206,item_name:'Xanax',total_count:0,market_price:0});
-  return Response.json({item_id:fallbackItem,item_name:'Xanax',total_count:199,market_price:838912,listings:[{price:1}]});
+  return Response.json({item_id:fallbackItem,item_name:'Xanax',total_count:199,market_price:'838912',listings:[{price:1}]});
  };
  try{
   const quote=await call(env,'market?id=206',{token});
@@ -430,5 +430,19 @@ test('Weav3r retries a quote with no listings or reference using its simpler ite
   const wrongItem=await call(env,'market?id=206',{token});
   assert.equal(wrongItem.status,400);
   assert.match(wrongItem.data.error,/Simple Weav3r lookup: Market data did not match/);
+ }finally{globalThis.fetch=previousFetch;}
+});
+
+test('market health checks the fixed public item without a bank login',async()=>{
+ const env=fixture(),previousFetch=globalThis.fetch;
+ globalThis.fetch=async(url,options)=>{
+  assert.equal(new URL(url).pathname,'/api/marketplace/206');
+  assert.equal(options.headers.Accept,'application/json');
+  return Response.json({item_id:206,item_name:'Xanax',total_count:1,listings:[{price:'838912'}]});
+ };
+ try{
+  const probe=await call(env,'health/market');
+  assert.equal(probe.status,200,probe.data.error);
+  assert.equal(probe.data.price,838912);
  }finally{globalThis.fetch=previousFetch;}
 });
