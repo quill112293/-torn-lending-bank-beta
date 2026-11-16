@@ -133,15 +133,22 @@ export function rememberTradeResume(storage,handoff){
  try{storage.setItem(resumeKey,JSON.stringify({loanId:handoff.loanId,intentId:handoff.intentId,recipientId:handoff.recipientId}));return true;}catch{return false;}
 }
 
-function waitFor(probe,window,timeout=15000){
+function waitFor(probe,window,timeout=15000,onTimeout=()=>Error('The Torn trade screen is not ready.')){
  return new Promise((resolve,reject)=>{
-  let interval,timer;
-  const finish=(fn,value)=>{window.clearInterval(interval);window.clearTimeout(timer);fn(value);};
-  const check=()=>{try{const result=probe();if(result)finish(resolve,result);}catch(error){finish(reject,error);}};
+  let interval,timer,settled=false;
+  const finish=(fn,value)=>{if(settled)return;settled=true;window.clearInterval(interval);window.clearTimeout(timer);fn(value);};
+  const check=()=>{if(settled)return;try{const result=probe();if(result)finish(resolve,result);}catch(error){finish(reject,error);}};
   interval=window.setInterval(check,200);
-  timer=window.setTimeout(()=>finish(reject,Error('The Torn trade screen could not be confirmed. Check your trades before trying again. No automatic retry will be made.')),timeout);
+  timer=window.setTimeout(()=>{if(!settled)finish(reject,onTimeout());},timeout);
   check();
  });
+}
+
+function timeoutError(code,message){return Object.assign(Error(message),{code});}
+
+export function tradeHandoffFailureMessage(error,{attempted=false}={}){
+ const message=String(error?.message||'Trade setup could not be completed.').replace(/\s*No automatic retry will be made\./g,'').trim();
+ return attempted?message+' Check your existing trades in Torn. No automatic retry will be made.':message+' The bank helper has not submitted a trade. Return to the bank to reopen this request.';
 }
 
 export function createTornTradePage(document,window){
@@ -196,7 +203,7 @@ export function createTornTradePage(document,window){
     const existing=observedTrade(document,intent,window.location.href);
     if(existing)return {existing};
     return form(intent)?{existing:null}:null;
-   },window);
+   },window,15000,()=>timeoutError('torn_form_timeout','Torn’s signed-in account and new-trade form could not be confirmed.'));
   },
   arm(intent){
    ready(intent);watchIntent=intent;
@@ -211,9 +218,13 @@ export function createTornTradePage(document,window){
    Object.getOwnPropertyDescriptor(prototype,'value').set.call(description,intent.reference);
    description.dispatchEvent(new window.Event('input',{bubbles:true}));
    description.dispatchEvent(new window.Event('change',{bubbles:true}));
+   // Torn's own trade_initiate.js validates recipient/description on keyup.
+   // Notify that validator without sending Enter, forcing a disabled control,
+   // focusing a mobile field, or initiating a native trade before the claim.
+   description.dispatchEvent(new window.Event('keyup',{bubbles:true}));
   },
   async waitUntilReady(intent){
-   return waitFor(()=>{const controls=ready(intent);need(controls.description.value===intent.reference,'Torn did not retain the loan reference. Initiate manually with the displayed reference.');return enabled(controls.initiate);},window);
+   return waitFor(()=>{const controls=ready(intent);need(controls.description.value===intent.reference,'Torn did not retain the loan reference. Check the Description field before continuing.');return enabled(controls.initiate);},window,15000,()=>timeoutError('torn_initiate_disabled','Torn has not enabled Initiate Trade. Check the recipient and description in the form.'));
   },
   assertReady(intent){const controls=ready(intent);need(controls.description.value===intent.reference&&enabled(controls.initiate),'The trade description or Initiate control changed. Check Torn before continuing.');},
   submit(intent){
@@ -229,7 +240,7 @@ export function createTornTradePage(document,window){
     const result=observedTrade(document,intent,window.location.href);
     const same=result&&previous===result.uiTradeId;previous=result?.uiTradeId||null;
     return same?result:null;
-   },window,20000);
+   },window,20000,()=>timeoutError('torn_result_timeout','Torn has not shown a matching created trade yet.'));
   },
   observed(intent){account(intent);return observedTrade(document,intent,window.location.href);}
  };
@@ -349,7 +360,7 @@ export function installTradeHandoff({document,window,transport}){
    if(!intent.claimedAt){attemptPending=false;try{storage.removeItem(resumeKey);}catch{}}
   }catch{}
   title.textContent='Torn Lending Bank · Check trade setup';
-  message.textContent=error.message+' Check the request in the bank and any existing trades in Torn before continuing. No automatic retry will be made.';
+  message.textContent=tradeHandoffFailureMessage(error,{attempted:attemptPending||!!intent?.claimedAt||page.hasInitiated()});
   drawActions(true);
  });
  return true;

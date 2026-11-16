@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import TB from '../lib/engine.js';
 import {prepareCollateralTrade,claimCollateralTrade,recordCollateralTrade,tradeStartUrl} from '../lib/collateral-trade.js';
 import {withdrawApplication} from '../lib/application-withdrawal.js';
-import {runTradeHandoff,resumeTradeObservation,createTornTradePage} from '../src/trade-handoff.js';
+import {runTradeHandoff,resumeTradeObservation,createTornTradePage,tradeHandoffFailureMessage} from '../src/trade-handoff.js';
 
 const borrower='9000001',recipient='3542697',clock=1900000000000;
 const clone=value=>structuredClone(value);
@@ -162,32 +162,140 @@ test('a remembered prepared intent can never initiate or report from observation
  assert.equal(f.submits,0);assert.deepEqual(f.steps,[]);assert.deepEqual(f.writes,[]);
 });
 
-// Small native form fixture: real page adapter runs unchanged against explicit
-// visible controls. These tests do not claim live Torn or on-device validation.
-function nativeForm(){
- const f=scenario(),intent=f.intent(),events=new Map(),timers=new Map();let timer=0,clicks=0;
- const window={location:{href:tradeStartUrl(intent)},Event:class{constructor(type,init){this.type=type;Object.assign(this,init);}},setInterval(fn){timers.set(++timer,fn);return timer;},clearInterval(id){timers.delete(id);},setTimeout(fn){timers.set(++timer,fn);return timer;},clearTimeout(id){timers.delete(id);}};
+// Explicit native form fixture, grounded in Torn's trade_initiate.js:
+// `.inputs input, .inputs textarea` validate ONLY on keyup and enable the
+// native submit input when recipient and description are both nonempty.
+// This still does not claim live Torn or on-device interaction validation.
+function nativeForm({banking=scenario(),validation=true}={}){
+ const intent=banking.intent(),events=new Map(),timers=new Map(),editingEvents=[],setters=[],disabledWrites=[];
+ let timer=0,clicks=0,nativeSubmissions=0,inValidator=false,disabled=true;
+ const window={location:{href:tradeStartUrl(intent)},Event:class{constructor(type,init){this.type=type;Object.assign(this,init);}},setInterval(fn,delay){timers.set(++timer,{fn,delay,type:'interval'});return timer;},clearInterval(id){timers.delete(id);},setTimeout(fn,delay){timers.set(++timer,{fn,delay,type:'timeout'});return timer;},clearTimeout(id){timers.delete(id);}};
  const document={hidden:false,visibilityState:'visible',defaultView:{getComputedStyle:()=>({display:'block',visibility:'visible'})},getElementById(){return null;},addEventListener(type,fn){events.set(type,fn);},removeEventListener(type){events.delete(type);},querySelectorAll(selector){
   if(selector==='script[uid][name]')return [{getAttribute:()=>borrower}];
   if(selector==='.init-trade.m-top10')return [root];
   return [];
  }};
  function node(extra={}){return {ownerDocument:document,hidden:false,disabled:false,readOnly:false,getClientRects:()=>[{}],closest:()=>null,getAttribute:()=>null,...extra};}
- const root=node({querySelector:selector=>selector==='#user-id'?{value:recipient}:null,querySelectorAll:selector=>selector.startsWith('input:not')?[description]:selector.startsWith('button,')?[button]:[]});
- const description=node({value:'',tagName:'INPUT',maxLength:100,labels:[{textContent:'Trade Description'}],dispatchEvent(event){if(event.type==='input')button.disabled=false;}});
- const button=node({textContent:'Initiate',disabled:true,closest(selector){return selector==='.init-trade.m-top10'?root:selector.startsWith('button,')?button:null;},click(){const event={type:'click',target:button,preventDefault(){this.prevented=true;},stopImmediatePropagation(){}};events.get('click')?.(event);if(!event.prevented)clicks++;}});
+ const recipientInput=node({value:'Aaron112293 ['+recipient+']',tagName:'INPUT'});
+ const root=node({querySelector:selector=>selector==='#user-id'?recipientInput:null,querySelectorAll:selector=>selector.startsWith('input:not')?[description]:selector.startsWith('button,')?[button]:[]});
+ const form=node({closest:selector=>selector==='.init-trade.m-top10'?root:null});
+ const description=node({value:'',tagName:'TEXTAREA',maxLength:155,labels:[{textContent:'Description:'}],
+  focus(){assert.fail('Programmatic fill must not open the mobile keyboard.');},
+  blur(){assert.fail('The keyup compatibility fix must not change native focus.');},
+  dispatchEvent(event){
+   editingEvents.push(event);
+   if(event.type==='keyup'&&validation){
+    inValidator=true;
+    try{button.disabled=!recipientInput.value||!description.value;}
+    finally{inValidator=false;}
+   }
+   return true;
+  }
+ });
+ function dispatch(type,target,submitter){
+  const event={type,target,submitter,preventDefault(){this.prevented=true;},stopImmediatePropagation(){}};
+  events.get(type)?.(event);return !event.prevented;
+ }
+ function enter(){if(!button.disabled&&dispatch('submit',form,undefined))nativeSubmissions++;}
+ const button=node({tagName:'INPUT',type:'submit',value:'Initiate',textContent:'',closest(selector){return selector==='.init-trade.m-top10'?root:selector.startsWith('button,')?button:null;},click(){
+  if(button.disabled||!dispatch('click',button))return;
+  clicks++;
+  if(dispatch('submit',form,button))nativeSubmissions++;
+ }});
+ Object.defineProperty(button,'disabled',{get:()=>disabled,set:value=>{disabledWrites.push({value,fromValidator:inValidator});disabled=value;}});
  window.HTMLInputElement=class{};window.HTMLTextAreaElement=class{};
- Object.defineProperty(window.HTMLInputElement.prototype,'value',{set(value){this.value=value;}});
+ Object.defineProperty(window.HTMLInputElement.prototype,'value',{set(value){setters.push('input');this.value=value;}});
+ Object.defineProperty(window.HTMLTextAreaElement.prototype,'value',{set(value){setters.push('textarea');this.value=value;}});
  const page=createTornTradePage(document,window);
- return {intent,page,document,window,description,button,root,events,get clicks(){return clicks;}};
+ return {intent,page,document,window,description,button,root,events,editingEvents,setters,disabledWrites,timers,enter,
+  timeout(){const pending=[...timers.values()].find(entry=>entry.type==='timeout');assert.ok(pending,'Expected a pending bounded wait.');pending.fn();},
+  get clicks(){return clicks;},get nativeSubmissions(){return nativeSubmissions;}
+ };
 }
 
 test('native adapter fills the exact reference, handles initially disabled Initiate, and prevents repeated helper and native clicks',async()=>{
  const f=nativeForm();assert.deepEqual(await f.page.waitForStart(f.intent),{existing:null});assert.equal(f.button.disabled,true);
  f.page.fillReference(f.intent);await f.page.waitUntilReady(f.intent);f.page.assertReady(f.intent);f.page.arm(f.intent);f.page.submit(f.intent);
  assert.equal(f.description.value,f.intent.reference);assert.equal(f.clicks,1);assert.equal(f.page.hasInitiated(),true);
- f.button.click();assert.equal(f.clicks,1);assert.throws(()=>f.page.submit(f.intent),/already attempted/);
+ assert.equal(f.nativeSubmissions,1,'the first native click and its default submit must both be allowed');
+ f.button.click();f.enter();assert.equal(f.clicks,1);assert.equal(f.nativeSubmissions,1);assert.throws(()=>f.page.submit(f.intent),/already attempted/);
  f.page.dispose();assert.equal(f.events.size,0);
+});
+
+test('the native textarea enables Initiate only through Torn keyup validation without Enter, focus or a disabled-control bypass',async()=>{
+ const f=nativeForm();f.description.value=f.intent.reference;
+ f.description.dispatchEvent(new f.window.Event('input',{bubbles:true}));
+ f.description.dispatchEvent(new f.window.Event('change',{bubbles:true}));
+ assert.equal(f.button.disabled,true,'input and change alone reproduce the beta.63 readiness failure');
+ f.editingEvents.length=0;f.page.arm(f.intent);
+ f.page.fillReference(f.intent);await f.page.waitUntilReady(f.intent);
+ assert.equal(f.button.disabled,false);assert.deepEqual(f.setters,['textarea']);
+ assert.equal(f.editingEvents.filter(event=>event.type==='keyup').length,1);
+ assert.ok(f.editingEvents.every(event=>event.bubbles===true));
+ assert.ok(f.editingEvents.every(event=>!['Enter','Return'].includes(event.key)&&event.keyCode!==13&&event.which!==13));
+ assert.deepEqual(f.disabledWrites,[{value:false,fromValidator:true}]);
+ assert.equal(f.page.hasInitiated(),false);assert.equal(f.clicks,0);assert.equal(f.nativeSubmissions,0);assert.equal(f.timers.size,0);
+ f.page.dispose();
+});
+
+test('the keyup-ready native form proceeds through one server claim and one native initiation',async()=>{
+ const banking=scenario('TLB-8CE07DA27F6D'),native=nativeForm({banking});
+ native.page.waitForResult=async()=>banking.observation();banking.page=native.page;
+ await banking.run();
+ assert.equal(native.description.value,'TLB-8CE07DA27F6D');assert.equal(native.clicks,1);assert.equal(native.nativeSubmissions,1);
+ assert.deepEqual(banking.writes.map(write=>write.action),['claimCollateralTrade','recordCollateralTrade']);
+ assert.equal(banking.intent().status,'created');
+});
+
+test('an Enter submit during the server claim is observed without another native click or submission',async()=>{
+ let native;
+ const banking=scenario(undefined,{afterClaim(){native.enter();}});
+ native=nativeForm({banking});native.page.waitForResult=async()=>banking.observation();banking.page=native.page;
+ await banking.run();
+ assert.equal(native.clicks,0);assert.equal(native.nativeSubmissions,1);assert.equal(banking.intent().status,'created');
+ assert.deepEqual(banking.writes.map(write=>write.action),['claimCollateralTrade','recordCollateralTrade']);
+ native.button.click();native.enter();assert.equal(native.clicks,0);assert.equal(native.nativeSubmissions,1);
+});
+
+test('a still-disabled native Initiate times out before any server claim or submission',async()=>{
+ const banking=scenario(),native=nativeForm({banking,validation:false});banking.page=native.page;
+ const pending=banking.run();
+ const rejected=assert.rejects(pending,error=>{assert.equal(error.code,'torn_initiate_disabled');return true;});
+ for(let tick=0;tick<12;tick++)await Promise.resolve();
+ assert.equal(native.description.value,native.intent.reference);assert.equal(native.button.disabled,true);
+ native.timeout();await rejected;
+ assert.equal(native.timers.size,0);assert.equal(native.clicks,0);assert.equal(native.nativeSubmissions,0);
+ assert.deepEqual(banking.writes,[]);assert.equal(banking.intent().status,'prepared');
+ assert.deepEqual(native.disabledWrites,[],'the helper must not force native validation to succeed');
+});
+
+test('form-discovery and post-submit observation timeouts identify distinct stages and clear their timers',async()=>{
+ for(const [method,code] of [['waitForStart','torn_form_timeout'],['waitForResult','torn_result_timeout']]){
+  const f=nativeForm();
+  if(method==='waitForStart'){
+   const query=f.document.querySelectorAll;
+   f.document.querySelectorAll=selector=>selector==='.init-trade.m-top10'?[]:query(selector);
+  }
+  const pending=f.page[method](f.intent),rejected=assert.rejects(pending,error=>{assert.equal(error.code,code);return true;});
+  const queued=[...f.timers.values()].map(entry=>entry.fn);
+  f.timeout();await rejected;
+  assert.equal(f.timers.size,0);assert.equal(f.clicks,0);assert.equal(f.nativeSubmissions,0);
+  let lateReads=0;
+  f.document.querySelectorAll=()=>{lateReads++;return [];};
+  for(const callback of queued)callback();
+  assert.equal(lateReads,0,'callbacks queued before settlement cannot inspect the page again');
+ }
+});
+
+test('trade failure copy distinguishes an unsubmitted setup from an attempted creation without repeating the retry warning',()=>{
+ const before=Object.assign(Error('Torn has not enabled Initiate.'),{code:'torn_initiate_disabled'});
+ const beforeMessage=tradeHandoffFailureMessage(before,{attempted:false});
+ assert.match(beforeMessage,/has not submitted a trade/);assert.match(beforeMessage,/Return to the bank/);
+ const after=Object.assign(Error('Torn has not confirmed the created trade.'),{code:'torn_result_timeout'});
+ const afterMessage=tradeHandoffFailureMessage(after,{attempted:true});
+ assert.equal((afterMessage.match(/No automatic retry/gi)||[]).length,1);
+ assert.doesNotMatch(afterMessage,/has not submitted a trade/);
+ assert.equal((beforeMessage.match(/No automatic retry/gi)||[]).length<=1,true);
 });
 
 test('native adapter observes a manual Initiate and blocks any subsequent helper submission',async()=>{
