@@ -100,7 +100,7 @@ function canLinkDuringPlacement(context,loan){
 const actionStages={'collateral-placed':'collateral_placed','collateral-reviewed':'collateral_reviewed','funds-added':'funds_added','funds-reviewed':'funds_reviewed',complete:'completed'};
 const actionRecords={'collateral-placed':'collateralPlaced','collateral-reviewed':'collateralReviewed','funds-added':'fundsAdded','funds-reviewed':'fundsReviewed',complete:'completion'};
 const recoveryActions=new Set(['replace-expired','reconcile-expired']);
-const flowActions=new Set([...Object.keys(actionStages),'accept-ready','refresh','reset',...recoveryActions]);
+const flowActions=new Set([...Object.keys(actionStages),'refresh','reset',...recoveryActions]);
 
 export function loanTradeActions(data,loan){
  const userId=String(data?.user?.id??''),state=data?.state||{},flow=loan?.tradeFlow;
@@ -124,7 +124,6 @@ export function loanTradeActions(data,loan){
   'collateral-reviewed':!!(terms&&receiver&&stage==='collateral_placed'),
   'funds-added':!!(terms&&receiver&&stage==='collateral_reviewed'&&lending&&loan.start===state.testDate),
   'funds-reviewed':!!(terms&&borrower&&stage==='funds_added'),
-  'accept-ready':!!(terms&&(borrower||receiver)&&stage==='funds_reviewed'&&lending&&nativeId(String(flow?.nativeTradeId??''))),
   complete:!!(terms&&receiver&&stage==='funds_reviewed'),
   refresh:!!(pending&&participant&&stage!=='completed'),
   reset:!!(pending&&receiver&&flow&&stage!=='completed'&&(flow.reservedBy||flow.collateralPlaced||flow.collateralReviewed||flow.fundsAdded||flow.fundsReviewed)),
@@ -163,6 +162,7 @@ function responseLoan(result,bound){
  const before=bound.loan.tradeFlow;
  if(before?.apiTradeId&&String(flow.apiTradeId)!==String(before.apiTradeId)||before?.staffId&&String(flow.staffId)!==String(before.staffId)||before?.nativeTradeId&&String(flow.nativeTradeId)!==String(before.nativeTradeId))return null;
  if(check.nativeTradeId!=null&&String(check.nativeTradeId)!==String(flow.nativeTradeId))return null;
+ if(flow.stage==='completed'&&check.completedApiTradeId!=null&&String(check.completedApiTradeId)!==String(flow.completion?.apiTradeId))return null;
  if(bound.loan.collateralTrade?.intentId&&loan.collateralTrade?.intentId!==bound.loan.collateralTrade.intentId)return null;
  return loan;
 }
@@ -182,21 +182,15 @@ function responseReplacement(result,bound,payload){
 
 // Viewing only reads the bank. Every explicit trade step rechecks its bound loan
 // before one API action. Unknown outcomes are reconciled by reads, never replay.
-export function createTradeLoanDetailsController({transport,readContext,nativeAccept=null,navigateToTrade=null,onChange=()=>{},onCreatedTradeReviewConsumed=()=>{}}){
- let model={open:false,loading:false,error:'',data:null,selectedLoanId:'',manual:false,context:readContext(),review:null,saving:false,reviewError:'',success:'',savedKeyAvailable:false,tradeCheck:null,nativeAcceptAvailable:false,nativeAcceptReason:'',preparedTradeUrl:''};
+export function createTradeLoanDetailsController({transport,readContext,navigateToTrade=null,onChange=()=>{},onCreatedTradeReviewConsumed=()=>{}}){
+ let model={open:false,loading:false,error:'',data:null,selectedLoanId:'',manual:false,context:readContext(),review:null,saving:false,reviewError:'',success:'',savedKeyAvailable:false,tradeCheck:null,preparedTradeUrl:''};
  let epoch=0,disposed=false,writeInFlight=false,boundReview=null;
  let pendingCreated=null,openingCreated=null;
  const consumedCreated=new Set(),createdKey=detail=>JSON.stringify([detail.loanId,detail.intentId,detail.nativeTradeId,detail.borrowerId]);
  function consumeCreated(detail){if(!detail)return;consumedCreated.add(createdKey(detail));try{onCreatedTradeReviewConsumed(detail);}catch{}}
  function cancelCreated(){const pending=pendingCreated,opening=openingCreated;pendingCreated=null;openingCreated=null;consumeCreated(pending);consumeCreated(opening);}
  const selectedLoan=data=>tradeDetailLoans(data).find(loan=>loan.id===model.selectedLoanId);
- function nativeReadiness(){
-  const loan=selectedLoan(model.data);
-  if(!loanTradeActions(model.data,loan)['accept-ready'])return {nativeAcceptAvailable:false,nativeAcceptReason:''};
-  let result;try{result=nativeAccept?.availability({loan,flow:loan.tradeFlow,userId:String(model.data.user.id)});}catch{}
-  return {nativeAcceptAvailable:result?.ready===true,nativeAcceptReason:result?.reason||(!result?'Open the matching Torn trade to continue its native acceptance.':'')};
- }
- const publish=changes=>{if(disposed)return;model={...model,...changes};model={...model,...nativeReadiness()};onChange(model);};
+ const publish=changes=>{if(disposed)return;model={...model,...changes};onChange(model);};
  const current=(generation,context)=>!disposed&&epoch===generation&&contextKey(readContext())===contextKey(context);
  const savedKey=()=>{try{return transport.getSavedKey?.()||'';}catch{return '';}};
  const resetReview=()=>{boundReview=null;return {review:null,reviewError:'',success:'',tradeCheck:null,preparedTradeUrl:''};};
@@ -236,12 +230,11 @@ export function createTradeLoanDetailsController({transport,readContext,nativeAc
   if(action==='collateral-placed'&&loan.collateralTrade?.status==='claimed'&&!linkedNativeId(loan)&&!linkOnPlacement){
    publish({...resetReview(),reviewError:'Open the existing trade from Torn’s active trades list, then confirm collateral for the loan whose reference appears in its trade log.'});return false;
   }
-  if(!linkOnPlacement&&nativeConflict(context,loan,action!=='accept-ready'||isGenericTradeHeading(context.reference))){publish({...resetReview(),reviewError:'The selected loan does not match the current Torn trade. Open its matching trade before continuing.'});return false;}
+  if(!linkOnPlacement&&nativeConflict(context,loan,true)){publish({...resetReview(),reviewError:'The selected loan does not match the current Torn trade. Open its matching trade before continuing.'});return false;}
   if(recoveryActions.has(action)){
    let step;try{const url=new URL(context.route);step=(url.hash?new URLSearchParams(url.hash.slice(1)):url.searchParams).get('step');}catch{}
    if(['accept','accept2','cancel'].includes(step)){publish({...resetReview(),reviewError:'Finish or leave Torn’s current trade confirmation, then open Loan details on the trade page to replace an expired trade.'});return false;}
   }
-  if(action==='accept-ready'&&!model.nativeAcceptAvailable){publish({...resetReview(),reviewError:model.nativeAcceptReason||'Torn’s initial Accept control is unavailable.'});return false;}
   boundReview={action,loanId:loan.id,loan:JSON.parse(JSON.stringify(loan)),signature:reviewSignature(model.data,loan),context,generation:epoch,attempt:{},linkOnPlacement};
   publish({review:{action,loanId:loan.id,...(linkOnPlacement?{linkOnPlacement:true}:{})},reviewError:'',success:'',savedKeyAvailable:validTornKey(savedKey())});return true;
  }
@@ -353,21 +346,12 @@ export function createTradeLoanDetailsController({transport,readContext,nativeAc
    const flow=updated.tradeFlow,check=result.tradeCheck;
    if(bound.linkOnPlacement&&(updated.collateralTrade?.status!=='created'||String(updated.collateralTrade.uiTradeId)!==bound.context.tradeId||String(flow.nativeTradeId)!==bound.context.tradeId))throw Error('The bank did not confirm the link to this open Torn trade.');
    if(check.reason){publish({data:result,selectedLoanId:bound.loanId,...resetReview(),tradeCheck:check,reviewError:redactedMessage({message:check.reason},[key,stored])});return;}
-   if(bound.action==='accept-ready'){
-    if(check.ready!==true||flow.stage!=='funds_reviewed')throw Error('The current trade is not ready to accept. Refresh its review.');
-    publish({data:result,tradeCheck:check});if(!stillBound())return;
-    const forwarded=nativeAccept?.accept({loan:updated,flow,tradeCheck:check,userId:bound.context.accountId,attempt:bound.attempt});
-    if(!forwarded)throw Error('Torn’s initial Accept control is unavailable. Continue in Torn.');
-    const now=readContext();
-    if(model.open&&model.selectedLoanId===bound.loanId&&now.accountId===bound.context.accountId&&now.tradeId===bound.context.tradeId)publish({...resetReview(),tradeCheck:check,success:forwarded.message||'Continue Torn confirmation. The bank has not marked the transfer complete.'});
-   }else{
-    const stage=actionStages[bound.action],record=actionRecords[bound.action];
-    if(stage&&(flow.stage!==stage||String(flow[record]?.by)!==bound.context.accountId))throw Error('The bank did not confirm that trade step. Review the latest loan details.');
-    if(bound.action==='collateral-placed'&&!bound.loan.borrowerConfirmed&&(String(updated.borrowerConfirmed?.by)!==String(bound.loan.borrowerId)||updated.borrowerConfirmed?.reference!==bound.loan.reference||updated.borrowerConfirmed?.source!=='Accepted with collateral placement'))throw Error('The bank did not confirm acceptance of the approved loan terms. Refresh its details before continuing.');
-    if(bound.action==='complete'&&(updated.status!=='active'||updated.collateralConfirmed?.source!=='Torn API completed loan trade'||updated.fundsReceived?.source!=='Torn API completed loan trade'))throw Error('The bank did not confirm the completed loan transfer. Refresh its details.');
-    const messages={'collateral-placed':'Collateral offer confirmed. Receiving staff can review it.','collateral-reviewed':'Collateral offer reviewed. Receiving staff can add the approved loan funds.','funds-added':'Loan funds added and reserved. The borrower can review the offered funds.','funds-reviewed':'Loan funds reviewed. Continue with the matching trade’s Accept control.',complete:'Completed loan transfer verified and recorded.',refresh:'Trade review refreshed from Torn.',reset:'Trade review reset. Follow the current stage shown below.'};
-    publish({data:result,selectedLoanId:bound.loanId,...resetReview(),tradeCheck:check,success:messages[bound.action]});
-   }
+   const stage=actionStages[bound.action],record=actionRecords[bound.action];
+   if(stage&&(flow.stage!==stage||String(flow[record]?.by)!==bound.context.accountId))throw Error('The bank did not confirm that trade step. Review the latest loan details.');
+   if(bound.action==='collateral-placed'&&!bound.loan.borrowerConfirmed&&(String(updated.borrowerConfirmed?.by)!==String(bound.loan.borrowerId)||updated.borrowerConfirmed?.reference!==bound.loan.reference||updated.borrowerConfirmed?.source!=='Accepted with collateral placement'))throw Error('The bank did not confirm acceptance of the approved loan terms. Refresh its details before continuing.');
+   if(bound.action==='complete'&&(updated.status!=='active'||updated.collateralConfirmed?.source!=='Torn API completed loan trade'||updated.fundsReceived?.source!=='Torn API completed loan trade'))throw Error('The bank did not confirm the completed loan transfer. Refresh its details.');
+   const messages={'collateral-placed':'Collateral offer confirmed. Receiving staff can review it.','collateral-reviewed':'Collateral offer reviewed. Receiving staff can add the approved loan funds.','funds-added':'Loan funds added and reserved. The borrower can review the offered funds.','funds-reviewed':'Loan funds reviewed. Continue with the matching trade’s Accept control.',complete:'Completed loan transfer verified and recorded.',refresh:'Trade review refreshed from Torn.',reset:'Trade review reset. Follow the current stage shown below.'};
+   publish({data:result,selectedLoanId:bound.loanId,...resetReview(),tradeCheck:check,success:messages[bound.action]});
   }catch(error){
    failed=true;
    if(stillBound())publish({...resetReview(),reviewError:redactedMessage(error,[key,stored])+(attempted?' The latest bank record will be checked. No automatic retry was sent.':' Refresh the loan details before trying again.')});
@@ -393,7 +377,7 @@ export function createTradeLoanDetailsController({transport,readContext,nativeAc
   submitReview,
   contextChanged(){
    if(disposed)return;
-   const context=readContext();if(contextKey(context)===contextKey(model.context)){const readiness=nativeReadiness();if(readiness.nativeAcceptAvailable!==model.nativeAcceptAvailable||readiness.nativeAcceptReason!==model.nativeAcceptReason)publish(readiness);return tryCreatedTrade();}
+   const context=readContext();if(contextKey(context)===contextKey(model.context))return tryCreatedTrade();
    if(openingCreated){
     const detail=openingCreated;
     if(context.route===model.context.route&&context.accountId===detail.borrowerId&&context.tradeId===detail.nativeTradeId&&!context.ambiguous){

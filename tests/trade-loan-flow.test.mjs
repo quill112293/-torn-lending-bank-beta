@@ -207,8 +207,8 @@ test('roles follow the same-trade stages and only the bound receiving staff can 
   const outsider=clone(d);outsider.user.id=OTHER;outsider.role='staff';assert.equal(loanTradeActions(outsider,loan)[action],false,action);
  }
  const d=data('funds_reviewed',OWNER),loan=d.state.loans[0];
- assert.equal(loanTradeActions(d,loan)['accept-ready'],true);d.state.staff[0].disabled=true;assert.equal(loanTradeActions(d,loan)['accept-ready'],false);assert.equal(loanTradeActions(d,loan).complete,false);
- const borrower=data('funds_reviewed',BORROWER);assert.equal(loanTradeActions(borrower,borrower.state.loans[0])['accept-ready'],true);assert.equal(loanTradeActions(borrower,borrower.state.loans[0]).complete,false);
+ assert.equal(!!loanTradeActions(d,loan)['accept-ready'],false);d.state.staff[0].disabled=true;assert.equal(!!loanTradeActions(d,loan)['accept-ready'],false);assert.equal(loanTradeActions(d,loan).complete,false);
+ const borrower=data('funds_reviewed',BORROWER);assert.equal(!!loanTradeActions(borrower,borrower.state.loans[0])['accept-ready'],false);assert.equal(loanTradeActions(borrower,borrower.state.loans[0]).complete,false);
 });
 
 test('legacy accepted collateral, wrong date and lending holds prevent premature steps but completed-proof review stays available',()=>{
@@ -219,8 +219,8 @@ test('legacy accepted collateral, wrong date and lending holds prevent premature
   const d=data('collateral_reviewed',OWNER);mutate(d);assert.equal(loanTradeActions(d,d.state.loans[0])['funds-added'],false);assert.equal(loanTradeActions(d,d.state.loans[0]).refresh,true);
  }
  const d=data('funds_reviewed',OWNER);d.state.bankOnline=false;d.state.borrowers[BORROWER].flags=[{reason:'Hold'}];
- assert.equal(loanTradeActions(d,d.state.loans[0])['accept-ready'],false);assert.equal(loanTradeActions(d,d.state.loans[0]).complete,true);
- delete d.state.loans[0].tradeFlow.nativeTradeId;assert.equal(loanTradeActions(d,d.state.loans[0])['accept-ready'],false);
+ assert.equal(!!loanTradeActions(d,d.state.loans[0])['accept-ready'],false);assert.equal(loanTradeActions(d,d.state.loans[0]).complete,true);
+ delete d.state.loans[0].tradeFlow.nativeTradeId;assert.equal(!!loanTradeActions(d,d.state.loans[0])['accept-ready'],false);
 });
 
 test('manually approved first placement requires independent explicit terms consent and saves it only with that action',async()=>{
@@ -325,16 +325,21 @@ test('only exact authoritative stage records can produce a success message',asyn
  }
 });
 
-test('Accept performs a fresh server readiness check then exactly one native initial click without completing the loan',async()=>{
- const f=scenario('accept-ready');await f.open();assert.equal(f.controller.getState().nativeAcceptAvailable,true);assert.equal(f.controller.beginReview('accept-ready'),true);
- await f.controller.submitReview({checked:true});assert.deepEqual(f.calls.map(call=>call.path),['bank','bank','loan-trade']);assert.equal(f.posts()[0].payload.action,'accept-ready');assert.equal(f.nativeClicks,1);
- assert.match(f.controller.getState().success,/Continue Torn confirmation/);assert.equal(f.controller.getState().data.state.loans[0].status,'approved');assert.equal(f.controller.getState().data.state.loans[0].collateralConfirmed,false);
- await f.controller.submitReview({checked:true});assert.equal(f.nativeClicks,1);
+test('the bank never forwards native acceptance and final verification remains available without native controls',async()=>{
+ const f=scenario('complete');f.nativeReady=false;await f.open();
+ assert.equal(f.controller.beginReview('accept-ready'),false);await f.controller.submitReview({checked:true});assert.equal(f.posts().length,0);
+ f.controller.contextChanged();assert.equal(f.calls.length,1);
+ assert.equal(f.controller.beginReview('complete'),true);await f.controller.submitReview(f.input);
+ assert.equal(f.posts().length,1);assert.equal(f.posts()[0].payload.action,'complete');assert.equal(f.nativeClicks,0);
+ assert.equal(f.controller.getState().data.state.loans[0].tradeFlow.stage,'completed');
 });
 
-test('unready API result or unavailable native control never activates Accept; DOM-only availability changes do not fetch',async()=>{
- const f=scenario('accept-ready');f.nativeReady=false;await f.open();assert.equal(f.controller.beginReview('accept-ready'),false);assert.equal(f.posts().length,0);
- f.nativeReady=true;f.controller.contextChanged();assert.equal(f.controller.getState().nativeAcceptAvailable,true);assert.equal(f.calls.length,1);f.controller.beginReview('accept-ready');
- f.onWrite=payload=>({...f.result(payload),tradeCheck:{stage:'funds_reviewed',ready:false,reason:'Funds changed.',apiTradeId:API,nativeTradeId:NATIVE}});
- await f.controller.submitReview({checked:true});assert.equal(f.nativeClicks,0);assert.equal(f.controller.getState().success,'');assert.match(f.controller.getState().reviewError,/Funds changed/);
+test('completed receipt identity can differ from the preserved open trade identity',async()=>{
+ for(const invalid of [false,true]){
+  const f=scenario('complete');await f.open();assert.equal(f.controller.beginReview('complete'),true);
+  f.onWrite=payload=>{const result=f.result(payload);result.state.loans[0].tradeFlow.completion.apiTradeId='6509836';result.tradeCheck.completedApiTradeId=invalid?'6509837':'6509836';return result;};
+  await f.controller.submitReview(f.input);
+  assert.equal(!!f.controller.getState().success,!invalid);assert.equal(f.nativeClicks,0);
+  if(!invalid){assert.equal(f.controller.getState().data.state.loans[0].tradeFlow.apiTradeId,API);assert.equal(f.controller.getState().data.state.loans[0].tradeFlow.nativeTradeId,NATIVE);}
+ }
 });

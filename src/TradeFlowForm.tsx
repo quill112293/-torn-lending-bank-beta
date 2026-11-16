@@ -7,7 +7,6 @@ export const tradeFlowLabels={
  'collateral-reviewed':'Verify collateral',
  'funds-added':'Confirm loan funds added',
  'funds-reviewed':'Verify loan funds added',
- 'accept-ready':'Accept trade in Torn',
  complete:'Verify completed transfer',
  refresh:'Refresh trade review',
  reset:'Reset trade review'
@@ -28,7 +27,6 @@ export default function TradeFlowForm({linkOnPlacement=false,action,loan,keyRole
   'collateral-reviewed':'Compare the expected collateral above with the open trade. Review every item quantity and its accepted value. Cash and item quantities are checked with Torn.',
   'funds-added':'Add the exact loan principal to this same Torn trade, then check the offer below.',
   'funds-reviewed':'Check that the recorded lender has added the exact loan principal to this same Torn trade.',
-  'accept-ready':'The bank will recheck the current trade before opening your initial Accept control. Continue Torn’s own confirmation to accept your side.',
   complete:'Finish both sides of Torn’s acceptance first. This check verifies the completed two-way transfer before recording collateral received and loan funds transferred.',
   refresh:'Check the latest trade offer in Torn. Changed cash or items can clear earlier review stages so they can be checked again.',
   reset:'Remove the lender’s loan funds from the open Torn trade before resetting or cancelling. The bank releases the reservation only after Torn confirms the lender’s cash offer is zero.'
@@ -38,7 +36,6 @@ export default function TradeFlowForm({linkOnPlacement=false,action,loan,keyRole
   'collateral-reviewed':'I checked the offered collateral and reviewed its values, and accept these values for this trade.',
   'funds-added':`I added ${money(loan.principal)} from the recorded lender to this trade for ${loan.reference}.`,
   'funds-reviewed':`I can see ${money(loan.principal)} from the recorded lender added to this trade and checked the reference ${loan.reference}.`,
-  'accept-ready':`I reviewed the collateral, ${money(loan.principal)} loan funds and participants, and am ready to accept my side in Torn.`,
   complete:`Both sides completed this trade, and I want Torn to verify its collateral and ${money(loan.principal)} loan transfer.`,
   refresh:'Check this trade’s current offer and update the recorded review stages.',
   reset:'I removed the lender’s loan funds from this open trade and want to reset its review.'
@@ -89,7 +86,7 @@ export default function TradeFlowForm({linkOnPlacement=false,action,loan,keyRole
    <label className='field'><span>Item / PI valuation notes and source</span><textarea name='notes' rows={3} maxLength={1000} disabled={saving}/><small>Include reviewed values and their source when accepting item or PI payment collateral.</small></label>
   </>}
   {linkOnPlacement&&<label className='check'><input type='checkbox' name='linkOpenTrade' required disabled={saving} {...fieldFeedback('linkOpenTrade')}/><span>I checked that this open Torn trade shows {loan.reference} in its trade log and is with the receiving lender. Link this trade to my loan.{fieldError('linkOpenTrade')}</span></label>}
-  {!linkOnPlacement&&<label className='field'><span>Torn API trade ID (optional)</span><input name='tradeId' type='text' inputMode='numeric' pattern='[1-9][0-9]*' maxLength={16} disabled={saving} autoComplete='off' {...fieldFeedback('tradeId')}/><small>Leave blank to find the trade by this loan’s exact reference. If needed, enter its API trade ID. The page’s address may use a different number.</small>{fieldError('tradeId')}</label>}
+  {!linkOnPlacement&&action!=='complete'&&<label className='field'><span>Torn API trade ID (optional)</span><input name='tradeId' type='text' inputMode='numeric' pattern='[1-9][0-9]*' maxLength={16} disabled={saving} autoComplete='off' {...fieldFeedback('tradeId')}/><small>Leave blank to find the trade by this loan’s exact reference. If needed, enter its API trade ID. The page’s address may use a different number.</small>{fieldError('tradeId')}</label>}
   <p className='micro'>{savedKeyAvailable?'Saved Torn API key available. Leave the key field blank to use it for this check.':'Enter a Torn API key with trade and trades access for your current account.'}</p>
   <label className='field'><span>{savedKeyAvailable?'Different Torn API key (optional)':'Torn API key'}</span><input name='key' type='password' minLength={16} maxLength={16} required={!savedKeyAvailable} autoComplete='off' disabled={saving} {...fieldFeedback('key')}/><small>A key entered here is used only for this check and is not saved.</small>{fieldError('key')}</label>
   <a className='secondary left' href={customKeyLink(keyRole)} target='_blank' rel='noopener noreferrer'>Create suitable Torn key</a>

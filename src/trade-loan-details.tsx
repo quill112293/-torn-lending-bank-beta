@@ -5,7 +5,6 @@ import TradeFlowForm,{tradeFlowLabels} from './TradeFlowForm';
 import TradeReplacementForm,{tradeReplacementLabels} from './TradeReplacementForm';
 import {tradeViewUrl} from '../lib/collateral-trade.js';
 import {tradeReplacementEligibility} from '../lib/trade-replacement.js';
-import {createNativeTradeAccept} from './trade-accept.js';
 import {readCreatedTradeReview,clearCreatedTradeReview} from './trade-handoff.js';
 import {createTradeLoanDetailsController,readTradeLoanContext,tradeDetailLoans,tradeLoanSelectionNotice,loanTradeActions} from './trade-loan-match.js';
 
@@ -14,8 +13,8 @@ const status=loan=>loan.status==='approved'?'Approved · awaiting funding':loan.
 const bankUrl='https://www.torn.com/bank.php';
 const date=value=>Number.isFinite(Date.parse(value))?new Date(value).toLocaleString('en-GB',{timeZone:'UTC'})+' UTC':'Unavailable';
 const order=['collateral_placed','collateral_reviewed','funds_added','funds_reviewed','completed'];
-const steps=[['Collateral placed','collateralPlaced'],['Collateral checked','collateralReviewed'],['Loan funds added','fundsAdded'],['Loan funds checked','fundsReviewed'],['Accept in Torn',null],['Completed transfer verified','completion']];
-const primaryActions=['collateral-placed','collateral-reviewed','funds-added','funds-reviewed','accept-ready','complete'];
+const steps=[['Collateral placed','collateralPlaced'],['Collateral checked','collateralReviewed'],['Loan funds added','fundsAdded'],['Loan funds checked','fundsReviewed'],['Completed transfer verified','completion']];
+const primaryActions=['collateral-placed','collateral-reviewed','funds-added','funds-reviewed','complete'];
 
 function actor(data,loan,id){const name=String(id)===String(loan.borrowerId)?loan.name:data.state?.staff?.find(person=>String(person.id)===String(id))?.name;return (name?name+' ':'')+'['+id+']';}
 function TradeProgress({data,loan}){
@@ -31,7 +30,7 @@ function TradeProgress({data,loan}){
   {!completed&&<p className='muted'>{guidance[Math.max(0,rank+1)]}</p>}
   <ol style={{listStyle:'none',padding:0,margin:0}}>{steps.map(([label,marker],index)=>{
    const record=marker&&flow?.[marker],done=completed||index<4&&rank>=index,current=!completed&&(index<4?rank===index-1:index===4&&rank===3);
-   return <li className='record static' key={label} aria-current={current?'step':undefined}><span className='badge'>{index+1}</span><div className='record-main'><strong>{label}</strong><span>{done?['Placed','Checked','Added','Checked','Completed in Torn','Verified'][index]:current?'Current step':index===5&&rank===3?'After both sides complete Torn acceptance':'Waiting'}</span>{record?.by&&<span>{actor(data,loan,record.by)} · {date(record.at)}</span>}</div></li>;
+   return <li className='record static' key={label} aria-current={current?'step':undefined}><span className='badge'>{index+1}</span><div className='record-main'><strong>{label}</strong><span>{done?['Placed','Checked','Added','Checked','Verified'][index]:current?'Current step':'Waiting'}</span>{record?.by&&<span>{actor(data,loan,record.by)} · {date(record.at)}</span>}</div></li>;
   })}</ol>
   {flow?.reservedBy&&!completed&&<p className='notice'>Reserved for this trade: <strong>{money(loan.principal)}</strong> with lender {actor(data,loan,flow.reservedBy)}. The loan awaits completed-transfer verification.</p>}
   {flow?.collateralReviewed&&<dl className='breakdown'>
@@ -53,7 +52,7 @@ export function TradeLoanDetails({model,onOpen=()=>{},onRefresh=()=>{},onSelect=
  const historical=loan&&(loan.status!=='approved'||!!loan.collateralConfirmed);
  const eligible=loanTradeActions(model.data,loan),flow=loan?.tradeFlow;
  const replacement=loan?tradeReplacementEligibility(model.data.state,loan,String(model.data.user.id)):{available:false,canReplace:false,canReconcile:false,reason:''};
- const review=model.review&&model.review.loanId===loan?.id&&eligible[model.review.action]&&(model.review.action!=='accept-ready'||model.nativeAcceptAvailable)?model.review:null;
+ const review=model.review&&model.review.loanId===loan?.id&&eligible[model.review.action]?model.review:null;
  const linkedTradeId=String(flow?.nativeTradeId??loan?.collateralTrade?.uiTradeId??'');
  const linkedTradeUrl=/^[1-9]\d{0,15}$/.test(linkedTradeId)?tradeViewUrl(linkedTradeId):'';
  const invalidReason=flow?.invalidReason||model.tradeCheck?.reason;
@@ -105,8 +104,7 @@ export function TradeLoanDetails({model,onOpen=()=>{},onRefresh=()=>{},onSelect=
       <div><dt>Evidence source</dt><dd>{completion.source||'Unavailable'}</dd></div>
       <div><dt>Torn API trade ID</dt><dd>{completion.apiTradeId||'Unavailable'}</dd></div>
      </dl></section>}
-     {!review&&<div className='actions'>{primaryActions.filter(action=>eligible[action]).map(action=><button type='button' key={action} className={action==='complete'&&eligible['accept-ready']?'secondary':'primary'} disabled={model.saving||action==='accept-ready'&&!model.nativeAcceptAvailable} onClick={()=>onBeginReview(action)}>{tradeFlowLabels[action]}</button>)}</div>}
-     {eligible['accept-ready']&&!model.nativeAcceptAvailable&&<p className='notice amber'>{model.nativeAcceptReason||'Waiting for Torn’s initial Accept control. Complete any existing Torn confirmation before checking the transfer.'}</p>}
+     {!review&&<div className='actions'>{primaryActions.filter(action=>eligible[action]).map(action=><button type='button' key={action} className='primary' disabled={model.saving} onClick={()=>onBeginReview(action)}>{tradeFlowLabels[action]}</button>)}</div>}
      {eligible.complete&&!completion&&<p className='micro'>Finish both sides of Torn’s acceptance, then staff can verify the completed transfer.</p>}
      {!review&&<div className='actions'>{['refresh','reset'].filter(action=>eligible[action]).map(action=><button type='button' key={action} className='secondary' disabled={model.saving} onClick={()=>onBeginReview(action)}>{tradeFlowLabels[action]}</button>)}</div>}
      {review&&(tradeReplacementLabels[review.action]?<TradeReplacementForm key={loan.id+':'+loan.collateralTrade?.intentId+':'+review.action} action={review.action} state={model.data.state} loan={loan} keyRole={String(loan.borrowerId)===String(model.data.user.id)?'Borrower':'Lender'} savedKeyAvailable={!!model.savedKeyAvailable} saving={!!model.saving} blockedReason={review.action==='replace-expired'&&!replacement.canReplace?replacement.reason:''} onSubmit={onSubmitReview} onCancel={onCancelReview}/>:<TradeFlowForm linkOnPlacement={!!review.linkOnPlacement} key={loan.id+':'+review.action} action={review.action} loan={loan} keyRole={String(loan.borrowerId)===String(model.data.user.id)?'Borrower':'Lender'} piAllowed={eligible.piAllowed} savedKeyAvailable={!!model.savedKeyAvailable} saving={!!model.saving} onSubmit={onSubmitReview} onCancel={onCancelReview}/>)}
@@ -136,10 +134,10 @@ export function installTradeLoanDetails({document,window,transport,css=''}){
  shadow.append(style,container);document.body.prepend(host);
  const root=createRoot(container);
  let controller;
- const readContext=()=>readTradeLoanContext(document,window.location.href),nativeAccept=createNativeTradeAccept({document,window,readContext});
+ const readContext=()=>readTradeLoanContext(document,window.location.href);
  const render=model=>root.render(<TradeLoanDetails model={model} onOpen={open=>controller.setOpen(open)} onRefresh={()=>controller.refresh()} onSelect={id=>controller.select(id)} onBeginReview={action=>controller.beginReview(action)} onCancelReview={()=>controller.cancelReview()} onSubmitReview={input=>controller.submitReview(input)}/>);
  let reviewStorage;try{reviewStorage=window.sessionStorage;}catch{}
- controller=createTradeLoanDetailsController({transport,readContext,nativeAccept,onChange:render,navigateToTrade:url=>window.location.assign(url),onCreatedTradeReviewConsumed:detail=>clearCreatedTradeReview(reviewStorage,detail)});
+ controller=createTradeLoanDetailsController({transport,readContext,onChange:render,navigateToTrade:url=>window.location.assign(url),onCreatedTradeReviewConsumed:detail=>clearCreatedTradeReview(reviewStorage,detail)});
  render(controller.getState());
  let timer=null;
  const update=()=>{timer=null;const context=readTradeLoanContext(document,window.location.href);if(host.hidden===context.page)host.hidden=!context.page;controller.contextChanged();};

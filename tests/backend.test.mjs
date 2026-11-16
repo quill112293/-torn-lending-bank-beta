@@ -1102,12 +1102,16 @@ async function withLoanTradeAPI(f,run){
   const parsed=new URL(url);
   if(parsed.pathname==='/v2/user/trades'){
    f.apiCalls.push({path:parsed.pathname,query:parsed.search});
-   return Response.json({trades:f.listOverride||(!f.trade.completed_at?[f.trade]:[])});
+   if(f.onListRead){const result=await f.onListRead(parsed);if(result)return Response.json(result);}
+   const finished=parsed.searchParams.get('cat')==='finished';
+   const rows=finished?(f.finishedTrades||[f.trade]).filter(trade=>trade.completed_at>Number(parsed.searchParams.get('from'))&&trade.completed_at<=Number(parsed.searchParams.get('to'))):f.listOverride||(!f.trade.completed_at?[f.trade]:[]);
+   return Response.json({trades:rows,_metadata:{links:{next:null,prev:null}}});
   }
   if(parsed.pathname==='/v2/user/'+f.trade.id+'/trade'){
    if(f.onTradeDetailRead)await f.onTradeDetailRead();
    f.apiCalls.push({path:parsed.pathname,query:parsed.search});return Response.json({trade:f.trade});
   }
+  if(parsed.pathname==='/v2/user/88444/trade'&&f.trade.id!==88444){f.apiCalls.push({path:parsed.pathname,query:parsed.search});return Response.json({error:{code:7,error:'Incorrect ID-entity relation'}});}
   return tornFetch(url,options);
  };
  try{return await run();}finally{globalThis.fetch=tornFetch;}
@@ -1482,5 +1486,82 @@ test('failed settlement persistence rolls back both sides and a later explicit c
   const failed=await f.step(f.owner,'complete');assert.equal(failed.status,400);assert.deepEqual(f.read(),before);assert.equal(collateralTradeEvents(f.env).length,eventCount);
   f.env.DB.batch=originalBatch;
   const retry=await f.step(f.owner,'complete');assert.equal(retry.status,200,retry.data.error);assert.equal(f.read().loans[0].status,'active');
+ });
+});
+
+test('finished lookup resolves a new receipt ID, preserves creation links, and settles exactly once',async()=>{
+ const f=await loanTradeScenario();
+ await withLoanTradeAPI(f,async()=>{
+  await readyLoanTrade(f);
+  const original=f.read(),loan=original.loans[0];
+  loan.collateralTrade.verifiedApiTradeId='88444';
+  f.env.DB.sqlite.prepare('UPDATE bank_state SET data=? WHERE id=?').run(JSON.stringify(original),'main');
+  f.trade.id=6509836;f.trade.completed_at=Math.ceil(Date.now()/1000);f.trade.expires_at=null;
+  f.apiCalls.length=0;
+  const refresh=await f.step(f.owner,'refresh',{tradeId:undefined});
+  assert.equal(refresh.status,200,refresh.data.error);assert.match(refresh.data.tradeCheck.reason,/completed/);
+  assert.deepEqual(f.read(),original,'Read-only completion discovery must not reserve or settle funds again.');
+  assert.ok(f.apiCalls.some(call=>call.path==='/v2/user/88444/trade'));
+  f.apiCalls.length=0;
+  const result=await f.step(f.owner,'complete',{tradeId:undefined});
+  assert.equal(result.status,200,result.data.error);
+  const saved=f.read(),settled=saved.loans[0];
+  assert.equal(settled.status,'active');assert.equal(settled.tradeFlow.stage,'completed');
+  assert.equal(settled.tradeFlow.apiTradeId,'88444');assert.equal(settled.collateralTrade.verifiedApiTradeId,'88444');
+  assert.equal(settled.tradeFlow.nativeTradeId,'11687899');assert.equal(settled.tradeFlow.completion.apiTradeId,'6509836');
+  assert.equal(settled.fundsReceived.reference,'torn-api-trade:6509836');assert.equal(settled.collateralConfirmed.reference,'torn-api-trade:6509836');
+  assert.equal(result.data.tradeCheck.apiTradeId,'88444');assert.equal(result.data.tradeCheck.completedApiTradeId,'6509836');
+  assert.equal(f.apiCalls.some(call=>call.path==='/v2/user/88444/trade'),false,'Final verification must not reuse the stale open ID.');
+  assert.equal(saved.ledger.filter(entry=>entry.loanId===f.loanId&&entry.type==='disbursement').length,1);
+  for(const action of ['complete','refresh']){
+   f.apiCalls.length=0;
+   const repeated=await f.step(f.owner,action,{tradeId:'88444'});assert.equal(repeated.status,200,repeated.data.error);assert.deepEqual(f.read(),saved);
+   assert.equal(f.apiCalls.some(call=>call.path==='/v2/user/trades'),false,'Saved completion evidence is reused on repeated verification.');
+  }
+ });
+});
+
+test('finished discovery rejects missing, ambiguous, old, wrong-person and incomplete evidence without changing saved checks',async()=>{
+ for(const mode of ['missing','ambiguous','old','wrong-person','metadata','detail-time','detail-assets','review-race']){
+  const f=await loanTradeScenario();
+  await withLoanTradeAPI(f,async()=>{
+   await readyLoanTrade(f);f.trade.id=6509836;f.trade.completed_at=Math.ceil(Date.now()/1000);
+   const good=structuredClone(f.trade);f.finishedTrades=[good];
+   if(mode==='missing')f.finishedTrades=[];
+   if(mode==='ambiguous')f.finishedTrades.push({...good,id:6509837});
+   if(mode==='old')f.finishedTrades=[{...good,completed_at:good.completed_at-3600}];
+   if(mode==='wrong-person')f.finishedTrades=[{...good,trader:{id:Number(OTHER)}}];
+   if(mode==='metadata')f.onListRead=()=>({trades:[good]});
+   if(mode==='detail-time')f.trade.completed_at++;
+   if(mode==='detail-assets')f.trade.items.find(item=>String(item.user_id)===OWNER).details.amount--;
+   if(mode==='review-race')f.onTradeDetailRead=()=>{const state=f.read();state.loans[0].tradeFlow.fundsReviewed.at=new Date((good.completed_at+5)*1000).toISOString();f.env.DB.sqlite.prepare('UPDATE bank_state SET data=? WHERE id=?').run(JSON.stringify(state),'main');};
+   const before=f.read(),result=await f.step(f.owner,'complete',{tradeId:undefined});
+   assert.equal(result.status,400,mode+': '+result.data.error);
+   const after=f.read();if(mode==='review-race')before.loans[0].tradeFlow.fundsReviewed.at=after.loans[0].tradeFlow.fundsReviewed.at;
+   assert.deepEqual(after,before,mode);
+  });
+ }
+});
+
+test('final verification settles only the selected deal among fourteen other completed trades',async()=>{
+ const f=await loanTradeScenario();
+ await withLoanTradeAPI(f,async()=>{
+  await readyLoanTrade(f);f.trade.id=6509836;f.trade.completed_at=Math.ceil(Date.now()/1000);
+  const others=Array.from({length:14},(_,index)=>({...structuredClone(f.trade),id:7000000+index,description:'TLB-UNRELATED-'+index}));
+  // These use the very same players, completion time and asset amounts. Their
+  // distinct loan references must prevent even a detail lookup or settlement.
+  f.finishedTrades=[...others.slice(0,7),structuredClone(f.trade),...others.slice(7)];
+  const before=f.read();
+  before.receipts??=[];
+  for(const trade of others)before.receipts.push({id:'OTHER-'+trade.id,tradeId:String(trade.id),reference:'torn-api-trade:'+trade.id,status:'review',borrower:BORROWER,recipient:OWNER,cash:100e6,outgoing:100e6});
+  f.env.DB.sqlite.prepare('UPDATE bank_state SET data=? WHERE id=?').run(JSON.stringify(before),'main');
+  f.apiCalls.length=0;
+  const result=await f.step(f.owner,'complete',{tradeId:undefined});assert.equal(result.status,200,result.data.error);
+  const after=f.read();
+  assert.deepEqual(after.receipts.filter(receipt=>receipt.id.startsWith('OTHER-')),before.receipts.filter(receipt=>receipt.id.startsWith('OTHER-')));
+  assert.equal(after.receipts.length,before.receipts.length+1);assert.equal(after.receipts.at(-1).reference,'torn-api-trade:6509836');
+  assert.equal(after.collateral.length,(before.collateral||[]).length+1);
+  assert.equal(after.ledger.length,before.ledger.length+1);assert.equal(after.ledger.at(-1).loanId,f.loanId);
+  assert.deepEqual(f.apiCalls.filter(call=>call.path.endsWith('/trade')).map(call=>call.path),['/v2/user/6509836/trade']);
  });
 });

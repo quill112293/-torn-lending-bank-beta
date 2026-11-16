@@ -38,12 +38,12 @@ function model({stage,role='owner',userId=OWNER,loan:changes={},reviewAction,...
   selectedLoanId:loan.id,manual:false,context:{page:true,route:'https://www.torn.com/trade.php#step=view&ID='+PAGE_ID,accountId:userId,tradeId:PAGE_ID,reference:REF,ambiguous:false},...extra};
 }
 
-test('both roles keep the loan selector and exact collateral checklist through all six progress steps',()=>{
+test('both roles keep the loan selector and exact collateral checklist through all five progress steps',()=>{
  for(const stage of [undefined,...stages])for(const [role,userId] of [['owner',OWNER],['borrower',BORROWER]]){
   const html=render(model({stage,role,userId}));
   assert.match(html,/Select loan<select/);assert.match(html,/14 × Xanax/);assert.match(html,/\$40,000,000/);assert.match(html,/PI payment collateral value/);
-  assert.match(html,/aria-label="Trade progress"/);assert.equal((html.match(/<li class="record static"/g)||[]).length,6);
-  for(const label of ['Collateral placed','Collateral checked','Loan funds added','Loan funds checked','Accept in Torn','Completed transfer verified'])assert.match(html,new RegExp(label));
+  assert.match(html,/aria-label="Trade progress"/);assert.equal((html.match(/<li class="record static"/g)||[]).length,5);
+  for(const label of ['Collateral placed','Collateral checked','Loan funds added','Loan funds checked','Completed transfer verified'])assert.match(html,new RegExp(label));
  }
 });
 
@@ -57,8 +57,8 @@ test('stage actions follow the ordered borrower and participating staff sequence
   ['collateral_reviewed','borrower',BORROWER,[]],
   ['funds_added','borrower',BORROWER,[names[3]]],
   ['funds_added','owner',OWNER,[]],
-  ['funds_reviewed','borrower',BORROWER,[names[4]]],
-  ['funds_reviewed','owner',OWNER,[names[4],names[5]]],
+  ['funds_reviewed','borrower',BORROWER,[]],
+  ['funds_reviewed','owner',OWNER,[names[5]]],
   ['completed','owner',OWNER,[]]
  ];
  for(const [stage,role,userId,wanted] of expected){
@@ -116,11 +116,13 @@ test('funding reviews name the exact principal, reference and participants witho
  }
 });
 
-test('Accept waits for the exact native control and its review preserves Torn confirmation',()=>{
+test('the final step offers verification without a scripted Accept control or mismatch warning',()=>{
  const waiting=render(model({stage:'funds_reviewed',nativeAcceptAvailable:false,nativeAcceptReason:'Continue Torn’s confirmation first.'}));
- assert.match(button(waiting,'Accept trade in Torn'),/disabled=""/);assert.match(waiting,/Continue Torn’s confirmation first/);assert.ok(button(waiting,'Verify completed transfer'));
+ assert.equal(button(waiting,'Accept trade in Torn'),undefined);assert.doesNotMatch(waiting,/Accept in Torn|Continue Torn’s confirmation first/);
+ assert.ok(button(waiting,'Verify completed transfer'));assert.match(waiting,/Both participants accept their own side in Torn/);
+ assert.equal((waiting.match(/<li class="record static"/g)||[]).length,5);
  const html=render(model({stage:'funds_reviewed',role:'borrower',userId:BORROWER,reviewAction:'accept-ready'}));
- assert.match(html,/<form[^>]*aria-label="Accept trade in Torn"/);assert.match(html,/Continue Torn’s own confirmation/);assert.match(html,/ready to accept my side in Torn/);assert.doesNotMatch(html,/Loan funds transferred<\/dt>/);
+ assert.doesNotMatch(html,/<form|Accept trade in Torn|Loan funds transferred<\/dt>/);
 });
 
 test('only completed server proof shows received collateral and transferred principal with staff verifier and time',()=>{

@@ -1,5 +1,6 @@
 import {createServer} from '../server/context.js';
-import {LOAN_TRADE_ACTIONS,inspectLoanTrade,selectLoanTrade,applyLoanTrade,requireTermsRevision,verifyClaimedTradeDescription} from '../lib/loan-trade.js';
+import {LOAN_TRADE_ACTIONS,inspectLoanTrade,selectLoanTrade,selectCompletedLoanTrade,completedTradeSince,applyLoanTrade,requireTermsRevision,verifyClaimedTradeDescription} from '../lib/loan-trade.js';
+import {collectFinishedTrades} from '../lib/torn-trade-history.js';
 import {TRADE_REPLACEMENT_ACTIONS,inspectTradeReplacement,collectTradeReplacementEvidence,applyTradeReplacement} from '../lib/trade-replacement.js';
 import {recordCollateralTrade} from '../lib/collateral-trade.js';
 import TB from '../lib/engine.js';
@@ -39,14 +40,28 @@ export function route(env){
    await srv.ownKey(input.key,user.torn_id);
    let trades=[];
    if(recover||!context.loan.tradeFlow?.apiTradeId&&!context.loan.collateralTrade?.verifiedApiTradeId&&!input.tradeId)trades=(await srv.torn(input.key,'user/trades?cat=ongoing&timestamp='+Date.now())).trades;
-   const tradeId=recover?verifyClaimedTradeDescription(initial,user.torn_id,input,trades):selectLoanTrade(initial,user.torn_id,input.loanId,trades,input.tradeId);
-   const trade=(await srv.torn(input.key,'user/'+tradeId+'/trade?timestamp='+Date.now())).trade;
+   let tradeId=recover?verifyClaimedTradeDescription(initial,user.torn_id,input,trades):selectLoanTrade(initial,user.torn_id,input.loanId,trades,input.tradeId);
+   let finishedTrades=null;
+   const readFinished=async()=>{
+    if(!context.completed)finishedTrades=(await collectFinishedTrades(path=>srv.torn(input.key,path),Math.floor(completedTradeSince(context)/1000)-1)).finished;
+    tradeId=selectCompletedLoanTrade(initial,user.torn_id,input.loanId,finishedTrades);
+    return (await srv.torn(input.key,'user/'+tradeId+'/trade?timestamp='+Date.now())).trade;
+   };
+   let trade;
+   if(input.action==='complete'||context.completed)trade=await readFinished();
+   else{
+    try{trade=(await srv.torn(input.key,'user/'+tradeId+'/trade?timestamp='+Date.now())).trade;}
+    catch(error){
+     if(input.action!=='refresh'||context.loan.tradeFlow?.stage!=='funds_reviewed'||error.tornCode!==7)throw error;
+     trade=await readFinished();
+    }
+   }
    TB.need(trade&&String(trade.id)===tradeId,'Torn returned a different API trade; check the selected API trade ID.');
    const currentUser=await srv.identity(req),current=await srv.loadState();
    TB.need(currentUser.torn_id===user.torn_id,'The connected Torn account changed. Refresh before continuing.');
    TB.need(current.loans.find(loan=>loan.id===input.loanId)?.collateralTrade?.intentId===intentId,'The loan trade attempt changed during the check. Refresh before continuing.');
    if(recover)verifyClaimedTradeDescription(current,currentUser.torn_id,input,trades);
-   const result=await applyLoanTrade(withLink(current,currentUser.torn_id),currentUser.torn_id,input.action,{...input,tradeId},trade);
+   const result=await applyLoanTrade(withLink(current,currentUser.torn_id),currentUser.torn_id,input.action,{...input,tradeId},trade,Date.now(),finishedTrades);
    if(recover)TB.need(result.tradeCheck.stage==='collateral_placed'&&!result.tradeCheck.reason,'Torn did not confirm the collateral offer. Check the contents and retry.');
    if(result.changed||recover)await srv.saveState(result.state,current.revision);
    return srv.response({...srv.view(result.state,currentUser),tradeCheck:result.tradeCheck});
