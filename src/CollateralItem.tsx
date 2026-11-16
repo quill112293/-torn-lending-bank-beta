@@ -1,6 +1,6 @@
 import React,{useEffect,useState} from 'react';
 
-export default function CollateralItem({item,catalog,catalogStatus,loadCatalog,onQuote,onChange,onRemove,formatMoney,creditRate}){
+export default function CollateralItem({item,catalog,catalogStatus,loadCatalog,onQuote,onChange,onRemove,formatMoney,creditRate,remainingCollateral}){
  const [showSuggestions,setShowSuggestions]=useState(false);
  const [status,setStatus]=useState('');
  const [failed,setFailed]=useState(false);
@@ -43,6 +43,8 @@ export default function CollateralItem({item,catalog,catalogStatus,loadCatalog,o
  }
  const quantity=Number(item.qty);
  const total=Number.isSafeInteger(quantity)&&quantity>0?quantity*item.reference:0;
+ const unitCredit=item.reference*creditRate;
+ const moreNeeded=remainingCollateral>0&&unitCredit>0?Math.ceil(remainingCollateral/unitCredit):0;
  return <div className='item-row'>
   <div className='form-grid'>
    <div onBlur={event=>{if(!event.currentTarget.contains(event.relatedTarget))setShowSuggestions(false);}}
@@ -61,7 +63,11 @@ export default function CollateralItem({item,catalog,catalogStatus,loadCatalog,o
    </div>
    <label className='field'><span>Quantity</span><input type='number' min={1} step={1} value={item.qty} onChange={event=>onChange({qty:event.target.value})}/></label>
   </div>
-  {item.reference>0?<p role='status'>Market price {formatMoney(item.reference)} each · {formatMoney(total)} total · {formatMoney(Math.floor(total*creditRate))} credited</p>:
+  {item.reference>0?<div role='status'>
+   <p>Market price {formatMoney(item.reference)} each · {formatMoney(total)} total · {formatMoney(Math.floor(total*creditRate))} credited</p>
+   {moreNeeded>0&&<p><strong>About {moreNeeded.toLocaleString('en-US')} more needed</strong> if you cover the remaining collateral with this item.</p>}
+   {remainingCollateral===0&&<p>Collateral requirement covered at current prices.</p>}
+  </div>:
    <p className='muted' role='status'>{status||(name&&!itemId&&!showSuggestions?'Unpriced items go to staff review.':'')}</p>}
   {failed&&<button type='button' className='secondary' onClick={()=>{setFailed(false);setStatus('Checking market price…');setAttempt(previous=>previous+1);}}>Retry market price</button>}
   <button type='button' className='subtle danger' onClick={onRemove}>Remove</button>
