@@ -39,7 +39,12 @@ export function readTradeLoanContext(document,href){
   if(headings.length>1)context.ambiguous=true;
   if(headings.length===1){
    const heading=normalized(renderedText(headings[0])),description=/^(?:trade\s+)?description\s*:\s*/i;
-   const reference=heading.replace(description,'');
+   let reference=heading.replace(description,'');
+   // Torn can decorate a loan heading on mobile. Only extract the canonical
+   // token from an unlabelled heading with exactly one loan reference.
+   const tokens=reference.match(/\bTLB-[a-z0-9-]+/gi)||[];
+   if(!description.test(heading)&&tokens.length===1&&/^TLB-[0-9A-F]{12}$/.test(tokens[0]))reference=tokens[0];
+   if(!description.test(heading)&&tokens.length>1)context.ambiguous=true;
    context.referenceEvidence=description.test(heading)?'description':/\bTLB-[a-z0-9]/i.test(heading)?'loan-reference':heading?'unclassified':null;
    // Keep the full reference for selection notices and strict native Accept.
    context.reference=reference||null;
@@ -60,7 +65,7 @@ export function matchTradeLoan(loans,context){
  const refs=context.reference?loans.filter(loan=>loan.reference===context.reference):[];
  if(ids.length>1||refs.length>1)return {loanId:'',reason:'ambiguous'};
  if(ids.length===1){
-  if(context.reference&&ids[0].reference!==context.reference)return {loanId:'',reason:'conflict'};
+  if(nativeConflict(context,ids[0],true))return {loanId:'',reason:'conflict'};
   return {loanId:ids[0].id,reason:'trade'};
  }
  if(refs.length===1){

@@ -3,6 +3,7 @@ import {createRoot} from 'react-dom/client';
 import ExpectedCollateral from './ExpectedCollateral';
 import TradeFlowForm,{tradeFlowLabels} from './TradeFlowForm';
 import TradeReplacementForm,{tradeReplacementLabels} from './TradeReplacementForm';
+import {tradeViewUrl} from '../lib/collateral-trade.js';
 import {tradeReplacementEligibility} from '../lib/trade-replacement.js';
 import {createNativeTradeAccept} from './trade-accept.js';
 import {readCreatedTradeReview,clearCreatedTradeReview} from './trade-handoff.js';
@@ -53,6 +54,8 @@ export function TradeLoanDetails({model,onOpen=()=>{},onRefresh=()=>{},onSelect=
  const eligible=loanTradeActions(model.data,loan),flow=loan?.tradeFlow;
  const replacement=loan?tradeReplacementEligibility(model.data.state,loan,String(model.data.user.id)):{available:false,canReplace:false,canReconcile:false,reason:''};
  const review=model.review&&model.review.loanId===loan?.id&&eligible[model.review.action]&&(model.review.action!=='accept-ready'||model.nativeAcceptAvailable)?model.review:null;
+ const linkedTradeId=String(flow?.nativeTradeId??loan?.collateralTrade?.uiTradeId??'');
+ const linkedTradeUrl=/^[1-9]\d{0,15}$/.test(linkedTradeId)?tradeViewUrl(linkedTradeId):'';
  const invalidReason=flow?.invalidReason||model.tradeCheck?.reason;
  const completion=flow?.stage==='completed'?flow.completion:null;
  return <details className='trade-loan-details' open={model.open} onToggle={event=>onOpen(event.currentTarget.open)}>
@@ -70,6 +73,7 @@ export function TradeLoanDetails({model,onOpen=()=>{},onRefresh=()=>{},onSelect=
     </select></label>
     {!loans.length?<p>No loans are available for this bank account.</p>:<p className={'notice '+notice.tone}>{notice.text}</p>}
     {loan&&<>
+     {linkedTradeUrl&&notice.tone==='amber'&&<a className='secondary left' href={linkedTradeUrl}>Open linked Torn trade</a>}
      <dl className='breakdown'>
       <div><dt>Loan / trade reference</dt><dd><strong>{loan.reference||'Unavailable'}</strong></dd></div>
       <div><dt>Borrower</dt><dd>{loan.name||'Borrower'} [{loan.borrowerId}]</dd></div>

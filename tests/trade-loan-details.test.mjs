@@ -77,6 +77,7 @@ test('automatic selection requires a unique exact reference or saved native trad
  assert.deepEqual(matchTradeLoan(loans,context({tradeId:null})),{loanId:'LOAN-1',reason:'reference'});
  assert.deepEqual(matchTradeLoan(loans,context({tradeId:null,reference:null})),{loanId:'',reason:'none'});
  assert.equal(matchTradeLoan(loans,context({reference:'TLB-SECOND-LOAN'})).reason,'conflict');
+ assert.deepEqual(matchTradeLoan(loans,context({reference:'Trade',referenceEvidence:'unclassified'})),{loanId:'LOAN-1',reason:'trade'});
  assert.equal(matchTradeLoan(loans,context({reference:'An unrelated item sale'})).reason,'conflict');
  assert.equal(matchTradeLoan(loans,context({tradeId:'999'})).reason,'conflict');
  assert.equal(matchTradeLoan([...loans,{...loans[1],id:'DUPLICATE'}],context()).reason,'ambiguous');
@@ -123,7 +124,8 @@ test('native headings distinguish explicit descriptions and embedded loan refere
   ['Description: An unrelated item sale','description','An unrelated item sale'],
   ['Trade description: Trade','description','Trade'],
   [REFERENCE,'loan-reference',REFERENCE],
-  ['Trade '+REFERENCE+' awaiting acceptance','loan-reference','Trade '+REFERENCE+' awaiting acceptance'],
+  ['Trade '+REFERENCE+' awaiting acceptance','loan-reference',REFERENCE],
+  ['Trade TLB-94C46EDEE6B7 awaiting acceptance','loan-reference','TLB-94C46EDEE6B7'],
   ['',null,null]
  ]){
   const result=readTradeLoanContext(nativeDocument({headingText}).document,href);
