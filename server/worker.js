@@ -20,7 +20,7 @@ export async function handle(request,env,ctx){
  let result;const srv=createServer(env);const {database,response,body,identity,rateLimit,loadState,saveState,allowed,torn,flagConfirmedProfile}=srv;
  try{
   if(request.method==='OPTIONS')result=new Response(null,{status:204});
-  else if(path==='/api/health'&&request.method==='GET'){let notificationsReady=false;try{await database().prepare('SELECT id FROM push_devices LIMIT 1').first();notificationsReady=true;}catch{}result=response({ok:true,version:'1.1.0-beta.38',notificationsReady});}
+  else if(path==='/api/health'&&request.method==='GET'){let notificationsReady=false;try{await database().prepare('SELECT id FROM push_devices LIMIT 1').first();notificationsReady=true;}catch{}result=response({ok:true,version:'1.1.0-beta.39',notificationsReady});}
   else if(path==='/api/notifications')result=await notificationRoute(request,srv);
   else if(path==='/api/link'&&request.method==='POST'){
    const ip=request.headers.get('cf-connecting-ip')||'local';await rateLimit('login:'+await digest(ip),5);
@@ -39,7 +39,7 @@ export async function handle(request,env,ctx){
    const u=await identity(request);await body(request);await database().batch([database().prepare('DELETE FROM sessions WHERE token_hash=?').bind(u.sessionHash),database().prepare('DELETE FROM push_devices WHERE session_hash=?').bind(u.sessionHash)]);result=response({ok:true});
   }else if(path==='/api/access'){
    const u=await identity(request),s=await loadState();if(role(s,u.torn_id)==='borrower')fail('Staff permission is required.',403);
-   if(request.method==='GET'){const members=(await database().prepare('SELECT a.torn_id,a.created_at,i.name FROM allowed_members a LEFT JOIN identities i ON i.torn_id=a.torn_id ORDER BY a.created_at').all()).results;result=response({members:members.map(m=>({...m,memberProgram:memberProgram(s,m.torn_id)}))});}
+   if(request.method==='GET'){const members=(await database().prepare("SELECT a.torn_id,a.created_at,i.name,json_extract(i.profile, '$.networth') AS networth,json_extract(i.profile, '$.checkedAt') AS checkedAt FROM allowed_members a LEFT JOIN identities i ON i.torn_id=a.torn_id ORDER BY a.created_at").all()).results;result=response({members:members.map(m=>({...m,memberProgram:memberProgram(s,m.torn_id)}))});}
    else if(request.method==='POST'){
     if(u.torn_id!==OWNER_ID)fail('Only the owner can manage invitations.',403);
     await rateLimit(u.platformId+':access',15);const a=await body(request),id=TB.ident(a.id);if(id===OWNER_ID)fail('The owner always has access.');

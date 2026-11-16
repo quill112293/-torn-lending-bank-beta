@@ -91,3 +91,18 @@ test('a $1B qualification keeps standard and above-limit applications separate',
  assert.equal(automatic.applications[1].decision.automatic,true);
  assert.deepEqual(loanSlots(automatic,borrower,{lane:'faction',tier:0}),{open:1,limit:1,remaining:0});
 });
+
+test('profile details belong to the signed-in member and cannot edit loan eligibility',()=>{
+ const other='9000002';
+ const state=base();
+ TB.person(state,other);
+ const saved=applyAction(state,borrower,'saveMyProfile',{
+  id:other, preferredName:'  Tester  ',discord:'tester',notes:'x'.repeat(600),memberProgram:'external',assignedTiers:{faction:3}
+ });
+ assert.equal(saved.borrowers[borrower].memberProgram,'faction');
+ assert.equal(saved.borrowers[borrower].assignedTiers,undefined);
+ assert.equal(saved.borrowers[other].profileDetails,undefined);
+ assert.equal(project(saved,borrower).state.borrowers[borrower].profileDetails.preferredName,'Tester');
+ assert.equal(project(saved,owner).state.borrowers[borrower].profileDetails.notes.length,500);
+ assert.equal(project(saved,other).state.borrowers[borrower],undefined);
+});
