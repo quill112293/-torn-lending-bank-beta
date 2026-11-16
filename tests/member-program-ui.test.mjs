@@ -77,3 +77,15 @@ test('VIP and VIP-PI profiles show ten slots in either program',()=>{
   assert.match(html,/<dt>Remaining slots<\/dt><dd>7<\/dd>/);
  }
 });
+
+test('borrower applications lead with prequalification and keep submission after the form fields',()=>{
+ const input=props('external',true);
+ for(const kind of ['standard','exception']){
+  const html=renderApplication({...input,kind});
+  assert.match(html,/<form[^>]*><section[^>]*aria-label="Prequalification summary"/);
+  assert.match(html,/<div class="big-number">\$200,000,000<\/div>/);
+  assert.ok(html.indexOf('PREQUALIFIED MAXIMUM')<html.indexOf('Requested loan</span>'));
+  assert.ok(html.indexOf('Terms &amp; dates')<html.indexOf('I agree to my requested amount'));
+  assert.ok(html.indexOf('I agree to my requested amount')<html.indexOf(kind==='standard'?'Submit application':'Submit for manual approval'));
+ }
+});
