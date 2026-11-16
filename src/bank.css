@@ -28,3 +28,7 @@
 .borrower-application{grid-template-columns:minmax(0,1fr)}
 .borrower-application>.application-summary{position:static;grid-row:auto}
 .application-actions{display:grid;gap:12px}
+
+.item-suggestions{list-style:none;margin:4px 0 10px;padding:3px;max-height:180px;overflow:auto;border:1px solid var(--border);border-radius:8px;background:var(--bg)}
+.item-suggestions button{display:block;width:100%;min-height:44px;padding:8px 10px;text-align:left;color:inherit;background:transparent;border:0;border-radius:5px}
+.item-suggestions button:hover,.item-suggestions button:focus-visible{background:#1d342b}

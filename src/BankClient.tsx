@@ -63,12 +63,22 @@ export function ApplicationForm({user,rules,initial,onSave,onMarket,onItemQuote,
  const piEligible=hasPIStatus(bankState||{},a.borrowerId);
  useEffect(()=>{if(eligible)setA(x=>({...x,tier:eligible.assignedTier,piRto:eligible.piRto,oilEligible:eligible.oilEligible}));},[a.lane,eligible?.assignedTier,eligible?.piRto,eligible?.oilEligible]);
  const set=(k,v)=>setA(x=>({...x,[k]:v}));
- const [catalog,setCatalog]=useState([{id:206,name:'Xanax'}]);
+ const [catalog,setCatalog]=useState([{id:206,name:'Xanax'},{id:283,name:'Donator Pack'}]);
+ const [catalogStatus,setCatalogStatus]=useState('Loading Torn item names…');
  const catalogRequested=React.useRef(false);
  async function loadCatalog(){
   if(!onItemCatalog||catalogRequested.current)return;
   catalogRequested.current=true;
-  try{setCatalog((await onItemCatalog()).items);}catch{catalogRequested.current=false;}
+  setCatalogStatus('Loading Torn item names…');
+  try{
+   const {items}=await onItemCatalog();
+   setCatalog(previous=>[...new Map([...previous,...items].map(item=>[item.id,item])).values()]
+    .sort((a,b)=>a.name.localeCompare(b.name)));
+   setCatalogStatus('No matching item names. You can also enter a Torn item ID.');
+  }catch{
+   catalogRequested.current=false;
+   setCatalogStatus('Full item list unavailable. You can enter a Torn item ID.');
+  }
  }
  function updateItem(key,changes){
   setA(previous=>({...previous,items:previous.items.map(item=>item.rowKey===key?{...item,...changes}:item)}));
@@ -118,7 +128,7 @@ export function ApplicationForm({user,rules,initial,onSave,onMarket,onItemQuote,
  {borrowerOnly&&<section className='quote-card application-summary' aria-label='Prequalification summary'>{summary}</section>}
  <div className='stack'>
  <section className='card'><div className='section-title'><h2>Applicant</h2><Badge>{initial?.reference||draft?.reference||'01'}</Badge></div><div className='form-grid'>{input('name','Torn name')}{input('borrowerId','Torn ID')}<Field label='Assigned level'>{borrowerOnly?<span className='notice'>{savedLane?rules[a.lane][eligible.assignedTier].name:'Set by bank staff'} · Assigned by the bank</span>:<select value={a.tier} onChange={e=>set('tier',Number(e.target.value))}>{rules[a.lane==='faction'?'faction':'external'].map((t,i)=><option key={i} value={i} disabled={eligible&&!eligible.allowed[i]}>{t.name}{eligible&&!eligible.allowed[i]?' — locked':''}</option>)}</select>}</Field>{input('networth','Verified net worth','text','Amounts accept m and b, such as 600m.')}{requestedLoanField}{eligible?<p className='muted'>Recorded completed loans: {eligible.completed}. Your level and special statuses are managed by the lender.</p>:input('completed','Fully repaid qualifying loans','number')}{input('open','Current open loans','number')}</div><p className='muted'>{savedLane?'Member type: '+programLabel(savedLane)+' · Set by bank staff.':'Bank staff must set this member’s type in Users.'}</p>{input('evidence','Evidence source & date')}{a.lane==='faction'?<div className='stack tight'>{!borrowerOnly&&check('factionMember','Active faction membership verified')}{check('oilEligible','Eligible 10-star Oil Rig employee verified ($3B threshold)')}</div>:check('piRto','Confirmed Private Island Rent-to-Own participant (VIP-PI)')}</section>
- <section className='card'><div className='section-title'><h2>Proposed collateral</h2><Badge>02</Badge></div>{q&&requested>0&&<><p><strong>Required for your request: {money(q.required)}</strong></p><p>Proposed credited value: {money(q.credited)}. {q.credited<q.required?'Still needed: '+money(q.required-q.credited)+'.':'Your proposed collateral covers this amount.'}</p><p className='muted'>Staff must verify and accept the collateral before funding.</p></>}{input('cashCollateral','Cash collateral')}{(piEligible||Number(a.piCollateral)>0)&&input('piCollateral','PI payment collateral value','text','Enter the payment value proposed as collateral. A lender reviews and accepts it; no Torn trade is required.')}{borrowerOnly?a.items.map(item=><CollateralItem key={item.rowKey} item={item} catalog={catalog} loadCatalog={loadCatalog}
+ <section className='card'><div className='section-title'><h2>Proposed collateral</h2><Badge>02</Badge></div>{q&&requested>0&&<><p><strong>Required for your request: {money(q.required)}</strong></p><p>Proposed credited value: {money(q.credited)}. {q.credited<q.required?'Still needed: '+money(q.required-q.credited)+'.':'Your proposed collateral covers this amount.'}</p><p className='muted'>Staff must verify and accept the collateral before funding.</p></>}{input('cashCollateral','Cash collateral')}{(piEligible||Number(a.piCollateral)>0)&&input('piCollateral','PI payment collateral value','text','Enter the payment value proposed as collateral. A lender reviews and accepts it; no Torn trade is required.')}{borrowerOnly?a.items.map(item=><CollateralItem key={item.rowKey} item={item} catalog={catalog} catalogStatus={catalogStatus} loadCatalog={loadCatalog}
  onQuote={onItemQuote} onChange={changes=>updateItem(item.rowKey,changes)}
  onRemove={()=>setA(previous=>({...previous,items:previous.items.filter(row=>row.rowKey!==item.rowKey)}))}
  formatMoney={money} creditRate={rules.itemCredit}/>):a.items.map((item,i)=><div className='item-row' key={i}><div className='form-grid'><Field label='Item / description'><input value={item.name} onChange={e=>set('items',a.items.map((v,j)=>j===i?{...v,name:e.target.value}:v))}/></Field><Field label='Quantity'><input value={item.qty} onChange={e=>set('items',a.items.map((v,j)=>j===i?{...v,qty:e.target.value}:v))}/></Field><Field label='Middle reference price per item'><input value={item.reference} onChange={e=>set('items',a.items.map((v,j)=>j===i?{...v,reference:e.target.value}:v))}/></Field><Field label='Source / checked time'><input value={item.source} onChange={e=>set('items',a.items.map((v,j)=>j===i?{...v,source:e.target.value}:v))}/></Field></div><div className='actions'><button type='button' className='subtle' onClick={async()=>{const id=prompt('Torn item ID');if(!id)return;const v=await onMarket(id);if(v)set('items',a.items.map((x,j)=>j===i?{...x,name:v.name,reference:v.reference,source:v.source+' · '+v.checkedAt,checked:v.checkedAt}:x));}}>Fetch Weav3r median</button><button type='button' className='subtle danger' onClick={()=>set('items',a.items.filter((_,j)=>i!==j))}>Remove</button></div></div>)}<button type='button' className='secondary' onClick={()=>set('items',[...a.items,{rowKey:TB.uid('ITEM'),name:'',qty:1,reference:0,source:'',checked:''}])}><Plus size={16}/>Add item</button><p className='muted'>Cash counts at 100%. Accepted item value is {pct(rules.itemCredit)} of the reference. A lender verifies and accepts collateral before funding.</p></section>
