@@ -111,3 +111,17 @@ The existing fixed Xanax market health check includes bounded public response fi
 ## Beta.59 application collateral total
 
 Application details now show **Total = $…** directly below the cash and item breakdown. This is the combined cash, item reference value and proposed PI payment collateral, when present. A separate **Credited collateral = $…** line uses the bank's existing collateral calculation, including its configured item-credit percentage. Both lenders and borrowers see the same summary.
+
+## Beta.60 borrower approval message
+
+Pending applications show **Awaiting approval** to borrowers when lending funds need allocation. Staff retain the allocation review reason. Once an application is approved or denied, that saved allocation reason is hidden from the borrower so it cannot continue to imply that approval is pending. All other review notices and approval checks are unchanged.
+
+## Beta.61 automatic approval followed by staff collateral verification
+
+A new borrower application automatically receives approval when the server-verified identity, current program and trust level, net-worth limit, open-loan allowance, accepted terms, standing, item prices and credited collateral satisfy the rules. Approval no longer depends on a lender having allocated or recorded enough bank cash. The system records the decision in its own name and creates an unfunded loan with no assigned issuer. It consumes the borrower's loan slot without reserving any individual lender's cash. Manual and legacy approvals already assigned to a lender retain their existing reservations.
+
+Acceptance of the exact submitted amount and terms is recorded with an automatic approval. A staff change to the start date clears that acceptance and requires reconfirmation. The borrower then creates a collateral trade in Torn. Receiving staff review the approved amount and required collateral, complete the trade in Torn, and explicitly accept the completed trade's cash and reviewed item values. The existing staff-reviewed PI payment route remains available to eligible borrowers. Collateral has to meet the full credited requirement before the staff member sends and records the loan funds. Funding also retains the receiving lender's bank-cash, date, terms and restriction checks; the actual funding staff member becomes the issuer. Neither approval nor collateral acceptance transfers money in Torn or adds collateral to spendable bank cash.
+
+A previously synchronized, unassigned trade receipt can now be verified as collateral without creating a duplicate receipt. Consumed, assigned or mismatched receipts remain blocked, and a collateral receipt cannot be reused as a loan repayment. The server owns new borrower application timestamps so an older trade cannot qualify through a backdated request. Final funding rechecks the accepted collateral amount.
+
+The application and loan views show the next step: awaiting collateral verification, revised-terms confirmation or funding. Unfunded approvals display their approved principal with no funded balance or accrued interest. Existing pending applications are not retrospectively approved from saved review reasons; they retain their recorded decision state. No database migration is required. Deploy the updated Worker and update both userscripts for the new server checks and interface.

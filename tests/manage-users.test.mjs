@@ -28,16 +28,16 @@ test('test status does not relabel old real loans and ending it does not relabel
  assert.equal(s.loans.find(l=>l.id===live).isTest,false);assert.equal(s.loans.find(l=>l.id===testLoan).isTest,true);s=act(s,O,'testParticipant',{id:B,enabled:false,reason:'Finished'});assert.equal(s.loans[1].isTest,true);
 });
 test('archiving real-money test loan preserves ledger, outstanding snapshot and all real loans',()=>{
- let s=act(state(),B,'apply',app());const live=s.loans[0].id;s=status(s);s=act(s,B,'apply',app());const l=s.loans[1];l.collateralConfirmed={source:'Torn API completed trade',reference:'torn-api-trade:99'};s=act(s,B,'confirmTerms',{id:l.id});s=act(s,O,'fund',{id:l.id,reference:'real outgoing test transfer'});
+ let s=act(state(),B,'apply',app());const live=s.loans[0].id;s=status(s);s=act(s,B,'apply',app());const l=s.loans[1];l.collateralConfirmed={amount:l.collateralRequired,source:'Torn API completed trade',reference:'torn-api-trade:99'};s=act(s,B,'confirmTerms',{id:l.id});s=act(s,O,'fund',{id:l.id,reference:'real outgoing test transfer'});
  const plan=removalPlan(s,'testPerson',B);assert.equal(plan.outstanding,100e6);assert.equal(plan.recordedCashOut,100e6);const ledger=JSON.stringify(s.ledger),cash=TB.cash(s,O);
  s=act(s,O,'removeRecords',{kind:'testPerson',id:B,confirm:'REMOVE '+B,reason:'Test complete'});assert.equal(TB.cash(s,O),cash);assert.equal(JSON.stringify(s.ledger),ledger);assert.equal(s.loans.length,1);assert.equal(s.loans[0].id,live);assert.equal(s.recordArchives[0].records.loans[0].id,l.id);assert.equal(project(s,B).state.recordArchives,undefined);
 });
 test('funded real loans cannot be removed and confirmation is exact',()=>{
- let s=act(state(),B,'apply',app());const l=s.loans[0];l.collateralConfirmed={reference:'real receipt'};s=act(s,B,'confirmTerms',{id:l.id});s=act(s,O,'fund',{id:l.id,reference:'real disbursement'});
+ let s=act(state(),B,'apply',app());const l=s.loans[0];l.collateralConfirmed={amount:l.collateralRequired,reference:'real receipt'};s=act(s,B,'confirmTerms',{id:l.id});s=act(s,O,'fund',{id:l.id,reference:'real disbursement'});
  assert.throws(()=>removalPlan(s,'loan',l.id),/Funded real/);assert.throws(()=>act(s,O,'removeRecords',{kind:'allTests',id:'TESTS',confirm:'yes',reason:'test'}),/exact/);
 });
 test('test repayment and overdue dates do not change real trust, completion or strikes',()=>{
- let s=status(state());s=act(s,B,'apply',app());const l=s.loans[0];l.collateralConfirmed={reference:'actual received test collateral'};s=act(s,B,'confirmTerms',{id:l.id});s=act(s,O,'fund',{id:l.id,reference:'actual test funding'});
+ let s=status(state());s=act(s,B,'apply',app());const l=s.loans[0];l.collateralConfirmed={amount:l.collateralRequired,reference:'actual received test collateral'};s=act(s,B,'confirmTerms',{id:l.id});s=act(s,O,'fund',{id:l.id,reference:'actual test funding'});
  s=act(s,O,'payment',{id:l.id,cash:100e6,date:TB.today(),reference:'actual repayment',recipient:O});s=act(s,O,'acceptPayment',{id:s.pendingPayments[0].id});assert.equal(s.loans[0].status,'repaid');assert.equal(s.borrowers[B].completed,undefined);assert.equal(s.borrowers[B].trust,undefined);
  s.testDate=TB.addDays(TB.today(),100);TB.refreshStrikes(s);assert.equal(s.borrowers[B].strikes.length,0);
 });
@@ -52,7 +52,7 @@ test('pending payment deletion removes linked requests but not money movements',
 });
 
 test('application-only archive preserves a funded loan, related records and ledger',()=>{
- let s=act(state(),B,'apply',app());const a=s.applications[0],l=s.loans[0];l.collateralConfirmed={reference:'received collateral'};s=act(s,B,'confirmTerms',{id:l.id});s=act(s,O,'fund',{id:l.id,reference:'funded loan'});
+ let s=act(state(),B,'apply',app());const a=s.applications[0],l=s.loans[0];l.collateralConfirmed={amount:l.collateralRequired,reference:'received collateral'};s=act(s,B,'confirmTerms',{id:l.id});s=act(s,O,'fund',{id:l.id,reference:'funded loan'});
  s=act(s,B,'paymentIntent',{id:l.id,amount:10e6,recipient:O});s.collateral=[{id:'c',loanId:l.id,reference:'received collateral'}];
  const before=JSON.stringify({loans:s.loans,requests:s.paymentIntents,collateral:s.collateral,ledger:s.ledger});
  const plan=removalPlan(s,'application',a.id);assert.deepEqual(plan.summary,[{type:'applications',count:1}]);

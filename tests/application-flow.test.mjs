@@ -18,19 +18,103 @@ test('reference is reserved once and retained through submit, edit, notes and lo
  s=applyAction(s,borrower,'applicationNote',{id:d.id,note:'Please confirm receipt'});s=applyAction(s,owner,'applicationNote',{id:d.id,note:'Reviewing'});assert.equal(s.applications[0].notes.length,2);
  assert.throws(()=>applyAction(s,'8000000','applicationNote',{id:d.id,note:'bad'}),/not accessible/);
 });
-test('automatic cash approval uses verified net worth and cannot fund until Torn receipt and terms',()=>{
- let s=apply(base(),input({networth:999e9}));const a=s.applications[0],l=s.loans[0];assert.equal(a.networth,1e9);assert.equal(a.decision.automatic,true);assert.equal(l.status,'approved');assert.equal(TB.cash(s,owner),1e9);assert.equal(TB.spendable(s,owner),900e6);
+test('automatic cash approval uses verified net worth and accepted terms without reserving lender cash',()=>{
+ let s=apply(base(),input({networth:999e9}));const a=s.applications[0],l=s.loans[0];assert.equal(a.networth,1e9);assert.equal(a.decision.automatic,true);assert.equal(a.decision.by,'system');assert.equal(l.status,'approved');assert.equal(l.issuer,null);assert.equal(TB.cash(s,owner),1e9);assert.equal(TB.spendable(s,owner),1e9);
+ assert.equal(l.borrowerConfirmed.by,borrower);assert.equal(l.borrowerConfirmed.date,s.testDate);assert.equal(l.borrowerConfirmed.source,'Accepted with application');assert.equal(l.borrowerConfirmed.reference,a.reference);
+ assert.equal(s.audit.find(entry=>entry.event==='Application approved').actor,'system');assert.equal(s.actorId,borrower);
  assert.throws(()=>applyAction(s,owner,'fund',{id:l.id,reference:'sent'}),/collateral/);
  assert.throws(()=>applyAction(s,owner,'confirmCollateral',{id:l.id,amount:100e6,reference:'fake'}),/Unknown/);
- verifyCollateral(s,owner,l.id,trade(s));assert.equal(TB.cash(s,owner),1e9);assert.equal(s.loans[0].collateralConfirmed.source,'Torn API completed trade');
- assert.throws(()=>applyAction(s,owner,'fund',{id:l.id,reference:'sent'}),/confirmation/);
- s=applyAction(s,borrower,'confirmTerms',{id:l.id});s=applyAction(s,owner,'fund',{id:l.id,reference:'completed outgoing transfer'});assert.equal(s.loans[0].status,'active');assert.equal(TB.cash(s,owner),900e6);
+ verifyCollateral(s,owner,l.id,trade(s),{checked:true});assert.equal(TB.cash(s,owner),1e9);assert.equal(s.loans[0].collateralConfirmed.source,'Torn API completed trade');
+ s=applyAction(s,owner,'fund',{id:l.id,reference:'completed outgoing transfer'});assert.equal(s.loans[0].status,'active');assert.equal(s.loans[0].issuer,owner);assert.equal(TB.cash(s,owner),900e6);
 });
-test('excess request, missing acceptance, missing funds and restrictions never auto approve',()=>{
- for(const a of [{...input({requested:500e6}),kind:'exception'},{...input(),acceptPreapproval:false}]){const s=apply(base(),a);assert.equal(s.loans.length,0);assert.equal(s.applications[0].status,'pending');}
- const empty=base();empty.ledger=[];assert.equal(apply(empty).loans.length,0);
+test('excess request, insufficient collateral, missing acceptance, market review and restrictions remain pending',()=>{
+ for(const a of [{...input({requested:500e6}),kind:'exception'},{...input(),acceptPreapproval:false},input({cashCollateral:74999999})]){const s=apply(base(),a);assert.equal(s.loans.length,0);assert.equal(s.applications[0].status,'pending');}
+ const market=apply(base(),input(),borrower,{...verified,itemPricesNeedReview:true});assert.equal(market.loans.length,0);assert.equal(market.applications[0].status,'pending');assert.ok(market.applications[0].reviewReasons.some(reason=>/market price review/.test(reason)));
  const red=base();TB.person(red,borrower).flags.push({id:'blocked'});assert.equal(apply(red).loans.length,0);
+ const yellow=base();TB.person(yellow,borrower).strikes.push({event:'earlier late payment'});assert.equal(apply(yellow).loans.length,0);
  assert.throws(()=>apply(base(),input(),borrower,null),/verified net worth/);
+});
+
+test('$130M is approved without bank cash and funded only after sufficient collateral is accepted',()=>{
+ let s=base();s.ledger=[];s.staff[0].lendingAllocation=0;
+ Object.assign(s.borrowers[borrower],{memberProgram:'external',completed:3});
+ // This bank's configured Level 3 rule requires 50% for the requested amount.
+ s.rules.external[2].coll[0]=.5;
+ const request=input({lane:'external',tier:2,product:'bank',requested:130e6,cashCollateral:5e6,items:[{itemId:206,name:'Xanax',qty:80,reference:838912}]});
+ s=apply(s,request);const a=s.applications[0],l=s.loans[0],quote=TB.quote(a,s.rules);
+ assert.equal(quote.itemMarket,67112960);assert.equal(quote.credited,65401664);assert.equal(quote.required,65e6);
+ assert.equal(a.status,'approved');assert.equal(a.decision.amount,130e6);assert.equal(a.decision.by,'system');assert.deepEqual(a.reviewReasons,[]);
+ assert.equal(l.issuer,null);assert.equal(l.collateralConfirmed,false);assert.equal(l.borrowerConfirmed.by,borrower);
+ assert.equal(TB.cash(s,owner),0);assert.equal(TB.spendable(s,owner),0);assert.equal(s.ledger.length,0);assert.equal(project(s,owner).state.availableLendingFunds,0);
+ assert.deepEqual(loanSlots(s,borrower,{lane:'external',tier:2}),{open:1,limit:5,remaining:4});
+ assert.throws(()=>applyAction(s,borrower,'fund',{id:l.id,reference:'borrower cannot fund'}),/Staff permission/);
+ assert.throws(()=>applyAction(s,owner,'fund',{id:l.id,reference:'before collateral'}),/collateral/);
+ const receipt=trade(s,130,5e6);receipt.items.push({user_id:Number(borrower),type:'Item',details:{id:206,name:'Xanax',amount:80}});
+ const review={checked:true,itemReference:67112960,notes:'Reviewed and accepted 80 Xanax at $838,912 each'};
+ assert.throws(()=>verifyCollateral(TB.clone(s),owner,l.id,receipt,{...review,itemReference:66666666}),/cover/);
+ assert.throws(()=>verifyCollateral(TB.clone(s),owner,l.id,receipt,{...review,checked:false}));
+ verifyCollateral(s,owner,l.id,receipt,review);
+ assert.equal(l.collateralConfirmed.amount,65401664);assert.equal(TB.cash(s,owner),0);assert.equal(s.ledger.length,0);
+ assert.throws(()=>applyAction(s,owner,'fund',{id:l.id,reference:'before bank funding'}),/bank cash/);
+ s=applyAction(s,owner,'topup',{amount:130e6,reference:'bank cash received for disbursement'});
+ assert.equal(TB.spendable(s,owner),130e6);
+ s=applyAction(s,owner,'fund',{id:l.id,reference:'completed outgoing $130M transfer'});
+ assert.equal(s.loans[0].status,'active');assert.equal(s.loans[0].issuer,owner);assert.equal(TB.cash(s,owner),0);
+ const disbursements=s.ledger.filter(entry=>entry.type==='disbursement');assert.equal(disbursements.length,1);assert.equal(disbursements[0].amount,130e6);assert.equal(disbursements[0].from,owner);
+ assert.throws(()=>applyAction(s,owner,'fund',{id:l.id,reference:'duplicate funding'}),/approved and unfunded/);
+});
+
+test('the internal automatic approval path cannot grant collateral or limit exceptions',()=>{
+ for(const request of [input({cashCollateral:74999999}),{...input({requested:500e6,cashCollateral:500e6}),kind:'exception'}]){
+  const s=apply(base(),request),a=s.applications[0];
+  assert.equal(a.status,'pending');assert.equal(s.actorId,borrower);
+  assert.throws(()=>TB.autoApprove(s,a.id,a.requested,'Automatic exception attempt',{verified:true,accepted:true}));
+  assert.equal(a.status,'pending');assert.equal(s.loans.length,0);
+ }
+ for(const options of [{verified:false,accepted:true},{verified:true,accepted:false}]){
+  const s=apply(base(),{...input(),acceptPreapproval:false}),a=s.applications[0];
+  assert.throws(()=>TB.autoApprove(s,a.id,a.requested,'Missing prerequisite',options));
+  assert.equal(s.loans.length,0);
+ }
+ const s=apply(base(),{...input(),acceptPreapproval:false}),a=s.applications[0];s.actorId=owner;
+ assert.throws(()=>TB.autoApprove(s,a.id,a.requested,'Owner cannot impersonate applicant',{verified:true,accepted:true}));
+ assert.equal(s.loans.length,0);
+});
+
+test('changed start dates require fresh acceptance before funding',()=>{
+ let s=apply(base());const l=s.loans[0],later=TB.addDays(l.start,1),maturity=l.maturity;
+ verifyCollateral(s,owner,l.id,trade(s),{checked:true});
+ s=applyAction(s,owner,'startDate',{id:l.id,start:later});
+ assert.equal(s.loans[0].borrowerConfirmed,undefined);assert.equal(s.loans[0].maturity,TB.addDays(maturity,1));
+ assert.throws(()=>applyAction(s,owner,'fund',{id:l.id,reference:'wrong date'}),/agreed start date/);
+ assert.throws(()=>applyAction(s,owner,'fund',{id:l.id,reference:'new date without acceptance'},later),/confirmation/);
+ s=applyAction(s,borrower,'confirmTerms',{id:l.id},later);
+ s=applyAction(s,owner,'fund',{id:l.id,reference:'reconfirmed date and completed transfer'},later);
+ assert.equal(s.loans[0].status,'active');assert.equal(s.loans[0].start,later);
+});
+
+test('funding rechecks the accepted collateral amount instead of trusting a saved flag',()=>{
+ const s=apply(base()),l=s.loans[0];verifyCollateral(s,owner,l.id,trade(s),{checked:true});
+ const accepted=l.collateralConfirmed;
+ for(const confirmation of [true,{...accepted,amount:l.collateralRequired-1},{...accepted,amount:l.collateralRequired+.5},{...accepted,amount:Number.MAX_SAFE_INTEGER+1}]){
+  const candidate=TB.clone(s);candidate.loans[0].collateralConfirmed=confirmation;
+  assert.throws(()=>applyAction(candidate,owner,'fund',{id:l.id,reference:'invalid collateral amount'}),/collateral/);
+  assert.equal(candidate.loans[0].status,'approved');assert.equal(TB.cash(candidate,owner),1e9);
+ }
+});
+
+test('borrowers cannot backdate application creation to accept an earlier collateral trade',()=>{
+ const before=Date.now(),s=apply(base(),input({created:'2000-01-01T00:00:00.000Z'})),a=s.applications[0],l=s.loans[0];
+ assert.ok(Date.parse(a.created)>=before&&Date.parse(a.created)<=Date.now());
+ assert.throws(()=>verifyCollateral(s,owner,l.id,{...trade(s),completed_at:Date.parse('2001-01-01T00:00:00.000Z')/1000},{checked:true}),/after/);
+});
+
+test('accepted collateral cannot also be credited as a loan repayment',()=>{
+ let s=apply(base());const l=s.loans[0];verifyCollateral(s,owner,l.id,trade(s),{checked:true});
+ const collateralReference=l.collateralConfirmed.reference;
+ s=applyAction(s,owner,'fund',{id:l.id,reference:'actual outgoing loan funds'});
+ assert.throws(()=>applyAction(s,owner,'payment',{id:l.id,cash:10e6,hasItems:false,reference:collateralReference,recipient:owner,date:s.testDate}),/already|collateral|recorded/);
+ assert.equal(s.pendingPayments.length,0);assert.equal(s.loans[0].payments.length,0);
 });
 test('offline pauses new applications but permits existing notes',()=>{
  let s=apply(base());s=applyAction(s,owner,'bankStatus',{online:false});assert.throws(()=>apply(s),/offline/);assert.throws(()=>applyAction(s,borrower,'startApplication',{}),/offline/);s=applyAction(s,borrower,'applicationNote',{id:s.applications[0].id,note:'Existing loan question'});assert.equal(s.applications[0].notes.length,1);
@@ -49,20 +133,20 @@ test('cash snapshots obey owner/vault/staff/borrower privacy including serializa
 });
 test('Torn collateral rejects wrong sender, items, outgoing money, underpayment, old and reused trades',()=>{
  const s=apply(base()),l=s.loans[0],t=trade(s);
- assert.throws(()=>verifyCollateral(TB.clone(s),owner,l.id,{...t,trader:{id:999}}),/participant|borrower/);
- assert.throws(()=>verifyCollateral(TB.clone(s),owner,l.id,{...t,items:[...t.items,{user_id:Number(borrower),type:'Item',details:{amount:1}}]}),/cash-only/);
- assert.throws(()=>verifyCollateral(TB.clone(s),owner,l.id,{...t,items:[...t.items,{user_id:Number(owner),type:'Money',details:{amount:1}}]}),/cash-only/);
- assert.throws(()=>verifyCollateral(TB.clone(s),owner,l.id,trade(s,1,1)),/cover/);
- assert.throws(()=>verifyCollateral(TB.clone(s),owner,l.id,{...t,completed_at:1}),/after/);
- s.receipts=[{reference:'torn-api-trade:123'}];assert.throws(()=>verifyCollateral(s,owner,l.id,t),/already/);
+ assert.throws(()=>verifyCollateral(TB.clone(s),owner,l.id,{...t,trader:{id:999}},{checked:true}),/participant|borrower/);
+ assert.throws(()=>verifyCollateral(TB.clone(s),owner,l.id,{...t,items:[...t.items,{user_id:Number(borrower),type:'Item',details:{amount:1}}]},{checked:true}),/cash-only/);
+ assert.throws(()=>verifyCollateral(TB.clone(s),owner,l.id,{...t,items:[...t.items,{user_id:Number(owner),type:'Money',details:{amount:1}}]},{checked:true}),/cash-only/);
+ assert.throws(()=>verifyCollateral(TB.clone(s),owner,l.id,trade(s,1,1),{checked:true}),/cover/);
+ assert.throws(()=>verifyCollateral(TB.clone(s),owner,l.id,{...t,completed_at:1},{checked:true}),/after/);
+ s.receipts=[{reference:'torn-api-trade:123'}];assert.throws(()=>verifyCollateral(s,owner,l.id,t,{checked:true}),/already/);
 });
 
 test('archived application still supports collateral date checks and funding the retained loan',()=>{
  let s=apply(base()),a=s.applications[0],l=s.loans[0],t=trade(s);
  s=applyAction(s,owner,'removeRecords',{kind:'application',id:a.id,confirm:'REMOVE '+a.id,reason:'Application archived separately'});
  assert.equal(s.applications.length,0);assert.equal(s.loans.length,1);
- assert.throws(()=>verifyCollateral(TB.clone(s),owner,l.id,{...t,completed_at:1}),/after/);
- verifyCollateral(s,owner,l.id,t);s=applyAction(s,borrower,'confirmTerms',{id:l.id});s=applyAction(s,owner,'fund',{id:l.id,reference:'funded after application archive'});assert.equal(s.loans[0].status,'active');assert.equal(project(s,borrower).state.recordArchives,undefined);
+ assert.throws(()=>verifyCollateral(TB.clone(s),owner,l.id,{...t,completed_at:1},{checked:true}),/after/);
+ verifyCollateral(s,owner,l.id,t,{checked:true});s=applyAction(s,borrower,'confirmTerms',{id:l.id});s=applyAction(s,owner,'fund',{id:l.id,reference:'funded after application archive'});assert.equal(s.loans[0].status,'active');assert.equal(project(s,borrower).state.recordArchives,undefined);
 });
 
 test('a $1B qualification keeps standard and above-limit applications separate',()=>{

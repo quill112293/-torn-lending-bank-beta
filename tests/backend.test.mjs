@@ -16,6 +16,66 @@ async function login(env,key='owner',ip='1.2.3.4'){const r=await call(env,'link'
 const realFetch=globalThis.fetch;
 globalThis.fetch=async (url,options)=>{assert.equal(new URL(url).hostname,'api.torn.com');const key=options.headers.Authorization.slice(7),id=keys[key];if(!id)return Response.json({error:{error:'Invalid key'}});if(new URL(url).pathname==='/v2/torn/items')return Response.json({items:[{id:206,name:'Xanax'}]});if(new URL(url).pathname.endsWith('/money'))return Response.json({money:{wallet:987654321,vault:888888888}});return Response.json({profile:{id:Number(id),name:id===OWNER?'Aaron112293':'Tester',status:{state:'Okay'},faction_id:1}});};
 test.after(()=>{globalThis.fetch=realFetch;});
+test('eligible $130M application approves without funds and only staff-verified collateral can proceed to funding',async()=>{
+ const env=fixture(),owner=(await login(env)).data.token;
+ await call(env,'access',{token:owner,body:{action:'invite',lane:'external',id:BORROWER}});
+ const borrower=(await login(env,'borrower')).data.token;
+ const initial=(await call(env,'bank',{token:owner})).data.state;
+ initial.bankOnline=true;initial.borrowers[BORROWER].completed=3;initial.staff[0].lendingAllocation=0;initial.rules.external[2].coll[0]=.5;
+ env.DB.sqlite.prepare('UPDATE bank_state SET data=? WHERE id=?').run(JSON.stringify(initial),'main');
+ env.DB.sqlite.prepare('UPDATE identities SET profile=? WHERE torn_id=?').run(JSON.stringify({id:Number(BORROWER),name:'Tester',networth:330026845,faction_id:1,checkedAt:new Date().toISOString()}),BORROWER);
+ const tornFetch=globalThis.fetch;let trade;
+ globalThis.fetch=async(url,options)=>{
+  const parsed=new URL(url);
+  if(parsed.hostname==='weav3r.dev')return Response.json({item_id:206,item_name:'Xanax',total_count:1,listings:[{price:838912}]});
+  if(parsed.pathname.endsWith('/77331/trade'))return Response.json({trade});
+  return tornFetch(url,options);
+ };
+ async function save(token,action,payload,requestId){
+  const revision=(await call(env,'bank',{token})).data.state.revision;
+  return call(env,'bank',{token,body:{action,payload,requestId,revision}});
+ }
+ try{
+  const request={...TB.sampleApp({borrowerId:BORROWER,lane:'external',tier:2,product:'bank',requested:130e6,cashCollateral:5e6,items:[{itemId:206,name:'Forged name',qty:80,reference:100e6}],created:'2000-01-01T00:00:00.000Z'}),acceptPreapproval:true};
+  const submittedAt=Date.now(),approved=await save(borrower,'apply',request,'approve-130m');
+  assert.equal(approved.status,200,approved.data.error);
+  const app=approved.data.state.applications[0],loan=approved.data.state.loans[0];
+  assert.equal(app.status,'approved');assert.equal(app.decision.by,'system');assert.equal(app.decision.automatic,true);
+  assert.equal(app.preapproval.maximum,132010738);assert.equal(app.items[0].name,'Xanax');assert.equal(app.items[0].reference,838912);
+  assert.ok(Date.parse(app.created)>=submittedAt);
+  assert.equal(loan.principal,130e6);assert.equal(loan.collateralRequired,65e6);assert.equal(loan.collateralConfirmed,false);assert.equal(loan.issuer,null);
+  assert.equal(loan.borrowerConfirmed.by,BORROWER);assert.equal(loan.borrowerConfirmed.source,'Accepted with application');
+  const persisted=JSON.parse(env.DB.sqlite.prepare('SELECT data FROM bank_state').get().data);
+  assert.deepEqual(persisted.ledger,[]);assert.equal(TB.spendable(persisted,OWNER),0);assert.equal(persisted.audit.at(-1).actor,'system');
+  const retry=await save(borrower,'apply',request,'approve-130m');assert.equal(retry.data.state.loans.length,1);
+  const premature=await save(owner,'fund',{id:loan.id,reference:'too-early'},'fund-too-early');
+  assert.equal(premature.status,400);assert.match(premature.data.error,/collateral/);
+  const direct=await save(borrower,'autoApprove',{id:app.id,verified:true,accepted:true},'forged-auto-action');
+  assert.equal(direct.status,400);assert.match(direct.data.error,/Unknown/);
+  trade={id:77331,completed_at:Math.ceil(Date.parse(app.created)/1000)+1,user:{id:Number(OWNER)},trader:{id:Number(BORROWER)},items:[{user_id:Number(BORROWER),type:'Money',details:{amount:5e6}},{user_id:Number(BORROWER),type:'Item',details:{id:206,amount:80}}]};
+  const review={key:'owner'.padEnd(16,'0'),loanId:loan.id,tradeId:'77331',itemReference:67112960,notes:'Reviewed approved loan and received 80 Xanax; accepted the recorded market value.',checked:true};
+  const unauthorized=await call(env,'collateral-check',{token:borrower,body:review});
+  assert.equal(unauthorized.status,403);
+  const unchecked=await call(env,'collateral-check',{token:owner,body:{...review,checked:false}});
+  assert.equal(unchecked.status,400);assert.match(unchecked.data.error,/reviewed and accept/);
+  const accepted=await call(env,'collateral-check',{token:owner,body:review});
+  assert.equal(accepted.status,200,accepted.data.error);
+  assert.equal(accepted.data.state.loans[0].status,'approved');assert.equal(accepted.data.state.loans[0].collateralConfirmed.amount,65401664);
+  assert.equal(accepted.data.state.receipts.length,1);assert.deepEqual(accepted.data.state.ledger,[]);
+  const noCash=await save(owner,'fund',{id:loan.id,reference:'no-bank-cash'},'fund-no-cash');
+  assert.equal(noCash.status,400);assert.match(noCash.data.error,/bank cash/);
+  const topup=await save(owner,'topup',{amount:130e6,reference:'TEST-130M-BANK-FUNDING'},'topup-130m');
+  assert.equal(topup.status,200,topup.data.error);
+  const funded=await save(owner,'fund',{id:loan.id,reference:'TEST-COMPLETED-130M-TRANSFER'},'fund-130m');
+  assert.equal(funded.status,200,funded.data.error);
+  assert.equal(funded.data.state.loans[0].status,'active');assert.equal(funded.data.state.loans[0].issuer,OWNER);
+  assert.equal(TB.cash(funded.data.state,OWNER),0);assert.equal(funded.data.state.ledger.filter(entry=>entry.type==='disbursement').length,1);
+  const repeated=await save(owner,'fund',{id:loan.id,reference:'TEST-COMPLETED-130M-TRANSFER'},'fund-130m');
+  assert.equal(repeated.status,200);assert.equal(repeated.data.state.ledger.filter(entry=>entry.type==='disbursement').length,1);
+  const reloaded=await call(env,'bank',{token:borrower});
+  assert.equal(reloaded.data.state.loans[0].status,'active');assert.equal(reloaded.data.state.loans[0].collateralConfirmed.amount,65401664);
+ }finally{globalThis.fetch=tornFetch;}
+});
 test('anonymous and forged platform headers cannot read the bank',async()=>{const e=fixture();assert.equal((await call(e,'bank',{extra:{'oai-authenticated-user-id':OWNER}})).status,401);});
 test('existing bank records expose and persist non-faction limits without changing saved loan terms',async()=>{
  const e=fixture(),owner=(await login(e)).data.token;
