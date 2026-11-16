@@ -106,3 +106,8 @@ The application keeps the full Weav3r listing median as its first choice. If the
 Item rows identify the price source and check time, and offer **Refresh Weav3r price** for existing live, saved, or Torn fallback estimates. Failed refreshes retain the previous value as an estimate. Submission still revalidates prices on the server; client estimates do not approve collateral. Staff must verify and accept collateral before funding.
 
 The existing fixed Xanax market health check includes bounded public response fields and counts for each attempted feed. It contains no bank records, API keys, request headers, or raw upstream responses. This makes live provider-shape failures distinguishable from a local successful API test.
+
+
+## Beta.59 application collateral total
+
+Application details now show **Total = $…** directly below the cash and item breakdown. This is the combined cash, item reference value and proposed PI payment collateral, when present. A separate **Credited collateral = $…** line uses the bank's existing collateral calculation, including its configured item-credit percentage. Both lenders and borrowers see the same summary.

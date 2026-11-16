@@ -1,7 +1,7 @@
 {
   "channel": "beta",
-  "version": "1.1.0-beta.58",
-  "basedOn": "1.1.0-beta.57",
+  "version": "1.1.0-beta.59",
+  "basedOn": "1.1.0-beta.58",
   "build": "passed",
   "tests": 196,
   "workerPackaging": "Production build and encrypted push delivery pass in local workerd. Runtime regression reproduces the original invalid redirect error and passes with manual redirect handling. The installed workerd uses compatibility date 2026-05-22.",
@@ -81,5 +81,6 @@
     "Fixed public health check exposes only bounded public status, price and shape diagnostics.",
     "Existing quotes can be explicitly refreshed; source, check time and retained estimates are shown.",
     "Mounted React DOM checks passed fallback recovery, quantity edits during requests, failed-refresh retention, retry recovery and stale-result cancellation."
-  ]
+  ],
+  "collateralTotalDisplay": "Application detail shows the combined face-value total and the existing credited collateral separately. Screenshot example: $20,000,000 cash + 31 \u00d7 $838,912 + $24,244,000 = $70,250,272; credited at 90% for items = $65,225,244. No valuation or approval rule changed."
 }
