@@ -97,3 +97,12 @@ Validation: `npm run build` and `npm test`, including signup persistence, transa
 Faction and non-faction members use open-loan limits of 1 for Level 1, 3 for Level 2, 5 for Level 3, and 10 for VIP. VIP-PI also allows 10. Active loans (including staff adjustments) and approved loans awaiting funding consume slots. Requests at the limit go to manual review instead of automatic approval.
 
 Existing bank rules receive the previously missing non-faction limits and the VIP limit of 10 when loaded. The one-time rules upgrade is persisted on the next bank save; later owner edits are preserved. Existing loans retain their saved terms. The owner can edit each program's count limits in Rules. Profiles and borrower Overview use the same limits, including on older installed scripts after a bank refresh.
+
+
+## Beta.58 Weav3r application pricing recovery
+
+The application keeps the full Weav3r listing median as its first choice. If the per-item responses omit usable listing counts and market prices, it checks the public Weav3r marketplace catalog for the exact Torn item ID and uses the catalog's reported Torn market reference. The catalog is cached for five minutes and shared across simultaneous item checks in one application. Cached data keeps its original check time. Immediate per-item retries are skipped after a rate-limit response. A separate bounded timeout lets the catalog run after a slow item lookup.
+
+Item rows identify the price source and check time, and offer **Refresh Weav3r price** for existing live, saved, or Torn fallback estimates. Failed refreshes retain the previous value as an estimate. Submission still revalidates prices on the server; client estimates do not approve collateral. Staff must verify and accept collateral before funding.
+
+The existing fixed Xanax market health check includes bounded public response fields and counts for each attempted feed. It contains no bank records, API keys, request headers, or raw upstream responses. This makes live provider-shape failures distinguishable from a local successful API test.

@@ -14,11 +14,11 @@ async function POST(req:Request){try{const u=await identity(req),a=await body(re
  verified={...p,factionMember:!!p.faction_id&&p.faction_id===op.faction_id};
  a.payload.networth=p.networth;
  if(Array.isArray(a.payload.items)){
-  const prices=new Map();
+  const prices=new Map(),lookup={};
   a.payload.items=await Promise.all(a.payload.items.slice(0,30).map(async item=>{
    const id=item?.itemId;
    if(Number.isSafeInteger(id)&&id>0&&id<=999999&&!prices.has(id)&&prices.size<10){
-    prices.set(id,marketQuote(id,req.url).catch(()=>null));
+    prices.set(id,marketQuote(id,req.url,{lookup}).catch(()=>null));
    }
    const quote=await prices.get(id);
    if(quote)return {...item,name:quote.name,reference:quote.reference,source:quote.source,checked:quote.checkedAt};

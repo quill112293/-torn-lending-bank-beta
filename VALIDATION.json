@@ -1,9 +1,9 @@
 {
   "channel": "beta",
-  "version": "1.1.0-beta.36",
-  "basedOn": "1.1.0-beta.35",
+  "version": "1.1.0-beta.58",
+  "basedOn": "1.1.0-beta.57",
   "build": "passed",
-  "tests": 161,
+  "tests": 196,
   "workerPackaging": "Production build and encrypted push delivery pass in local workerd. Runtime regression reproduces the original invalid redirect error and passes with manual redirect handling. The installed workerd uses compatibility date 2026-05-22.",
   "sessionChecks": [
     "No time limit, including simulated ten-year passage",
@@ -13,8 +13,8 @@
     "Invitation revocation still blocks existing sessions",
     "Legacy timed sessions remain supported"
   ],
-  "deployment": "Pending Cloudflare automatic deployment of this release",
-  "deviceTesting": "Phone subscription is present in the supplied iPhone screenshot. Actual notification receipt after this fix remains to be confirmed on-device.",
+  "deployment": "Publication is tracked separately by Workers Builds and /api/health; local validation does not assert the deployed result.",
+  "deviceTesting": "Collateral pricing interactions passed in mounted React DOM. Final iPhone/Torn PDA interaction remains to be confirmed on-device.",
   "lobbyChecks": [
     "Lender script omits Welcome lobby and starts on Overview",
     "Borrower script retains Welcome lobby as its initial page",
@@ -71,5 +71,15 @@
     "Collateral custody and filtered user history retain value and source; borrower projections protect other users",
     "API persistence, reload and idempotent retries tested; existing waiting loans and archived applications supported"
   ],
-  "piCollateralUI": "Headless Chromium interaction passed at 393px and 1280px: lender enters PI value and notes, saves with blank optional reference and no trade/API check; borrower cannot confirm but can propose PI value. Mobile modal fits viewport. Actual Torn PDA device testing remains to be confirmed."
+  "piCollateralUI": "Headless Chromium interaction passed at 393px and 1280px: lender enters PI value and notes, saves with blank optional reference and no trade/API check; borrower cannot confirm but can propose PI value. Mobile modal fits viewport. Actual Torn PDA device testing remains to be confirmed.",
+  "marketPricingChecks": [
+    "Incomplete item feeds recover through exact-ID matching in the public Weav3r catalog.",
+    "Wrong or unpriced catalog items are rejected; no partial-listing sample is called a full median.",
+    "Rate-limited item reads are not immediately repeated. Cached catalog timestamps are preserved.",
+    "A multi-item application shares one catalog lookup and independently revalidates client estimates.",
+    "Staff acceptance is still required before loan funding.",
+    "Fixed public health check exposes only bounded public status, price and shape diagnostics.",
+    "Existing quotes can be explicitly refreshed; source, check time and retained estimates are shown.",
+    "Mounted React DOM checks passed fallback recovery, quantity edits during requests, failed-refresh retention, retry recovery and stale-result cancellation."
+  ]
 }

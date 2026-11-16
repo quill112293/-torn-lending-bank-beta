@@ -446,3 +446,98 @@ test('market health checks the fixed public item without a bank login',async()=>
   assert.equal(probe.data.price,838912);
  }finally{globalThis.fetch=previousFetch;}
 });
+
+test('incomplete Weav3r item responses recover through the exact catalog item and expose safe health checks',async()=>{
+ const env=fixture(),token=(await login(env)).data.token;
+ const previousFetch=globalThis.fetch,requests=[];
+ let catalogItems=[{item_id:206,item_name:'Xanax',market_price:'838912',total_bazaars:199}];
+ globalThis.fetch=async(url,options)=>{
+  const path=new URL(url).pathname;
+  requests.push(path);
+  assert.equal(options.headers.Authorization,undefined);
+  if(path==='/api/marketplace')return Response.json({items:catalogItems,total_count:1519,generated_at:123});
+  return Response.json({item_id:206,item_name:'Xanax',listings:[{price:816000}],private_note:'never include raw data'});
+ };
+ try{
+  const quote=await call(env,'market?id=206',{token});
+  assert.equal(quote.status,200,quote.data.error);
+  assert.equal(quote.data.reference,838912);
+  assert.equal(quote.data.credit90,755020);
+  assert.equal(quote.data.median,null);
+  assert.equal(quote.data.listingCount,0);
+  assert.match(quote.data.source,/Weav3r catalog/);
+  assert.deepEqual(requests,['/api/marketplace/206','/api/marketplace/206','/api/marketplace']);
+  const health=await call(env,'health/market?id=283');
+  assert.equal(health.status,200,health.data.error);
+  assert.equal(health.data.price,838912);
+  assert.equal(health.data.checks[0].itemId,206);
+  assert.equal(health.data.checks[0].totalCount,null);
+  assert.equal(health.data.checks[0].returnedListings,1);
+  assert.equal(health.data.checks[0].marketPrice,null);
+  assert.equal(health.data.checks[2].catalogItems,1);
+  assert.ok(!JSON.stringify(health.data).includes('private_note'));
+  catalogItems=[{item_id:283,item_name:'Donator Pack',market_price:24000000}];
+  assert.equal((await call(env,'market?id=206',{token})).status,400);
+  catalogItems=[{item_id:206,item_name:'Xanax',market_price:0}];
+  assert.equal((await call(env,'market?id=206',{token})).status,400);
+ }finally{globalThis.fetch=previousFetch;}
+});
+
+test('Weav3r rate limits skip immediate item retries and reuse catalog prices without refreshing their timestamp',async()=>{
+ const env=fixture(),token=(await login(env)).data.token;
+ const previousFetch=globalThis.fetch,previousCaches=globalThis.caches;
+ const checkedAt=new Date(Date.now()-120000).toISOString(),requests=[];
+ globalThis.caches={default:{
+  match:async req=>req.url.endsWith('/weav3r-prices')?Response.json({items:[{item_id:206,item_name:'Xanax',market_price:838912}],checkedAt}):null,
+  put:async()=>{}
+ }};
+ globalThis.fetch=async url=>{
+  requests.push(new URL(url).pathname);
+  return Response.json({error:'Too many requests'},{status:429,headers:{'Retry-After':'60'}});
+ };
+ try{
+  const quote=await call(env,'market?id=206',{token});
+  assert.equal(quote.status,200,quote.data.error);
+  assert.equal(quote.data.reference,838912);
+  assert.equal(quote.data.checkedAt,checkedAt);
+  assert.deepEqual(requests,['/api/marketplace/206']);
+ }finally{
+  globalThis.fetch=previousFetch;
+  if(previousCaches===undefined)delete globalThis.caches;else globalThis.caches=previousCaches;
+ }
+});
+
+test('application submission shares one Weav3r catalog fallback and retains staff collateral acceptance',async()=>{
+ const env=fixture(),owner=(await login(env)).data.token;
+ await call(env,'access',{token:owner,body:{action:'invite',lane:'faction',id:BORROWER}});
+ const borrower=(await login(env,'borrower')).data.token;
+ const state=(await call(env,'bank',{token:owner})).data.state;
+ state.bankOnline=true;TB.topup(state,1e9,'test funding');
+ env.DB.sqlite.prepare('UPDATE bank_state SET data=? WHERE id=?').run(JSON.stringify(state),'main');
+ const profile={id:Number(BORROWER),name:'Tester',networth:1e9,faction_id:1,checkedAt:new Date().toISOString()};
+ env.DB.sqlite.prepare('UPDATE identities SET profile=? WHERE torn_id=?').run(JSON.stringify(profile),BORROWER);
+ const previousFetch=globalThis.fetch;
+ let catalogCalls=0;
+ globalThis.fetch=async url=>{
+  const path=new URL(url).pathname;
+  if(path==='/api/marketplace'){
+   catalogCalls++;
+   return Response.json({items:[{item_id:206,item_name:'Xanax',market_price:838912},{item_id:283,item_name:'Donator Pack',market_price:24000000}]});
+  }
+  const id=Number(path.split('/').at(-1));
+  return Response.json({item_id:id,item_name:'Incomplete item',total_count:0,market_price:0});
+ };
+ try{
+  const payload={...TB.sampleApp({borrowerId:BORROWER,name:'Tester',tier:0,requested:100e6,cashCollateral:100e6,items:[
+   {itemId:206,name:'Untrusted name',qty:15,reference:999999999},
+   {itemId:283,name:'Untrusted name',qty:1,reference:999999999}
+  ]}),acceptPreapproval:true};
+  const saved=await call(env,'bank',{token:borrower,body:{action:'apply',payload,revision:state.revision,requestId:'catalog-application'}});
+  assert.equal(saved.status,200,saved.data.error);
+  assert.equal(catalogCalls,1);
+  const application=saved.data.state.applications[0];
+  assert.deepEqual(application.items.map(({name,reference})=>({name,reference})),[{name:'Xanax',reference:838912},{name:'Donator Pack',reference:24000000}]);
+  assert.equal(application.decision.automatic,true);
+  assert.equal(saved.data.state.loans[0].collateralConfirmed,false);
+ }finally{globalThis.fetch=previousFetch;}
+});

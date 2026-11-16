@@ -20,15 +20,16 @@ export async function handle(request,env,ctx){
  let result;const srv=createServer(env);const {database,response,body,identity,rateLimit,loadState,saveState,allowed,torn,flagConfirmedProfile}=srv;
  try{
   if(request.method==='OPTIONS')result=new Response(null,{status:204});
-  else if(path==='/api/health'&&request.method==='GET'){let notificationsReady=false;try{await database().prepare('SELECT id FROM push_devices LIMIT 1').first();notificationsReady=true;}catch{}result=response({ok:true,version:'1.1.0-beta.57',notificationsReady});}
+  else if(path==='/api/health'&&request.method==='GET'){let notificationsReady=false;try{await database().prepare('SELECT id FROM push_devices LIMIT 1').first();notificationsReady=true;}catch{}result=response({ok:true,version:'1.1.0-beta.58',notificationsReady});}
   else if(path==='/api/health/market'&&request.method==='GET'){
    // Fixed public item and a shared rate limit keep this check independent of bank accounts.
    await rateLimit('public-market-health',3);
+   const checks=[];
    try{
-    const quote=await marketQuote(206,request.url);
-    result=response({ok:true,source:quote.source,price:quote.reference,listingCount:quote.listingCount,checkedAt:quote.checkedAt});
+    const quote=await marketQuote(206,request.url,{diagnostics:checks});
+    result=response({ok:true,source:quote.source,price:quote.reference,listingCount:quote.listingCount,checkedAt:quote.checkedAt,checks});
    }catch(error){
-    result=response({ok:false,error:TB.text(error.message,240)},502);
+    result=response({ok:false,error:TB.text(error.message,500),checks},502);
    }
   }
   else if(path==='/api/notifications')result=await notificationRoute(request,srv);
