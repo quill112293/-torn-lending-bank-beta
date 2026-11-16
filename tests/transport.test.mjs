@@ -194,6 +194,7 @@ test('custom key links request only the bank endpoints and separate lender trade
     const params = new URLSearchParams(url.hash.split('?')[1]);
     assert.equal(params.get('step'), 'addNewKey'); assert.equal(params.get('title'), 'Torn Lending Bank ' + role);
     assert.equal(params.get('user'), 'basic,profile,personalstats,job' + (role === 'Lender' ? ',trades,trade,money' : ''));
+    assert.equal(params.get('torn'), 'items');
     assert.equal(params.has('type'), false); assert.equal(params.has('key'), false);
   }
 });

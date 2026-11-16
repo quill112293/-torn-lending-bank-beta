@@ -48,6 +48,23 @@ export async function marketQuote(itemId:number){
  return quote;
 }
 
+export async function loadTornItemCatalog(torn, key:string){
+ let catalog;
+ try{
+  catalog=await torn(key,'torn/items');
+ }catch(error){
+  if(/access level|permission/i.test(error.message)){
+   throw Error('This Torn API key cannot read Torn → Items. Use Create key in Torn to make a new key with Items selected.');
+  }
+  throw error;
+ }
+ if(!Array.isArray(catalog.items)||!catalog.items.length)throw Error('Torn did not return the item catalog. Try again shortly.');
+ const items=catalog.items.filter(item=>Number.isSafeInteger(item.id)&&item.id>0&&typeof item.name==='string'&&item.name.trim())
+  .map(({id,name})=>({id,name})).sort((a,b)=>a.name.localeCompare(b.name)||a.id-b.id);
+ if(!items.length)throw Error('Torn did not return the item catalog. Try again shortly.');
+ return {items};
+}
+
 export function route(env){
  const srv=createServer(env);
  return {
@@ -73,12 +90,7 @@ export function route(env){
     await srv.rateLimit(user.platformId+':item-catalog',3);
     if(!env.TORN_CATALOG_API_KEY&&!key)throw Error('Connect your Torn API key to load the full item catalog.');
     if(!env.TORN_CATALOG_API_KEY)await srv.ownKey(key,user.torn_id);
-    const catalog=await srv.torn(env.TORN_CATALOG_API_KEY||key,'torn/items');
-    if(!Array.isArray(catalog.items)||catalog.items.length===0)throw Error('Torn item names are temporarily unavailable.');
-    const items=catalog.items.filter(item=>Number.isSafeInteger(item.id)&&item.id>0&&typeof item.name==='string'&&item.name.trim())
-     .map(({id,name})=>({id,name})).sort((a,b)=>a.name.localeCompare(b.name)||a.id-b.id);
-    if(!items.length)throw Error('Torn item names are temporarily unavailable.');
-    const result={items};
+    const result=await loadTornItemCatalog(srv.torn,env.TORN_CATALOG_API_KEY||key);
     try{await cache?.put(cacheKey,Response.json(result,{headers:{'Cache-Control':'public, max-age=21600'}}));}
     catch(error){console.warn('Item catalog cache write failed',error);}
     return srv.response(result);

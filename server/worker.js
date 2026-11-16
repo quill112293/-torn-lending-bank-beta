@@ -6,7 +6,7 @@ import {createServer,OWNER_ID,SESSION_NO_EXPIRY,digest,token,fail} from './conte
 import {route as bank} from '../routes/bank.ts';
 import {route as check} from '../routes/check.ts';
 import {route as trades} from '../routes/trades.ts';
-import {route as market} from '../routes/market.ts';
+import {loadTornItemCatalog,route as market} from '../routes/market.ts';
 import {route as staffCash} from '../routes/staff-cash.ts';
 import {route as collateralCheck} from '../routes/collateral-check.ts';
 const routes={bank,check,trades,market,'staff-cash':staffCash,'collateral-check':collateralCheck};
@@ -20,13 +20,14 @@ export async function handle(request,env,ctx){
  let result;const srv=createServer(env);const {database,response,body,identity,rateLimit,loadState,saveState,allowed,torn,flagConfirmedProfile}=srv;
  try{
   if(request.method==='OPTIONS')result=new Response(null,{status:204});
-  else if(path==='/api/health'&&request.method==='GET'){let notificationsReady=false;try{await database().prepare('SELECT id FROM push_devices LIMIT 1').first();notificationsReady=true;}catch{}result=response({ok:true,version:'1.1.0-beta.49',notificationsReady});}
+  else if(path==='/api/health'&&request.method==='GET'){let notificationsReady=false;try{await database().prepare('SELECT id FROM push_devices LIMIT 1').first();notificationsReady=true;}catch{}result=response({ok:true,version:'1.1.0-beta.50',notificationsReady});}
   else if(path==='/api/notifications')result=await notificationRoute(request,srv);
   else if(path==='/api/link'&&request.method==='POST'){
    const ip=request.headers.get('cf-connecting-ip')||'local';await rateLimit('login:'+await digest(ip),5);
    const a=await body(request);const p=(await torn(a.key,'user/profile')).profile;
    if(!p?.id||!p?.name)fail('Torn did not return a usable profile.');const id=String(p.id);
    if(!await allowed(id))fail('This private beta needs an invitation from Aaron112293 [3542697].',403);
+   await loadTornItemCatalog(torn,a.key);
    const stamp=new Date().toISOString(),slim={id:p.id,name:p.name,faction_id:p.faction_id,status:p.status,checkedAt:stamp};
    await database().prepare('INSERT INTO identities (id,torn_id,name,profile,verified_at) VALUES (?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET name=excluded.name,profile=excluded.profile,verified_at=excluded.verified_at').bind('torn:'+id,id,p.name,JSON.stringify(slim),stamp).run();
    const s=await loadState();if(flagConfirmedProfile(s,p,id))await saveState(s,s.revision);

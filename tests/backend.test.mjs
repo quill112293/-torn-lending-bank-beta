@@ -14,7 +14,7 @@ function fixture(){const DB=db();return {DB,ASSETS:{fetch:async()=>new Response(
 async function call(env,path,{token,body,origin='https://www.torn.com',ip='1.2.3.4',method,extra={}}={}){const headers={origin,'cf-connecting-ip':ip,...extra};if(token)headers.authorization='Bearer '+token;if(body!==undefined){headers['content-type']='application/json';headers['x-tlb-action']='1';}const r=await handle(new Request('https://bank.example/api/'+path,{method:method||(body===undefined?'GET':'POST'),headers,body:body===undefined?undefined:JSON.stringify(body)}),env);return {status:r.status,headers:r.headers,data:await r.json()};}
 async function login(env,key='owner',ip='1.2.3.4'){const r=await call(env,'link',{body:{key:key.padEnd(16,'0')},ip});return r;}
 const realFetch=globalThis.fetch;
-globalThis.fetch=async (url,options)=>{assert.equal(new URL(url).hostname,'api.torn.com');const key=options.headers.Authorization.slice(7),id=keys[key];if(!id)return Response.json({error:{error:'Invalid key'}});if(new URL(url).pathname.endsWith('/money'))return Response.json({money:{wallet:987654321,vault:888888888}});return Response.json({profile:{id:Number(id),name:id===OWNER?'Aaron112293':'Tester',status:{state:'Okay'},faction_id:1}});};
+globalThis.fetch=async (url,options)=>{assert.equal(new URL(url).hostname,'api.torn.com');const key=options.headers.Authorization.slice(7),id=keys[key];if(!id)return Response.json({error:{error:'Invalid key'}});if(new URL(url).pathname==='/v2/torn/items')return Response.json({items:[{id:206,name:'Xanax'}]});if(new URL(url).pathname.endsWith('/money'))return Response.json({money:{wallet:987654321,vault:888888888}});return Response.json({profile:{id:Number(id),name:id===OWNER?'Aaron112293':'Tester',status:{state:'Okay'},faction_id:1}});};
 test.after(()=>{globalThis.fetch=realFetch;});
 test('anonymous and forged platform headers cannot read the bank',async()=>{const e=fixture();assert.equal((await call(e,'bank',{extra:{'oai-authenticated-user-id':OWNER}})).status,401);});
 test('existing bank records expose and persist non-faction limits without changing saved loan terms',async()=>{
@@ -347,4 +347,19 @@ test('item suggestions load all Torn item categories, even without market listin
   if(previousCaches===undefined)delete globalThis.caches;
   else globalThis.caches=previousCaches;
  }
+});
+
+test('sign-in rejects a key without Torn Items access before creating a session',async()=>{
+ const env=fixture(),previousFetch=globalThis.fetch;
+ globalThis.fetch=async(url,options)=>{
+  if(new URL(url).pathname==='/v2/torn/items')return Response.json({error:{code:16,error:'Access level of this key is not high enough'}});
+  return previousFetch(url,options);
+ };
+ try{
+  const denied=await login(env);
+  assert.equal(denied.status,400);
+  assert.match(denied.data.error,/Torn → Items.*Create key in Torn/);
+  assert.equal(env.DB.sqlite.prepare('SELECT count(*) AS count FROM sessions').get().count,0);
+ }finally{globalThis.fetch=previousFetch;}
+ assert.equal((await login(env)).status,200);
 });
