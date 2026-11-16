@@ -9,16 +9,16 @@ const owner='3542697',borrower='9000001';
 const verified={networth:1e9,factionMember:true,checkedAt:new Date().toISOString()};
 function base(){const s=TB.newState();s.bankOnline=true;TB.topup(s,1e9,'initial');TB.person(s,borrower).piRto=true;s.borrowers[borrower].memberProgram='external';return s;}
 function proposal(overrides={}){return {...TB.sampleApp({lane:'external',tier:4,product:'bank',piRto:true,networth:1e9,requested:100e6,items:[],cashCollateral:0,piCollateral:10e6,...overrides}),acceptPreapproval:true};}
-function pending(s=base()){return applyAction(s,borrower,'apply',proposal(),TB.today(),verified);}
+function pending(s=base(),accept=false){return applyAction(s,borrower,'apply',{...proposal(),acceptPreapproval:accept},TB.today(),verified);}
 function approved(){let s=pending();return applyAction(s,owner,'approve',{id:s.applications[0].id,amount:100e6,checks:true});}
 function payload(s,overrides={}){return {id:s.loans[0].id,amount:10e6,description:'Accepted value from reviewed PI rental payments',holder:owner,checked:true,...overrides};}
 
-test('PI payment proposal supports the requested loan but always needs lender review',()=>{
- const s=pending(),a=s.applications[0];
+test('PI payment proposal auto-approves within prequalification but still needs collateral acceptance',()=>{
+ const s=pending(base(),true),a=s.applications[0];
  assert.equal(a.piCollateral,10e6);assert.equal(a.cashCollateral,0);
- assert.equal(TB.quote(a,s.rules).amount,100e6);assert.equal(a.preapproval.credited,10e6);
- assert.equal(s.loans.length,0);assert.equal(a.status,'pending');
- assert.ok(a.reviewReasons.includes('PI payment collateral requires lender review'));
+ assert.equal(TB.quote(a,s.rules).amount,100e6);assert.equal(a.preapproval.maximum,500e6);
+ assert.equal(s.loans.length,1);assert.equal(a.status,'approved');assert.equal(s.loans[0].collateralConfirmed,false);
+ assert.equal(a.decision.automatic,true);
  const legacy=proposal();delete legacy.piCollateral;
  assert.equal(TB.normalizeApp(legacy).piCollateral,0);assert.equal(TB.quote(legacy).credited,0);
 });
@@ -46,7 +46,7 @@ test('manual PI collateral needs no trade or reference and enables ordinary fund
 });
 
 test('current saved PI status is required for proposal, edits, approval and confirmation',()=>{
- const s=base();s.borrowers[borrower].piRto=false;
+ let s=base();s.borrowers[borrower].piRto=false;
  assert.throws(()=>applyAction(s,borrower,'apply',proposal({tier:0}),TB.today(),verified),/saved Private Island status/);
  assert.throws(()=>applyAction(s,owner,'apply',proposal()),/saved Private Island status/);
  const p=pending();p.borrowers[borrower].piRto=false;

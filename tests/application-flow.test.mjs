@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import TB from '../lib/engine.js';
 import {applyAction,project} from '../lib/operations.js';
 import {verifyCollateral} from '../lib/collateral-proof.js';
+import {preapprovalFor,loanSlots} from '../lib/preapproval.js';
 const owner='3542697',borrower='9000001';
 const verified={networth:1e9,factionMember:true,checkedAt:new Date().toISOString()};
 function base(){const s=TB.newState();s.bankOnline=true;TB.topup(s,1e9,'initial');TB.person(s,borrower).memberProgram='faction';return s;}
@@ -24,8 +25,8 @@ test('automatic cash approval uses verified net worth and cannot fund until Torn
  assert.throws(()=>applyAction(s,owner,'fund',{id:l.id,reference:'sent'}),/confirmation/);
  s=applyAction(s,borrower,'confirmTerms',{id:l.id});s=applyAction(s,owner,'fund',{id:l.id,reference:'completed outgoing transfer'});assert.equal(s.loans[0].status,'active');assert.equal(TB.cash(s,owner),900e6);
 });
-test('items, excess request, missing acceptance, missing funds and restrictions never auto approve',()=>{
- for(const a of [input({items:[{name:'Item',qty:1,reference:90e6}]}),input({requested:250e6}),{...input(),acceptPreapproval:false}]){const s=apply(base(),a);assert.equal(s.loans.length,0);assert.equal(s.applications[0].status,'pending');}
+test('excess request, missing acceptance, missing funds and restrictions never auto approve',()=>{
+ for(const a of [{...input({requested:500e6}),kind:'exception'},{...input(),acceptPreapproval:false}]){const s=apply(base(),a);assert.equal(s.loans.length,0);assert.equal(s.applications[0].status,'pending');}
  const empty=base();empty.ledger=[];assert.equal(apply(empty).loans.length,0);
  const red=base();TB.person(red,borrower).flags.push({id:'blocked'});assert.equal(apply(red).loans.length,0);
  assert.throws(()=>apply(base(),input(),borrower,null),/verified net worth/);
@@ -61,4 +62,32 @@ test('archived application still supports collateral date checks and funding the
  assert.equal(s.applications.length,0);assert.equal(s.loans.length,1);
  assert.throws(()=>verifyCollateral(TB.clone(s),owner,l.id,{...t,completed_at:1}),/after/);
  verifyCollateral(s,owner,l.id,t);s=applyAction(s,borrower,'confirmTerms',{id:l.id});s=applyAction(s,owner,'fund',{id:l.id,reference:'funded after application archive'});assert.equal(s.loans[0].status,'active');assert.equal(project(s,borrower).state.recordArchives,undefined);
+});
+
+test('a $1B qualification keeps standard and above-limit applications separate',()=>{
+ const profile={...verified,networth:2.5e9};
+ let s=base();
+ TB.topup(s,2e9,'additional test funding');
+ assert.equal(preapprovalFor(s,borrower,profile).maximum,1e9);
+ assert.deepEqual(loanSlots(s,borrower,{lane:'faction',tier:0}),{open:0,limit:1,remaining:1});
+ s=applyAction(s,borrower,'startApplication',{kind:'standard'});
+ s=applyAction(s,borrower,'startApplication',{kind:'exception'});
+ const [regular,exception]=s.applicationDrafts;
+ assert.notEqual(regular.reference,exception.reference);
+ const request=input({id:exception.id,requested:1.6e9,cashCollateral:1.2e9});
+ assert.throws(()=>apply(s,{...request,id:regular.id},borrower,profile),/separate application/);
+ assert.throws(()=>apply(s,{...request,kind:'exception',requested:400e6},borrower,profile),/above your prequalified limit/);
+ const manual=apply(s,{...request,kind:'exception'},borrower,profile);
+ assert.equal(manual.loans.length,0);
+ const a=manual.applications[0];
+ assert.equal(a.reference,exception.reference);
+ assert.equal(a.preapproval.maximum,1e9);
+ assert.equal(TB.quote(a,s.rules).required,1.2e9);
+ assert.equal(a.status,'pending');
+ const automatic=apply(manual,input({id:regular.id,requested:400e6,cashCollateral:300e6}),borrower,profile);
+ assert.equal(automatic.loans[0].principal,400e6);
+ assert.equal(automatic.loans[0].collateralRequired,300e6);
+ assert.equal(automatic.loans[0].collateralConfirmed,false);
+ assert.equal(automatic.applications[1].decision.automatic,true);
+ assert.deepEqual(loanSlots(automatic,borrower,{lane:'faction',tier:0}),{open:1,limit:1,remaining:0});
 });

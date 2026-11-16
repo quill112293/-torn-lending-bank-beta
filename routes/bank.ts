@@ -11,7 +11,7 @@ async function POST(req:Request){try{const u=await identity(req),a=await body(re
  if(!fresh||!Number.isFinite(p.networth))throw Error('Refresh your verified net worth in Connections before applying.');
  const owner=await createServer(env).database().prepare('SELECT profile FROM identities WHERE torn_id=?').bind('3542697').first();const op=owner?JSON.parse(owner.profile):{};
  verified={...p,factionMember:!!p.faction_id&&p.faction_id===op.faction_id};
- a.payload.networth=p.networth;
+ if(a.action==='apply')a.payload.networth=p.networth;
  }
  const next=applyAction(s,u.torn_id,a.action,a.payload,TB.today(),verified);next.processedRequests??=[];next.processedRequests.push(u.torn_id+':'+a.requestId);await saveState(next,s.revision);return response(view(next,u));}catch(e:any){return response({error:TB.text(e.message,500)},e.status||400);}}
 return { GET, POST };
