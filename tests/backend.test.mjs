@@ -1075,7 +1075,7 @@ test('legacy archived collateral reaches staff and only its borrower, then persi
  assert.deepEqual(saved.loans.map(({expectedCollateral,...record})=>record),before.loans.map(({expectedCollateral,...record})=>record));
 });
 
-async function loanTradeScenario(automatic=true){
+async function loanTradeScenario(automatic=true,{claimedOnly=false}={}){
  const tornFetch=globalThis.fetch;
  globalThis.fetch=async(url,options)=>new URL(url).hostname==='weav3r.dev'?Response.json({item_id:206,item_name:'Xanax',total_count:1,listings:[{price:838912}]}):tornFetch(url,options);
  let f;
@@ -1089,7 +1089,7 @@ async function loanTradeScenario(automatic=true){
  assert.equal((await f.save(f.borrower,'prepareCollateralTrade',{loanId:loan.id,recipientId:OWNER})).status,200);
  const intent=f.read().loans[0].collateralTrade;
  assert.equal((await f.save(f.borrower,'claimCollateralTrade',{loanId:loan.id,intentId:intent.intentId})).status,200);
- assert.equal((await f.save(f.borrower,'recordCollateralTrade',{loanId:loan.id,intentId:intent.intentId,uiTradeId:'11687899',reference:loan.reference})).status,200);
+ if(!claimedOnly)assert.equal((await f.save(f.borrower,'recordCollateralTrade',{loanId:loan.id,intentId:intent.intentId,uiTradeId:'11687899',reference:loan.reference})).status,200);
  f.trade={id:88444,description:loan.reference,user:{id:Number(BORROWER),name:'Tester'},trader:{id:Number(OWNER),name:'Aaron112293'},completed_at:null,modified_at:Math.floor(Date.now()/1000),expires_at:Math.floor(Date.now()/1000)+600,items:[{user_id:Number(BORROWER),type:'Money',details:{amount:100e6}},{user_id:Number(BORROWER),type:'Item',details:{id:206,name:'Xanax',amount:14}}]};
  f.step=(token,action,extra={})=>call(f.env,'loan-trade',{token,body:{action,loanId:f.loanId,key:(token===f.borrower?'borrower':'owner').padEnd(16,'0'),tradeId:String(f.trade.id),nativeTradeId:'11687899',checked:true,...(extra.acceptTerms===true?{termsRevision:f.read().revision}:{}),...extra}});
  f.addFunds=()=>{f.trade.items=f.trade.items.filter(entry=>String(entry.user_id)!==OWNER);f.trade.items.push({user_id:Number(OWNER),type:'Money',details:{amount:loan.principal}});};
@@ -1112,6 +1112,30 @@ async function withLoanTradeAPI(f,run){
  };
  try{return await run();}finally{globalThis.fetch=tornFetch;}
 }
+
+test('borrower can link an existing claimed trade and confirm collateral in one verified request',async()=>{
+ const f=await loanTradeScenario(true,{claimedOnly:true}),loan=f.read().loans[0];
+ const input={linkOpenTrade:true,intentId:loan.collateralTrade.intentId,reference:loan.reference,tradeId:undefined,acceptTerms:true};
+ await withLoanTradeAPI(f,async()=>{
+  f.listOverride=[{...f.trade,description:'Reference only entered as a later comment'}];
+  assert.equal((await f.step(f.borrower,'collateral-placed',input)).status,400);
+  assert.equal(f.read().loans[0].collateralTrade.status,'claimed');
+  assert.equal(f.read().loans[0].tradeFlow,undefined);
+  f.listOverride=undefined;
+  const items=f.trade.items;
+  f.trade.items=[];
+  assert.equal((await f.step(f.borrower,'collateral-placed',input)).status,400);
+  assert.equal(f.read().loans[0].collateralTrade.status,'claimed');
+  f.trade.items=items;
+  const placed=await f.step(f.borrower,'collateral-placed',input);
+  assert.equal(placed.status,200,placed.data.error);
+  const saved=f.read().loans[0];
+  assert.equal(saved.collateralTrade.status,'created');
+  assert.equal(saved.collateralTrade.uiTradeId,'11687899');
+  assert.equal(saved.tradeFlow.stage,'collateral_placed');
+  assert.equal(saved.tradeFlow.apiTradeId,'88444');
+ });
+});
 
 async function readyLoanTrade(f,placementExtra={}){
  let result=await f.step(f.borrower,'collateral-placed',{tradeId:undefined,...placementExtra});assert.equal(result.status,200,result.data.error||result.data.tradeCheck?.reason);

@@ -14,7 +14,7 @@ export const tradeFlowLabels={
 };
 const money=value=>Number.isSafeInteger(value)&&value>=0?'$'+value.toLocaleString('en-US'):'Unavailable';
 
-export default function TradeFlowForm({action,loan,keyRole='Borrower',piAllowed=false,savedKeyAvailable=false,saving=false,onSubmit=()=>{},onCancel=()=>{}}){
+export default function TradeFlowForm({linkOnPlacement=false,action,loan,keyRole='Borrower',piAllowed=false,savedKeyAvailable=false,saving=false,onSubmit=()=>{},onCancel=()=>{}}){
  const collateralReview=action==='collateral-reviewed',staffId=loan.tradeFlow?.staffId||loan.collateralTrade?.recipientId||loan.issuer;
  const needsTerms=action==='collateral-placed'&&!loan.borrowerConfirmed;
  const [validation,setValidation]=useState(null),heading=useRef(null),formRef=useRef(null),validationId=useId();
@@ -52,9 +52,10 @@ export default function TradeFlowForm({action,loan,keyRole='Borrower',piAllowed=
   if(tradeId&&!/^[1-9]\d{0,15}$/.test(tradeId))return fail('tradeId','Enter a numeric Torn API trade ID of up to 16 digits, or leave it blank to find this loan’s trade.');
   if(!key&&!savedKeyAvailable)return fail('key','Enter your 16-character Torn API key, or create a suitable key using the link below.');
   if(key&&!validTornKey(key))return fail('key','The Torn API key must contain exactly 16 letters or numbers.');
+  if(linkOnPlacement&&fields.get('linkOpenTrade')!=='on')return fail('linkOpenTrade','Confirm the reference in this open trade log.');
   if(fields.get('checked')!=='on')return fail('checked',action==='collateral-placed'?'Tick the placement checkbox to confirm you placed the listed collateral in this trade.':'Tick the trade confirmation checkbox above before continuing.');
   setValidation(null);
-  const input={key:String(fields.get('key')||''),tradeId:String(fields.get('tradeId')||''),checked:fields.get('checked')==='on',
+  const input={...(linkOnPlacement?{linkOpenTrade:true}:{}),key:String(fields.get('key')||''),tradeId:String(fields.get('tradeId')||''),checked:fields.get('checked')==='on',
    ...(needsTerms&&fields.get('acceptTerms')==='on'?{acceptTerms:true}:{}),
    ...(collateralReview?{itemReference:String(fields.get('itemReference')||''),piAmount:piAllowed?String(fields.get('piAmount')||''):'',notes:String(fields.get('notes')||'')}:{} )};
   form.elements.namedItem('key').value='';
@@ -87,7 +88,8 @@ export default function TradeFlowForm({action,loan,keyRole='Borrower',piAllowed=
    {piAllowed&&<label className='field'><span>Accepted PI payment value</span><input name='piAmount' type='text' defaultValue='0' disabled={saving}/><small>Optional eligible PI payment value, reviewed separately from the trade’s cash and items.</small></label>}
    <label className='field'><span>Item / PI valuation notes and source</span><textarea name='notes' rows={3} maxLength={1000} disabled={saving}/><small>Include reviewed values and their source when accepting item or PI payment collateral.</small></label>
   </>}
-  <label className='field'><span>Torn API trade ID (optional)</span><input name='tradeId' type='text' inputMode='numeric' pattern='[1-9][0-9]*' maxLength={16} disabled={saving} autoComplete='off' {...fieldFeedback('tradeId')}/><small>Leave blank to find the trade by this loan’s exact reference. If needed, enter its API trade ID. The page’s address may use a different number.</small>{fieldError('tradeId')}</label>
+  {linkOnPlacement&&<label className='check'><input type='checkbox' name='linkOpenTrade' required disabled={saving} {...fieldFeedback('linkOpenTrade')}/><span>I checked that this open Torn trade shows {loan.reference} in its trade log and is with the receiving lender. Link this trade to my loan.{fieldError('linkOpenTrade')}</span></label>}
+  {!linkOnPlacement&&<label className='field'><span>Torn API trade ID (optional)</span><input name='tradeId' type='text' inputMode='numeric' pattern='[1-9][0-9]*' maxLength={16} disabled={saving} autoComplete='off' {...fieldFeedback('tradeId')}/><small>Leave blank to find the trade by this loan’s exact reference. If needed, enter its API trade ID. The page’s address may use a different number.</small>{fieldError('tradeId')}</label>}
   <p className='micro'>{savedKeyAvailable?'Saved Torn API key available. Leave the key field blank to use it for this check.':'Enter a Torn API key with trade and trades access for your current account.'}</p>
   <label className='field'><span>{savedKeyAvailable?'Different Torn API key (optional)':'Torn API key'}</span><input name='key' type='password' minLength={16} maxLength={16} required={!savedKeyAvailable} autoComplete='off' disabled={saving} {...fieldFeedback('key')}/><small>A key entered here is used only for this check and is not saved.</small>{fieldError('key')}</label>
   <a className='secondary left' href={customKeyLink(keyRole)} target='_blank' rel='noopener noreferrer'>Create suitable Torn key</a>

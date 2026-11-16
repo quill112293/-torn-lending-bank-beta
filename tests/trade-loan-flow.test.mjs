@@ -49,6 +49,24 @@ function createdTrade(f){
  return {loanId:loan.id,intentId:'TRADE-1',nativeTradeId:NATIVE,borrowerId:loan.borrowerId};
 }
 
+test('the borrower can explicitly recover an unlinked open trade from collateral placement',async()=>{
+ const f=scenario(),loan=f.data.state.loans[0];
+ loan.collateralTrade={status:'claimed',intentId:'TRADE-1',recipientId:OWNER};
+ f.context={...f.context,reference:'Trade between Borrower & Lender',referenceEvidence:'unclassified'};
+ await f.controller.setOpen(true);
+ f.controller.select(loan.id);
+ assert.equal(f.controller.beginReview('collateral-placed'),true);
+ assert.equal(f.controller.getState().review.linkOnPlacement,true);
+ await f.controller.submitReview({checked:true});
+ assert.equal(f.posts().length,0);
+ f.onWrite=()=>{Object.assign(loan.collateralTrade,{status:'created',uiTradeId:NATIVE});};
+ await f.controller.submitReview({checked:true,linkOpenTrade:true});
+ assert.equal(f.posts()[0].payload.nativeTradeId,NATIVE);
+ assert.equal(f.posts()[0].payload.reference,REFERENCE);
+ assert.equal(f.posts()[0].payload.linkOpenTrade,true);
+ assert.match(f.controller.getState().success,/Collateral offer confirmed/);
+});
+
 test('an observed newly created own trade opens its review once after a fresh read, without consent or writes',async()=>{
  const f=scenario(),detail=createdTrade(f);delete f.data.state.loans[0].borrowerConfirmed;
  const before=clone(f.data);f.context={...f.context,reference:'Trade',referenceEvidence:'unclassified'};
