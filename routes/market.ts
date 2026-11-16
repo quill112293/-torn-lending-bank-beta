@@ -76,13 +76,31 @@ export async function loadTornItemCatalog(torn, key:string){
  }
  if(!Array.isArray(catalog.items)||!catalog.items.length)throw Error('Torn did not return the item catalog. Try again shortly.');
  const items=catalog.items.filter(item=>Number.isSafeInteger(item.id)&&item.id>0&&typeof item.name==='string'&&item.name.trim())
-  .map(({id,name})=>({id,name})).sort((a,b)=>a.name.localeCompare(b.name)||a.id-b.id);
+  .map(({id,name,value})=>{
+   const marketPrice=value?.market_price;
+   return Number.isSafeInteger(marketPrice)&&marketPrice>0?{id,name,marketPrice}:{id,name};
+  }).sort((a,b)=>a.name.localeCompare(b.name)||a.id-b.id);
  if(!items.length)throw Error('Torn did not return the item catalog. Try again shortly.');
  return {items};
 }
 
 export function route(env){
  const srv=createServer(env);
+ async function getCatalog(req:Request,user,key){
+  const cache=globalThis.caches?.default;
+  const cacheKey=new Request(new URL('/catalog-cache/v2/torn-items',req.url));
+  try{
+   const cached=await cache?.match(cacheKey);
+   if(cached)return await cached.json();
+  }catch(error){console.warn('Item catalog cache read failed',error);}
+  if(!env.TORN_CATALOG_API_KEY&&!key)throw Error('Connect your Torn API key in Connections to load the item catalog.');
+  await srv.rateLimit(user.platformId+':item-catalog',3);
+  if(!env.TORN_CATALOG_API_KEY)await srv.ownKey(key,user.torn_id);
+  const catalog={...await loadTornItemCatalog(srv.torn,env.TORN_CATALOG_API_KEY||key),checkedAt:new Date().toISOString()};
+  try{await cache?.put(cacheKey,Response.json(catalog,{headers:{'Cache-Control':'public, max-age=21600'}}));}
+  catch(error){console.warn('Item catalog cache write failed',error);}
+  return catalog;
+ }
  return {
   async GET(req:Request){
    try{
@@ -97,29 +115,12 @@ export function route(env){
    try{
     const user=await srv.identity(req);
     const {key,itemId}=await srv.body(req);
-    if(itemId!==undefined){
-     if(!Number.isSafeInteger(itemId)||itemId<1||itemId>999999)throw Error('Enter a Torn item ID.');
-     await srv.rateLimit(user.platformId+':market-estimate',15);
-     if(!env.TORN_CATALOG_API_KEY)await srv.ownKey(key,user.torn_id);
-     const result=await srv.torn(env.TORN_CATALOG_API_KEY||key,'torn/'+itemId+'/items');
-     const item=Array.isArray(result.items)?result.items.find(entry=>entry.id===itemId):null;
-     const reference=item?.value?.market_price;
-     if(!Number.isSafeInteger(reference)||reference<=0)throw Error('Torn has no market price for this item.');
-     return srv.response({itemId,name:item.name,reference,source:'Torn catalog market price',checkedAt:new Date().toISOString(),officialEstimate:true});
-    }
-    const cache=globalThis.caches?.default;
-    const cacheKey=new Request(new URL('/catalog-cache/v1/torn-items',req.url));
-    try{
-     const cached=await cache?.match(cacheKey);
-     if(cached)return srv.response(await cached.json());
-    }catch(error){console.warn('Item catalog cache read failed',error);}
-    await srv.rateLimit(user.platformId+':item-catalog',3);
-    if(!env.TORN_CATALOG_API_KEY&&!key)throw Error('Connect your Torn API key to load the full item catalog.');
-    if(!env.TORN_CATALOG_API_KEY)await srv.ownKey(key,user.torn_id);
-    const result=await loadTornItemCatalog(srv.torn,env.TORN_CATALOG_API_KEY||key);
-    try{await cache?.put(cacheKey,Response.json(result,{headers:{'Cache-Control':'public, max-age=21600'}}));}
-    catch(error){console.warn('Item catalog cache write failed',error);}
-    return srv.response(result);
+    if(itemId!==undefined&&(!Number.isSafeInteger(itemId)||itemId<1||itemId>999999))throw Error('Enter a Torn item ID.');
+    const catalog=await getCatalog(req,user,key);
+    if(itemId===undefined)return srv.response({items:catalog.items});
+    const item=catalog.items.find(entry=>entry.id===itemId);
+    if(!item?.marketPrice)throw Error('Torn catalog has no market price for this item.');
+    return srv.response({itemId,name:item.name,reference:item.marketPrice,source:'Torn catalog market price',checkedAt:catalog.checkedAt,officialEstimate:true});
    }catch(e:any){return srv.response({error:e.message},e.status||400);}
   }
  };

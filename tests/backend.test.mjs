@@ -385,12 +385,14 @@ test('a market outage returns a labeled recent quote for previews and rejects ex
  }
 });
 
-test('the official Torn item estimate works independently of Weav3r',async()=>{
+test('Torn fallback uses the sign-in catalog permission instead of the rejected item-specific endpoint',async()=>{
  const env=fixture(),token=(await login(env)).data.token;
  const previousFetch=globalThis.fetch;
  let reference=848650;
  globalThis.fetch=async(url,options)=>{
-  if(new URL(url).pathname==='/v2/torn/206/items'){
+  const path=new URL(url).pathname;
+  if(path==='/v2/torn/206/items')throw Error('Item-specific lookup is unavailable to this key');
+  if(path==='/v2/torn/items'){
    assert.equal(options.headers.Authorization,'ApiKey '+'owner'.padEnd(16,'0'));
    return Response.json({items:[{id:206,name:'Xanax',value:{market_price:reference}}]});
   }
