@@ -187,16 +187,32 @@ test('local storage fallback separates bank origins', async () => {
   await store.remove(); assert.equal(values.size, 0);
 });
 
-test('custom key links request only the bank endpoints and separate lender trade access', () => {
+test('custom keys allow trade review for both roles while keeping wallet access staff-only', () => {
   for (const role of ['Borrower', 'Lender']) {
     const url = new URL(customKeyLink(role));
     assert.equal(url.origin, 'https://www.torn.com'); assert.equal(url.pathname, '/preferences.php');
     const params = new URLSearchParams(url.hash.split('?')[1]);
     assert.equal(params.get('step'), 'addNewKey'); assert.equal(params.get('title'), 'Torn Lending Bank ' + role);
-    assert.equal(params.get('user'), 'basic,profile,personalstats,job' + (role === 'Lender' ? ',trades,trade,money' : ''));
+    assert.equal(params.get('user'), 'basic,profile,personalstats,job,trades,trade' + (role === 'Lender' ? ',money' : ''));
     assert.equal(params.get('torn'), 'items');
     assert.equal(params.has('type'), false); assert.equal(params.has('key'), false);
   }
+});
+
+test('collateral and staged loan checks require a valid key and do not persist or log a replacement verification key',async()=>{
+ for(const path of ['collateral-check','loan-trade']){
+  const calls=bridge(),savedValue={...saved(),apiKey},store=memory(savedValue);
+  const transport=createTransport(origin,{native:true,store});await transport.ready;
+  await assert.rejects(transport.request(path,{key:'short',loanId:'LOAN-1',tradeId:'88333',checked:true}),/valid 16-character/);
+  assert.equal(calls.length,0);
+  const replacement='Replacement12345';assert.equal(replacement.length,16);
+  await transport.request(path,{key:replacement,loanId:'LOAN-1',tradeId:'88333',checked:true});
+  assert.equal(calls.length,1);assert.equal(calls[0].url,origin+'/api/'+path);
+  assert.equal(JSON.parse(calls[0].body).key,replacement);
+  assert.deepEqual(store.value(),savedValue);assert.equal(transport.getSavedKey(),apiKey);
+  const diagnostics=transport.diagnostics();assert.equal(diagnostics.recentRequests.at(-1).operation,path);
+  assert.ok(!JSON.stringify(diagnostics).includes(replacement));assert.ok(!JSON.stringify(diagnostics).includes('88333'));
+ }
 });
 
 test('a missing PDA response is captured without losing an existing bank session', async () => {

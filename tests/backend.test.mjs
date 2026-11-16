@@ -606,7 +606,7 @@ test('application submission shares one Weav3r catalog fallback and retains staf
  }finally{globalThis.fetch=previousFetch;}
 });
 
-async function withdrawalScenario(accepted=true){
+async function withdrawalScenario(accepted=true,applicationChanges={}){
  const env=fixture(),owner=(await login(env)).data.token;
  assert.equal((await call(env,'access',{token:owner,body:{action:'invite',lane:'faction',id:BORROWER}})).status,200);
  const borrower=(await login(env,'borrower')).data.token;
@@ -617,7 +617,7 @@ async function withdrawalScenario(accepted=true){
  env.DB.sqlite.prepare('UPDATE identities SET profile=? WHERE torn_id=?').run(JSON.stringify({id:Number(BORROWER),name:'Tester',networth:1e9,faction_id:1,checkedAt:new Date().toISOString()}),BORROWER);
  const read=()=>JSON.parse(env.DB.sqlite.prepare('SELECT data FROM bank_state WHERE id=?').get('main').data);
  const save=(token,action,payload,revision=read().revision,requestId=crypto.randomUUID())=>call(env,'bank',{token,body:{action,payload,revision,requestId}});
- const application={...TB.sampleApp({borrowerId:BORROWER,name:'Tester',tier:0,requested:100e6,cashCollateral:100e6,items:[]}),acceptPreapproval:accepted};
+ const application={...TB.sampleApp({borrowerId:BORROWER,name:'Tester',tier:0,requested:100e6,cashCollateral:100e6,items:[],...applicationChanges}),acceptPreapproval:accepted};
  const submitted=await save(borrower,'apply',application);
  assert.equal(submitted.status,200,submitted.data.error);
  return {env,owner,borrower,read,save,application,appId:submitted.data.state.applications[0].id,loanId:submitted.data.state.loans[0]?.id};
@@ -1073,4 +1073,233 @@ test('legacy archived collateral reaches staff and only its borrower, then persi
  assert.equal(saved.loans[2].expectedCollateral,undefined);
  for(const key of ['ledger','collateral','receipts','recordArchives'])assert.deepEqual(saved[key],before[key]);
  assert.deepEqual(saved.loans.map(({expectedCollateral,...record})=>record),before.loans.map(({expectedCollateral,...record})=>record));
+});
+
+async function loanTradeScenario(automatic=true){
+ const tornFetch=globalThis.fetch;
+ globalThis.fetch=async(url,options)=>new URL(url).hostname==='weav3r.dev'?Response.json({item_id:206,item_name:'Xanax',total_count:1,listings:[{price:838912}]}):tornFetch(url,options);
+ let f;
+ try{f=await withdrawalScenario(automatic,{items:[{itemId:206,name:'Xanax',qty:14,reference:838912}]});}
+ finally{globalThis.fetch=tornFetch;}
+ if(!automatic){
+  const approved=await f.save(f.owner,'approve',{id:f.appId,amount:100e6,reason:'Reviewed request and approved terms.',checks:true});
+  assert.equal(approved.status,200,approved.data.error);f.loanId=f.read().loans[0].id;
+ }
+ const loan=f.read().loans[0];
+ assert.equal((await f.save(f.borrower,'prepareCollateralTrade',{loanId:loan.id,recipientId:OWNER})).status,200);
+ const intent=f.read().loans[0].collateralTrade;
+ assert.equal((await f.save(f.borrower,'claimCollateralTrade',{loanId:loan.id,intentId:intent.intentId})).status,200);
+ assert.equal((await f.save(f.borrower,'recordCollateralTrade',{loanId:loan.id,intentId:intent.intentId,uiTradeId:'11687899',reference:loan.reference})).status,200);
+ f.trade={id:88444,description:loan.reference,user:{id:Number(BORROWER),name:'Tester'},trader:{id:Number(OWNER),name:'Aaron112293'},completed_at:null,modified_at:Math.floor(Date.now()/1000),expires_at:Math.floor(Date.now()/1000)+600,items:[{user_id:Number(BORROWER),type:'Money',details:{amount:100e6}},{user_id:Number(BORROWER),type:'Item',details:{id:206,name:'Xanax',amount:14}}]};
+ f.step=(token,action,extra={})=>call(f.env,'loan-trade',{token,body:{action,loanId:f.loanId,key:(token===f.borrower?'borrower':'owner').padEnd(16,'0'),tradeId:String(f.trade.id),nativeTradeId:'11687899',checked:true,...(extra.acceptTerms===true?{termsRevision:f.read().revision}:{}),...extra}});
+ f.addFunds=()=>{f.trade.items=f.trade.items.filter(entry=>String(entry.user_id)!==OWNER);f.trade.items.push({user_id:Number(OWNER),type:'Money',details:{amount:loan.principal}});};
+ return f;
+}
+
+async function withLoanTradeAPI(f,run){
+ const tornFetch=globalThis.fetch;f.apiCalls=[];
+ globalThis.fetch=async(url,options)=>{
+  const parsed=new URL(url);
+  if(parsed.pathname==='/v2/user/trades'){
+   f.apiCalls.push({path:parsed.pathname,query:parsed.search});
+   return Response.json({trades:f.listOverride||(!f.trade.completed_at?[f.trade]:[])});
+  }
+  if(parsed.pathname==='/v2/user/'+f.trade.id+'/trade'){
+   if(f.onTradeDetailRead)await f.onTradeDetailRead();
+   f.apiCalls.push({path:parsed.pathname,query:parsed.search});return Response.json({trade:f.trade});
+  }
+  return tornFetch(url,options);
+ };
+ try{return await run();}finally{globalThis.fetch=tornFetch;}
+}
+
+async function readyLoanTrade(f,placementExtra={}){
+ let result=await f.step(f.borrower,'collateral-placed',{tradeId:undefined,...placementExtra});assert.equal(result.status,200,result.data.error||result.data.tradeCheck?.reason);
+ result=await f.step(f.owner,'collateral-reviewed',{itemReference:14*838912,piAmount:0,notes:'Checked 14 Xanax and all borrower cash against this trade.'});assert.equal(result.status,200,result.data.error||result.data.tradeCheck?.reason);
+ f.addFunds();
+ result=await f.step(f.owner,'funds-added');assert.equal(result.status,200,result.data.error||result.data.tradeCheck?.reason);
+ result=await f.step(f.borrower,'funds-reviewed');assert.equal(result.status,200,result.data.error||result.data.tradeCheck?.reason);
+ assert.equal(f.read().loans[0].tradeFlow.stage,'funds_reviewed');
+}
+
+test('a staff-approved loan accepts terms explicitly with borrower collateral placement and reserves its principal once',async()=>{
+ const f=await loanTradeScenario(false),before=f.read();
+ assert.equal(before.loans[0].issuer,OWNER);assert.ok(!before.loans[0].borrowerConfirmed);assert.ok(!before.loans[0].autoApproved);
+ assert.equal(TB.reserved(before,OWNER),100e6);
+ await withLoanTradeAPI(f,async()=>{
+  for(const acceptTerms of [undefined,false]){
+   const refused=await f.step(f.borrower,'collateral-placed',{acceptTerms});
+   assert.equal(refused.status,400);assert.match(refused.data.error,/terms/i);assert.deepEqual(f.read(),before);
+  }
+  await readyLoanTrade(f,{acceptTerms:true});
+  const ready=f.read(),terms=ready.loans[0].borrowerConfirmed;
+  assert.equal(terms.by,BORROWER);assert.equal(terms.reference,before.loans[0].reference);assert.equal(terms.source,'Accepted with collateral placement');
+  assert.equal(TB.reserved(ready,OWNER),100e6);assert.equal(TB.spendable(ready,OWNER),900e6);
+  const accepted=await f.step(f.borrower,'accept-ready');assert.equal(accepted.status,200,accepted.data.error);assert.equal(accepted.data.tradeCheck.ready,true);
+  f.trade.completed_at=Math.ceil(Date.now()/1000);
+  const settled=await f.step(f.owner,'complete');assert.equal(settled.status,200,settled.data.error);
+  assert.equal(f.read().loans[0].status,'active');assert.deepEqual(f.read().loans[0].borrowerConfirmed,terms);
+ });
+});
+
+test('manual terms acceptance rejects missing revision and a concurrent date change during the Torn check',async()=>{
+ const f=await loanTradeScenario(false),before=f.read();
+ await withLoanTradeAPI(f,async()=>{
+  const unbound=await f.step(f.borrower,'collateral-placed',{acceptTerms:true,termsRevision:undefined});
+  assert.ok(unbound.status>=400);assert.match(unbound.data.error,/revision|refresh|terms/i);assert.deepEqual(f.read(),before);
+  f.onTradeDetailRead=async()=>{
+   f.onTradeDetailRead=null;
+   const changed=await f.save(f.owner,'startDate',{id:f.loanId,start:TB.addDays(before.loans[0].start,1)});
+   assert.equal(changed.status,200,changed.data.error);
+  };
+  const stale=await f.step(f.borrower,'collateral-placed',{acceptTerms:true});
+  assert.ok(stale.status>=400);assert.match(stale.data.error,/revision|refresh|changed|terms/i);
+  const state=f.read();assert.equal(state.loans[0].start,TB.addDays(before.loans[0].start,1));assert.ok(!state.loans[0].borrowerConfirmed);assert.ok(!state.loans[0].tradeFlow);
+  assert.deepEqual(state.ledger,before.ledger);assert.deepEqual(state.collateral,before.collateral);
+ });
+});
+
+test('one trade follows borrower and staff checks, then atomically records both collateral and loan funds after completion',async()=>{
+ const f=await loanTradeScenario(),before=f.read();
+ await withLoanTradeAPI(f,async()=>{
+  await readyLoanTrade(f);
+  const ready=f.read(),flow=ready.loans[0].tradeFlow;
+  assert.equal(String(flow.apiTradeId),'88444');assert.equal(String(flow.nativeTradeId),'11687899');
+  assert.equal(flow.staffId,OWNER);assert.equal(flow.reservedBy,OWNER);
+  assert.deepEqual(ready.ledger,before.ledger);assert.deepEqual(ready.collateral,before.collateral);assert.deepEqual(ready.receipts,before.receipts);
+  assert.equal(ready.loans[0].status,'approved');assert.equal(ready.loans[0].collateralConfirmed,false);assert.equal(ready.loans[0].fundsReceived,undefined);
+  assert.equal(TB.reserved(ready,OWNER),100e6);assert.equal(TB.cash(ready,OWNER),1e9);assert.equal(TB.spendable(ready,OWNER),900e6);
+  for(const token of [f.owner,f.borrower]){const accepted=await f.step(token,'accept-ready');assert.equal(accepted.status,200,accepted.data.error);assert.equal(accepted.data.tradeCheck.ready,true);}
+  const incomplete=await f.step(f.owner,'complete');assert.ok(incomplete.status===400||incomplete.data.tradeCheck?.ready===false);assert.equal(f.read().loans[0].status,'approved');assert.deepEqual(f.read().ledger,before.ledger);
+  f.trade.completed_at=Math.ceil(Date.now()/1000);
+  const complete=await f.step(f.owner,'complete');assert.equal(complete.status,200,complete.data.error||complete.data.tradeCheck?.reason);
+  const saved=f.read(),loan=saved.loans[0],reference='torn-api-trade:88444';
+  assert.equal(loan.status,'active');assert.equal(loan.issuer,OWNER);assert.equal(loan.tradeFlow.stage,'completed');assert.ok(!loan.tradeFlow.reservedBy);
+  assert.equal(loan.collateralConfirmed.reference,reference);assert.equal(loan.collateralConfirmed.cash,100e6);assert.equal(loan.collateralConfirmed.itemReference,14*838912);
+  assert.equal(loan.fundsReceived.reference,reference);assert.equal(loan.fundsReceived.amount,100e6);assert.equal(loan.fundsReceived.by,OWNER);
+  assert.equal(loan.fundsReceived.source,'Torn API completed loan trade');
+  assert.deepEqual(loan.borrowerConfirmed,before.loans[0].borrowerConfirmed);assert.deepEqual(loan.payments,[]);
+  const disbursements=saved.ledger.filter(entry=>entry.type==='disbursement');assert.equal(disbursements.length,1);assert.equal(disbursements[0].amount,100e6);assert.equal(disbursements[0].to,'borrower:'+BORROWER);assert.equal(disbursements[0].reference,reference);
+  assert.equal(saved.receipts.filter(receipt=>receipt.reference===reference).length,1);assert.equal(saved.receipts.find(receipt=>receipt.reference===reference).status,'loan_trade');
+  assert.equal(saved.collateral.filter(entry=>entry.reference===reference).length,1);assert.equal(TB.cash(saved,OWNER),900e6);assert.equal(TB.reserved(saved,OWNER),0);
+  assert.equal(saved.ledger.filter(entry=>entry.type==='repayment').length,0);
+  const again=await f.step(f.owner,'complete');assert.equal(again.status,200,again.data.error);assert.deepEqual(f.read(),saved);
+  const borrowerView=await call(f.env,'bank',{token:f.borrower});assert.equal(borrowerView.data.state.loans[0].tradeFlow.stage,'completed');assert.deepEqual(borrowerView.data.state.ledger,[]);
+  assert.ok(f.apiCalls.every(entry=>new URLSearchParams(entry.query).has('timestamp')));
+  const reused=await f.save(f.owner,'payment',{id:f.loanId,cash:1,hasItems:false,itemReference:0,reference,recipient:OWNER,date:TB.today()});assert.equal(reused.status,400);assert.match(reused.data.error,/already recorded/);
+ });
+});
+
+test('loan-trade stages enforce each participant, sequence, own API key and explicit review',async()=>{
+ const f=await loanTradeScenario(),before=f.read();
+ await withLoanTradeAPI(f,async()=>{
+  for(const [token,action,extra] of [
+   [f.owner,'collateral-placed',{}],
+   [f.borrower,'collateral-reviewed',{itemReference:14*838912,notes:'Forbidden staff review'}],
+   [f.borrower,'complete',{}],
+   [f.borrower,'collateral-placed',{checked:false}],
+   [f.borrower,'collateral-placed',{key:'owner'.padEnd(16,'0')}],
+   [f.owner,'funds-added',{}],
+   [f.borrower,'funds-reviewed',{}],
+   [f.borrower,'accept-ready',{}]
+  ]){
+   const result=await f.step(token,action,extra);assert.ok(result.status>=400||result.data.tradeCheck?.ready===false,action+' must not succeed out of sequence');
+   const state=f.read();assert.equal(state.loans[0].status,'approved');assert.ok(!state.loans[0].tradeFlow?.reservedBy);assert.deepEqual(state.ledger,before.ledger);assert.equal(state.loans[0].collateralConfirmed,false);
+  }
+  assert.equal(f.read().loans[0].tradeFlow?.fundsReviewed,undefined);
+ });
+});
+
+test('a changed offer invalidates checks and keeps the reservation until staff removes cash and resets the open trade',async()=>{
+ const f=await loanTradeScenario();
+ await withLoanTradeAPI(f,async()=>{
+  await readyLoanTrade(f);const before=f.read();
+  f.trade.items.find(entry=>entry.type==='Item').details.amount=15;
+  const changed=await f.step(f.owner,'refresh');assert.equal(changed.status,200,changed.data.error);
+  let state=f.read();assert.ok(!state.loans[0].tradeFlow.fundsReviewed);assert.ok(!state.loans[0].tradeFlow.collateralReviewed);assert.equal(state.loans[0].tradeFlow.reservedBy,OWNER);assert.deepEqual(state.ledger,before.ledger);
+  const accept=await f.step(f.borrower,'accept-ready');assert.ok(accept.status>=400||accept.data.tradeCheck?.ready===false);
+  const resetTooSoon=await f.step(f.owner,'reset');assert.ok(resetTooSoon.status>=400||resetTooSoon.data.tradeCheck?.reason);assert.equal(f.read().loans[0].tradeFlow.reservedBy,OWNER);
+  f.trade.items=f.trade.items.filter(entry=>String(entry.user_id)!==OWNER);
+  const reset=await f.step(f.owner,'reset');assert.equal(reset.status,200,reset.data.error);
+  state=f.read();assert.ok(!state.loans[0].tradeFlow?.reservedBy);assert.ok(!state.loans[0].tradeFlow?.fundsReviewed);assert.equal(TB.reserved(state,OWNER),0);
+  const withdrawn=await f.save(f.borrower,'withdrawApplication',{id:f.appId});assert.equal(withdrawn.status,200,withdrawn.data.error);assert.equal(f.read().loans[0].status,'withdrawn');
+ });
+});
+
+test('reserved loan trades cannot be withdrawn, independently funded, changed or archived through the bank API',async()=>{
+ const f=await loanTradeScenario();
+ await withLoanTradeAPI(f,async()=>{
+  await readyLoanTrade(f);const before=f.read();
+  for(const [token,action,payload] of [
+   [f.borrower,'withdrawApplication',{id:f.appId}],
+   [f.owner,'fund',{id:f.loanId,reference:'SECOND-FUNDING'}],
+   [f.owner,'startDate',{id:f.loanId,start:TB.addDays(TB.today(),1)}],
+   [f.borrower,'confirmTerms',{id:f.loanId}],
+   [f.owner,'loanPolicy',{id:f.loanId,mode:'after7',reason:'Changing a committed loan'}],
+   [f.owner,'removeRecords',{kind:'loan',id:f.loanId,confirm:'REMOVE '+f.loanId,reason:'Remove committed trade'}],
+   [f.owner,'piCollateral',{id:f.loanId,amount:100e6,holder:OWNER,description:'Separate PI receipt',checked:true}]
+  ]){
+   const result=await f.save(token,action,payload);assert.equal(result.status,400,action+': '+result.data.error);assert.match(result.data.error,/committed|reserved/i);assert.deepEqual(f.read(),before);
+  }
+ });
+});
+
+test('withdrawal racing funds-added commits one outcome and cannot leave a withdrawn request with reserved loan cash',async()=>{
+ for(const winner of ['withdrawApplication','funds-added']){
+  const f=await loanTradeScenario();
+  await withLoanTradeAPI(f,async()=>{
+   assert.equal((await f.step(f.borrower,'collateral-placed')).status,200);
+   assert.equal((await f.step(f.owner,'collateral-reviewed',{itemReference:14*838912,notes:'Reviewed all expected items and cash.'})).status,200);
+   f.addFunds();const before=f.read(),originalBatch=f.env.DB.batch;
+   f.env.DB.batch=async statements=>{
+    f.env.DB.batch=originalBatch;
+    const result=winner==='withdrawApplication'?await f.save(f.borrower,'withdrawApplication',{id:f.appId},before.revision):await f.step(f.owner,'funds-added');
+    assert.equal(result.status,200,result.data.error);return originalBatch.call(f.env.DB,statements);
+   };
+   const loser=winner==='withdrawApplication'?await f.step(f.owner,'funds-added'):await f.save(f.borrower,'withdrawApplication',{id:f.appId},before.revision);
+   assert.equal(loser.status,409,loser.data.error);
+   const state=f.read();assert.equal(state.revision,before.revision+1);assert.equal(state.loans[0].status,winner==='withdrawApplication'?'withdrawn':'approved');assert.equal(!!state.loans[0].tradeFlow?.reservedBy,winner==='funds-added');assert.deepEqual(state.ledger,before.ledger);
+   const retry=await f.save(f.borrower,'withdrawApplication',{id:f.appId});assert.equal(retry.status,winner==='funds-added'?400:200);
+  });
+ }
+});
+
+test('completed loan-trade proof rejects changed principal or assets without partially recording collateral or funding',async()=>{
+ for(const change of ['principal','items','reference']){
+  const f=await loanTradeScenario();
+  await withLoanTradeAPI(f,async()=>{
+   await readyLoanTrade(f);const before=f.read();f.trade.completed_at=Math.ceil(Date.now()/1000);
+   if(change==='principal')f.trade.items.find(entry=>String(entry.user_id)===OWNER).details.amount--;
+   if(change==='items')f.trade.items.find(entry=>entry.type==='Item').details.amount--;
+   if(change==='reference')f.trade.description='TLB-ANOTHER-LOAN';
+   const result=await f.step(f.owner,'complete');assert.ok(result.status>=400||result.data.tradeCheck?.reason);
+   const state=f.read();assert.equal(state.loans[0].status,'approved');assert.equal(state.loans[0].collateralConfirmed,false);assert.equal(state.loans[0].fundsReceived,undefined);assert.deepEqual(state.ledger,before.ledger);assert.deepEqual(state.collateral,before.collateral);assert.deepEqual(state.receipts,before.receipts);assert.equal(state.loans[0].tradeFlow.reservedBy,OWNER);
+  });
+ }
+});
+
+test('concurrent completed-trade verification records one combined receipt and one disbursement',async()=>{
+ const f=await loanTradeScenario();
+ await withLoanTradeAPI(f,async()=>{
+  await readyLoanTrade(f);f.trade.completed_at=Math.ceil(Date.now()/1000);
+  const before=f.read(),originalBatch=f.env.DB.batch;
+  f.env.DB.batch=async statements=>{
+   f.env.DB.batch=originalBatch;const winner=await f.step(f.owner,'complete');assert.equal(winner.status,200,winner.data.error);return originalBatch.call(f.env.DB,statements);
+  };
+  const loser=await f.step(f.owner,'complete');assert.equal(loser.status,409,loser.data.error);
+  const state=f.read();assert.equal(state.revision,before.revision+1);assert.equal(state.receipts.filter(receipt=>receipt.reference==='torn-api-trade:88444').length,1);assert.equal(state.ledger.filter(entry=>entry.type==='disbursement').length,1);
+  const retry=await f.step(f.owner,'complete');assert.equal(retry.status,200,retry.data.error);assert.deepEqual(f.read(),state);
+ });
+});
+
+test('failed settlement persistence rolls back both sides and a later explicit check can finish the trade',async()=>{
+ const f=await loanTradeScenario();
+ await withLoanTradeAPI(f,async()=>{
+  await readyLoanTrade(f);f.trade.completed_at=Math.ceil(Date.now()/1000);
+  const before=f.read(),originalBatch=f.env.DB.batch,eventCount=collateralTradeEvents(f.env).length;
+  f.env.DB.batch=statements=>originalBatch.call(f.env.DB,[...statements,f.env.DB.prepare('INSERT INTO missing_table VALUES (1)')]);
+  const failed=await f.step(f.owner,'complete');assert.equal(failed.status,400);assert.deepEqual(f.read(),before);assert.equal(collateralTradeEvents(f.env).length,eventCount);
+  f.env.DB.batch=originalBatch;
+  const retry=await f.step(f.owner,'complete');assert.equal(retry.status,200,retry.data.error);assert.equal(f.read().loans[0].status,'active');
+ });
 });

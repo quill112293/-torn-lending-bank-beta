@@ -1,9 +1,9 @@
 {
   "channel": "beta",
-  "version": "1.1.0-beta.65",
-  "basedOn": "1.1.0-beta.64",
+  "version": "1.1.0-beta.66",
+  "basedOn": "1.1.0-beta.65",
   "build": "passed",
-  "tests": 352,
+  "tests": 414,
   "workerPackaging": "Production build and Wrangler 4.92.0 deploy --dry-run passed against the configured beta Worker and its dedicated database binding. Encrypted push delivery passed in local workerd with the existing 2026-05-22 runtime-test compatibility date.",
   "sessionChecks": [
     "No time limit, including simulated ten-year passage",
@@ -108,7 +108,7 @@
     "Reported creation is a borrower browser observation, never collateral proof; completed collateral verification and funding gates remain enforced."
   ],
   "tradeCreationUI": "14 rendered action/navigation tests and 36 controller/native DOM-adapter/observation tests passed, including six new native keyup validation and staged-timeout regressions. Nine API integration tests and 17 backend domain tests remain included. Existing approval progress and withdrawal regressions passed in the beta.64 baseline; they are also included in this release’s full suite.",
-  "tradeCreationLimitations": "Connected-browser access was unavailable in this session; no live Torn trade was created or verified, and actual iPhone/Torn PDA interaction remains untested. Description/Initiate discovery fails closed if the real native form is missing or ambiguous. A detail view without sufficient visible evidence requires checking the native current-trades list before the link can be recorded. No automatic asset transfer, trade acceptance, cancellation or funding is implemented.",
+  "tradeCreationLimitations": "No live Torn trade or asset transfer was performed in this session, and actual iPhone/Torn PDA interaction remains untested. Missing or ambiguous native controls stop the helper. Trade creation remains single-use. The staged menu forwards only an explicitly requested initial native Accept after fresh checks, preserving Torn confirmation; it does not automatically finalize, cancel, or transfer assets.",
   "tradeReadinessFix": [
     "Confirmed the missing event against Torn's public native trade_initiate.js asset: its recipient/description validator listens to keyup before enabling the submit input. Beta.63 sent only input/change.",
     "Production fillReference now sends one bubbling keyup after input/change, with no Enter/Return, focus change, direct disabled override or submission before the server claim.",
@@ -147,7 +147,7 @@
   "tradeLoanDetailsChecks": [
     "Both native userscripts install a collapsed Loan details panel on Torn trade pages, sharing the existing transport without altering the one-shot handoff.",
     "The selector identifies accessible loans by borrower, reference and status. Unique saved trade IDs or exact visible native descriptions can select a loan; conflicts and manual selections require comparison.",
-    "Opening/reopening and explicit refresh load current bank data. No panel action initiates, accepts or funds a trade or records collateral acceptance.",
+    "Opening, reopening, selecting and refreshing loan details only read bank data. Explicit staged actions check Torn offers and save the authorized stage; final staff verification alone records completed collateral and funding. Initial native Accept is forwarded only after fresh readiness and matching native controls.",
     "Current Torn account must match the bank account. Unknown account/login, superseded reads, closure, navigation and account changes clear stale data.",
     "Native matching uses the observed account markers and opened-trade heading, without scanning unrelated chat or appended status indicators."
   ],
@@ -162,13 +162,52 @@
       "Leaving the trade page hides and clears the panel; disposal removes the host.",
       "All four observed transport calls were request(bank) without a request body; native form DOM was unchanged and submit/requestSubmit counters stayed at zero."
     ],
-    "limits": "Synthetic native DOM and visibility fixtures only. No visual, signed-in Torn, or iPhone/Torn PDA interaction was established."
+    "limits": "Synthetic native DOM and visibility fixtures only. No visual, signed-in Torn, or iPhone/Torn PDA interaction was established.",
+    "validatedIn": "1.1.0-beta.65 baseline; staged interaction validated below"
   },
   "expectedCollateralTestCounts": {
     "domain": 13,
     "checklistUI": 12,
     "tradePageUIAndController": 11,
     "newAPIIntegration": 2,
-    "totalNew": 38
+    "totalNew": 38,
+    "validatedIn": "1.1.0-beta.65 baseline, retained in the full suite"
+  },
+  "stagedLoanTradeChecks": [
+    "Both automatic and staff approvals follow borrower collateral placed, staff collateral reviewed, staff funds added, borrower funds reviewed, explicit native acceptance and final staff completion in the same trade.",
+    "API ongoing trade details check exact reference, borrower and receiving lender, gross borrower cash/items and full lender principal. API and native page IDs are distinct and separately pinned.",
+    "Manual approval terms require an independent checkbox. The reviewed bank revision is sent only from the fresh preflight and checked before Torn I/O and again after state reload; concurrent start-date changes cannot acquire consent.",
+    "Preaccept checks do not create custody, a receipt, a disbursement or an active loan. Receiving-staff funds are reserved exactly once, including legacy approvals assigned to another issuer.",
+    "Changed borrower assets invalidate collateral and later checks; changed lender funds invalidate funds checks while preserving collateral review. Reservations persist until an explicit ongoing zero-lender-cash reset.",
+    "Reserved loans reject withdrawal, separate disbursement, changed terms, separate collateral acceptance and archival. Both competing withdrawal versus reservation CAS orders were exercised.",
+    "Final staff proof must be the completed same trade with exact reviewed manifests, principal and timestamps. One CAS records a compound receipt, custody, staff funds verification and disbursement together, preserving agreed terms and using the actual completion date.",
+    "Completed retries are idempotent; concurrent verification creates one settlement; failed persistence rolls back all records and events. Live and archived consumed proof cannot become another loan or repayment.",
+    "Standing, bank availability, agreed start and available lender cash gate commitment and acceptance. A later restriction or midnight crossing does not erase an already completed authorized exchange.",
+    "Role, account, current loan, stage, terms and native context are rechecked. Temporary keys are not saved or included in diagnostics, and uncertain writes are reconciled by reads without automatic replay.",
+    "The initial native Accept requires a unique visible enabled step=accept control matching reference, native ID and peer. Hidden, disabled, ambiguous, foreign, mismatched and accept2 controls are rejected. Torn owns its final confirmation."
+  ],
+  "stagedLoanTradeDOMCheck": {
+    "result": "passed",
+    "runtime": "Mounted production components/controller with existing jsdom 26.1.0; synthetic native visibility and mocked bank/API responses",
+    "checks": [
+      "All six exact actions completed sequentially across borrower and staff account changes while keeping the expected collateral and loan selector visible.",
+      "A manually approved loan displays all approved terms. Neither checkbox alone submits; both reset on loan selection. Consent binds fresh revision 42 rather than cached revision 41, and later actions omit consent fields.",
+      "Ten bank reads and six explicit staged API actions; duplicate saves suppressed and entered keys cleared.",
+      "Exactly one initial native Accept click; zero accept2 clicks and zero native form submissions.",
+      "Reserved offers are distinguished from active loans; completed amount, date, staff verifier and source appear only after final authoritative proof."
+    ],
+    "limits": "No live trade, real asset transfer, visual-browser or iPhone/Torn PDA result is claimed."
+  },
+  "stagedLoanTradeTestCounts": {
+    "domain": 13,
+    "newWorkerAPI": 10,
+    "newControllerAndNativeAdapter": 22,
+    "newStagedUI": 15,
+    "newApprovalProgress": 1,
+    "newTransport": 1,
+    "totalNew": 62,
+    "fullSuite": 414,
+    "encryptedPushRuntime": "passed",
+    "workerDryRun": "passed"
   }
 }

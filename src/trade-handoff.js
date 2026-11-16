@@ -346,7 +346,7 @@ export function installTradeHandoff({document,window,transport}){
   else if(update.status==='observed')message.textContent='Torn is showing the trade. Saving its link to your loan…';
   else if(update.status==='recorded'){
    page.dispose();attemptPending=false;try{storage.removeItem(resumeKey);}catch{}
-   message.textContent=intent.cancellationRequired||intent.status==='cancelled'?'This loan request was withdrawn. Open the Torn trade and cancel it; the bank request remains withdrawn.':intent.reportedAfterFunding?'The trade link is saved. Loan funding is already recorded; review any open trade with the receiving lender.':'Your loan trade is created with the reference shown above. Add any required collateral in Torn; the bank’s usual terms and funding checks still apply.';
+   message.textContent=intent.cancellationRequired||intent.status==='cancelled'?'This loan request was withdrawn. Open the Torn trade and cancel it; the bank request remains withdrawn.':intent.reportedAfterFunding?'The trade link is saved. Loan funding is already recorded; review any open trade with the receiving lender.':'Your loan trade is created with the reference shown above. Open Loan details on the trade page to confirm collateral placed, review the loan funds and complete the trade checks with staff.';
   }
   drawActions();
  }

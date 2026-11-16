@@ -15,17 +15,28 @@ test('an approved borrower sees the exact collateral requirement and the create-
  assert.match(html,/Approved loan: <strong>\$130,000,000<\/strong>/);
  assert.match(html,/Required credited collateral: <strong>\$65,000,000<\/strong>/);
  assert.match(html,/Create a trade in Torn with a bank staff member/);
- assert.match(html,/complete and verify the collateral trade/);
- assert.match(html,/after accepting sufficient collateral/);
+ assert.match(html,/confirm collateral placed/);
+ assert.match(html,/adds your loan funds to the same trade/);
+ assert.match(html,/Staff verifies the completed transfer/);
  assert.doesNotMatch(html,/<button|<a |Confirm the current loan terms|PI payments/);
 });
 
-test('staff sees approval review before collateral acceptance and sending the loan',()=>{
+test('staff sees the staged review and funds in the same trade before completion',()=>{
  const html=render(approved,true);
  assert.match(html,/Review the approved amount and collateral requirement/);
- assert.match(html,/verify the completed trade and accept the received collateral here/);
- assert.match(html,/Send the loan funds only after sufficient collateral is accepted/);
+ assert.match(html,/verify the collateral, add \$130,000,000 to the same trade/);
+ assert.match(html,/Verify completed transfer/);
+ assert.match(html,/only after staff verifies the completed exchange/);
  assert.doesNotMatch(html,/Create a trade in Torn with a bank staff member/);
+});
+
+test('approved trade stages show the next participant and protect the reserved exchange',()=>{
+ const stages={collateral_placed:'Awaiting staff collateral review',collateral_reviewed:'Awaiting loan funds in trade',funds_added:'Awaiting borrower funds review',funds_reviewed:'Ready to accept trade'};
+ for(const [stage,label] of Object.entries(stages))assert.equal(approvalStatus({...approved,tradeFlow:{stage}}),'Auto-approved · '+label);
+ const loan={...approved,borrowerConfirmed:null,tradeFlow:{stage:'funds_reviewed',reservedBy:'3542697',invalidReason:'Offer changed'}};
+ assert.match(render(loan),/Trade review needs confirmation/);
+ assert.match(render(loan),/explicitly accept the current loan terms in Loan details/);
+ assert.match(render(loan),/remove the funds and reset the trade review first/);
 });
 
 test('sufficient accepted collateral moves to funding without another borrower confirmation',()=>{
