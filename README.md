@@ -238,3 +238,9 @@ Existing loans waiting at the final step can retry verification after deployment
 ## Beta.75 bank reset passcode
 
 The owner-only bank reset dialog now uses a masked four-digit passcode field with a numeric keyboard. Enter `1234` to confirm instead of the previous all-caps phrase. The server requires that exact passcode; owner permissions, revision checks and duplicate-request protection still apply. Update the userscript to **1.1.0-beta.75** and reload Torn.
+
+## Beta.76 bank restock status
+
+The Bank tab now lets the owner or a vault lender select **Online**, **Awaiting restock**, or **Offline**. The borrower's welcome page, Bank tab and sidebar share the saved status: green for online, yellow for restocking and red for offline. Awaiting restock explains that loan funding is delayed while bank funds are replenished; applications, existing loans and repayments remain available. Offline keeps the existing pause on new lending.
+
+The status is controlled manually, and changes are audited and shared across accounts. Existing banks retain their online/offline setting until an authorized operator changes it. Update both userscripts to **1.1.0-beta.76** and reload Torn. No database migration is required.

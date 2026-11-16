@@ -1568,3 +1568,18 @@ test('final verification settles only the selected deal among fourteen other com
   assert.deepEqual(f.apiCalls.filter(call=>call.path.endsWith('/trade')).map(call=>call.path),['/v2/user/6509836/trade']);
  });
 });
+
+test('restock status is persisted and shared with borrowers, and unauthorized changes leave it untouched',async()=>{
+ const env=fixture(),owner=(await login(env)).data.token;
+ await call(env,'access',{token:owner,body:{action:'invite',lane:'faction',id:BORROWER}});
+ const borrower=(await login(env,'borrower')).data.token;
+ let state=(await call(env,'bank',{token:owner})).data.state;
+ const save=(token,status,requestId)=>call(env,'bank',{token,body:{action:'bankStatus',payload:{status},revision:state.revision,requestId}});
+ const restock=await save(owner,'restocking','status-restock');assert.equal(restock.status,200,restock.data.error);state=restock.data.state;
+ assert.equal(state.bankOnline,true);assert.equal(state.bankRestocking,true);
+ const publicView=await call(env,'bank',{token:borrower});assert.equal(publicView.data.state.bankRestocking,true);assert.equal(publicView.data.state.bankOnline,true);
+ const denied=await save(borrower,'online','status-forged');assert.equal(denied.status,400);
+ const unchanged=(await call(env,'bank',{token:owner})).data.state;assert.equal(unchanged.revision,state.revision);assert.equal(unchanged.bankRestocking,true);
+ const offline=await save(owner,'offline','status-offline');assert.equal(offline.status,200,offline.data.error);state=offline.data.state;
+ const after=await call(env,'bank',{token:borrower});assert.equal(after.data.state.bankOnline,false);assert.equal(after.data.state.bankRestocking,false);
+});

@@ -32,3 +32,5 @@
 .item-suggestions{list-style:none;margin:4px 0 10px;padding:3px;max-height:180px;overflow:auto;border:1px solid var(--border);border-radius:8px;background:var(--bg)}
 .item-suggestions button{display:block;width:100%;min-height:44px;padding:8px 10px;text-align:left;color:inherit;background:transparent;border:0;border-radius:5px}
 .item-suggestions button:hover,.item-suggestions button:focus-visible{background:#1d342b}
+
+.status-light.restocking{background:#facc15}.lobby-bank.is-restocking{border-left-color:#facc15}.bank-status-options button{min-height:44px}.bank-status.is-online button[aria-pressed=true]{border-color:var(--green);color:var(--green)}.bank-status.is-restocking button[aria-pressed=true]{border-color:#facc15;color:#facc15}.bank-status.is-offline button[aria-pressed=true]{border-color:var(--red);color:var(--red)}
