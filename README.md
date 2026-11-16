@@ -91,3 +91,9 @@ Applications have no faction/non-faction dropdown. They display the saved member
 Existing members need a one-time assignment in Users before submitting a new application. Their old self-selected applications are not treated as staff-confirmed membership. If staff change the member type while an application is pending, review and save that application's details before approving it. No database migration is needed. Rebuild and update both userscripts along with the Worker; older scripts may still display the old dropdown, but the updated server rejects mismatched selections.
 
 Validation: `npm run build` and `npm test`, including signup persistence, transaction rollback/concurrent saves, staff/borrower permissions, both application programs, unchanged existing loans, and rendered forms.
+
+## Beta.43: loan slots for every bank level
+
+Faction and non-faction members use open-loan limits of 1 for Level 1, 3 for Level 2, 5 for Level 3, and 10 for VIP. VIP-PI also allows 10. Active loans (including staff adjustments) and approved loans awaiting funding consume slots. Requests at the limit go to manual review instead of automatic approval.
+
+Existing bank rules receive the previously missing non-faction limits and the VIP limit of 10 when loaded. The one-time rules upgrade is persisted on the next bank save; later owner edits are preserved. Existing loans retain their saved terms. The owner can edit each program's count limits in Rules. Profiles and borrower Overview use the same limits, including on older installed scripts after a bank refresh.

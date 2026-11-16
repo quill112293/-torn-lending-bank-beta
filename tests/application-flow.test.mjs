@@ -123,6 +123,23 @@ test('staff count corrections affect loan slots and preserve tracked loans',()=>
  assert.throws(()=>applyAction(funded,owner,'adjustLoanCounts',{...payload,active:0}),/recorded active loans/);
 });
 
+test('non-faction applications use the displayed slot limit before automatic or staff approval',()=>{
+ let s=base();
+ Object.assign(s.borrowers[borrower],{memberProgram:'external',completed:1,additionalActiveLoans:2});
+ s.staff.push({id:'9000102',role:'staff'});
+ const request=()=>input({lane:'external',tier:1,product:'bank'});
+ s=apply(s,request());
+ assert.equal(s.loans.length,1);
+ assert.equal(s.loans[0].autoApproved,true);
+ assert.deepEqual(loanSlots(s,borrower,{lane:'external',tier:1}),{open:3,limit:3,remaining:0});
+ s=apply(s,request());
+ const pending=s.applications.at(-1);
+ assert.equal(pending.status,'pending');
+ assert.ok(pending.reviewReasons.some(reason=>reason.startsWith('Open-loan limit')));
+ assert.equal(s.loans.length,1);
+ assert.throws(()=>applyAction(s,'9000102','approve',{id:pending.id,amount:100e6,checks:true,reason:'Over limit'}),/owner/);
+});
+
 test('remaining slots include adjusted active loans and reservations, and follow the current level',()=>{
  let s=base();
  const terms={lane:'faction',tier:1};
@@ -132,7 +149,7 @@ test('remaining slots include adjusted active loans and reservations, and follow
  s=applyAction(s,owner,'adjustLoanCounts',{id:borrower,completed:4,active:3,reason:'Corrected total'});
  assert.deepEqual(loanSlots(s,borrower,terms),{open:4,limit:3,remaining:0});
  assert.deepEqual(loanSlots(s,borrower,{lane:'faction',tier:2}),{open:4,limit:5,remaining:1});
- assert.deepEqual(loanSlots(s,borrower,{lane:'external',tier:0}),{open:4,limit:null,remaining:null});
+ assert.deepEqual(loanSlots(s,borrower,{lane:'external',tier:0}),{open:4,limit:1,remaining:0});
  s.loans[0].status='repaid';
  assert.equal(loanSlots(s,borrower,{lane:'faction',tier:2}).remaining,2);
 });

@@ -6,6 +6,25 @@ import {classifyTrade,reconcileTrade} from '../lib/trades.js';
 const near=(a,b)=>assert.ok(Math.abs(a-b)<.01,`${a} != ${b}`);
 const app=overrides=>TB.sampleApp({start:'2026-01-01',maturity:'2026-04-01',...overrides});
 const loan=(extra={})=>({id:'l',borrowerId:'100',name:'Test',product:'house',principal:100e6,rate:.005,freeDays:0,start:'2026-01-01',maturity:'2026-04-01',schedule:7,installment:10e6,status:'active',payments:[],extensions:[],rules:TB.clone(TB.DEFAULTS),...extra});
+test('legacy loan-count rules upgrade once and preserve other terms and later owner changes',()=>{
+ const old=TB.clone(TB.DEFAULTS);
+ delete old.loanLimitsVersion;
+ old.faction[3].open=5;
+ old.external.forEach(t=>delete t.open);
+ const saved=JSON.stringify(old),upgraded=TB.withLoanLimits(old);
+ assert.equal(JSON.stringify(old),saved);
+ assert.deepEqual(upgraded.faction.map(t=>t.open),[1,3,5,10]);
+ assert.deepEqual(upgraded.external.map(t=>t.open),[1,3,5,10,10]);
+ assert.equal(upgraded.version,old.version+1);
+ assert.equal(upgraded.external[1].nw,old.external[1].nw);
+ assert.deepEqual(TB.withLoanLimits(upgraded),upgraded);
+ upgraded.external[3].open=8;
+ assert.equal(TB.validateRules(upgraded).external[3].open,8);
+ for(const open of [0,-1,1.5,101,'10']){
+  const invalid=TB.clone(upgraded);invalid.external[1].open=open;
+  assert.throws(()=>TB.validateRules(invalid),/open-loan limit/);
+ }
+});
 test('marginal faction collateral and inverse support at $2B and $3B',()=>{const a=app({networth:8e9,requested:2.5e9});assert.equal(TB.collateralRequired(a,2.5e9),1.34e9);assert.equal(TB.collateralSupport(a,1.34e9),2.5e9);a.oilEligible=true;assert.equal(TB.collateralRequired(a,2.5e9),1.05e9);assert.equal(TB.collateralSupport(a,1.05e9),2.5e9);a.tier=3;assert.equal(TB.collateralRequired(a,10e9),0);});
 test('non-faction collateral jumps apply to whole principal',()=>{const a=app({lane:'external',tier:1,product:'bank',piRto:false});assert.equal(TB.collateralRequired(a,250e6),125e6);assert.equal(TB.collateralRequired(a,250e6+1),187500001);assert.equal(TB.collateralSupport(a,130e6),250e6);});
 test('VIP-PI and minima and exact net-worth support',()=>{const a=app({lane:'external',tier:0,product:'bank',piRto:true,networth:1e9,requested:250e6,cashCollateral:25e6,items:[]});const q=TB.quote(a);assert.equal(q.rate,.005);assert.equal(q.freeDays,7);assert.equal(q.limits.networth,500e6);assert.equal(q.amount,250e6);assert.ok(TB.quote({...a,requested:99e6}).blockers.length);});
