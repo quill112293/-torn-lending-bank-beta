@@ -10,7 +10,7 @@ import {applyAction,project} from '../lib/operations.js';
 import {bankServiceStatus} from '../lib/bank-status.js';
 
 const OWNER='3542697',VAULT='9000101',STAFF='9000102',BORROWER='1234567';
-function fixture(){const state=TB.newState();state.staff.push({id:VAULT,role:'vault',name:'Vault'},{id:STAFF,role:'staff',name:'Staff'});TB.person(state,BORROWER).memberProgram='faction';return state;}
+function fixture(){const state=TB.newState();TB.topup(state,500000000,'Status test funds');state.staff.push({id:VAULT,role:'vault',name:'Vault'},{id:STAFF,role:'staff',name:'Staff'});TB.person(state,BORROWER).memberProgram='faction';return state;}
 
 test('owner and vault can publish three service states, while other accounts cannot',()=>{
  for(const actor of [OWNER,VAULT]){
@@ -54,7 +54,7 @@ await build({stdin:{contents:`
 const {lobby,control}=await import(pathToFileURL(outfile));
 
 test('welcome page and Bank tab agree on green, yellow and red labels with controls only for authorized staff',()=>{
- for(const [status,tone,label] of [['online','green','Bank online'],['restocking','amber','Awaiting restock'],['offline','red','Bank offline']]){
+ for(const [status,tone,label] of [['online','green','Bank online'],['restocking','amber','Awaiting funds'],['offline','red','Bank offline']]){
   const state=applyAction(fixture(),OWNER,'bankStatus',{status}),welcome=lobby(project(state,BORROWER).state);
   assert.match(welcome,new RegExp('lobby-bank is-'+status));assert.match(welcome,new RegExp('status-light '+status));assert.ok(welcome.includes(label));
   const panel=control(state,'owner',false);assert.match(panel,new RegExp('badge '+tone));assert.ok(panel.includes(label));
@@ -64,3 +64,18 @@ test('welcome page and Bank tab agree on green, yellow and red labels with contr
   if(status==='restocking'){assert.match(welcome,/Loan funding is delayed/);assert.match(welcome,/You can still apply/);assert.doesNotMatch(welcome,/Bank offline|New lending is paused/);}
  }
 });
+
+ test('automatic funding status uses exact threshold and preserves manual overrides',()=>{
+ for(const funds of [0,249999999,250000000,250000001]){
+ const state={bankOnline:true,availableLendingFunds:funds};
+ assert.equal(bankServiceStatus(state).key,funds<250000000?'restocking':'online');
+ assert.equal(bankServiceStatus({...state,bankOnline:false}).key,'offline');
+ assert.equal(bankServiceStatus({...state,bankRestocking:true}).key,'restocking');
+ }
+ let state=fixture();state.bankOnline=true;
+ assert.equal(bankServiceStatus(project(state,BORROWER).state).key,'online');
+ state.ledger=[];
+ assert.equal(bankServiceStatus(project(state,BORROWER).state).key,'restocking');
+ TB.topup(state,250000000,'Restocked');
+ assert.equal(bankServiceStatus(project(state,BORROWER).state).key,'online');
+ });

@@ -7,6 +7,7 @@ export default function BankStatus({state,role,busy=false,onChange}){
   <h2>Bank status</h2>
   <span className={'badge '+service.tone}><span className={'status-light '+service.key}/>{service.label}</span>
   <p className='muted'>{service.description}</p>
+  {canChange&&<p className='micro'>Below $250,000,000 available lending funds, the bank automatically shows Awaiting funds. It returns to Online at $250,000,000 unless Awaiting funds or Offline is selected manually.</p>}
   {canChange&&<div className='actions bank-status-options' role='group' aria-label='Set bank status'>
    {Object.values(BANK_SERVICE_STATUSES).map(option=><button type='button' key={option.key} className='secondary' aria-pressed={option.key===service.key} disabled={busy} onClick={()=>onChange(option.key)}>{option.controlLabel}</button>)}
   </div>}

@@ -244,3 +244,7 @@ The owner-only bank reset dialog now uses a masked four-digit passcode field wit
 The Bank tab now lets the owner or a vault lender select **Online**, **Awaiting restock**, or **Offline**. The borrower's welcome page, Bank tab and sidebar share the saved status: green for online, yellow for restocking and red for offline. Awaiting restock explains that loan funding is delayed while bank funds are replenished; applications, existing loans and repayments remain available. Offline keeps the existing pause on new lending.
 
 The status is controlled manually, and changes are audited and shared across accounts. Existing banks retain their online/offline setting until an authorized operator changes it. Update both userscripts to **1.1.0-beta.76** and reload Torn. No database migration is required.
+
+## Beta.77 automatic low-funds status
+
+Online banks automatically display yellow **Awaiting funds** below $250 million in available lending funds. At $250 million or above they return to green Online. Manual Awaiting funds and Offline selections remain in place until changed. The threshold uses the shared available lending balance after commitments, so all accounts see the same status. Applications remain available while awaiting funds. Update both scripts to **1.1.0-beta.77**.
