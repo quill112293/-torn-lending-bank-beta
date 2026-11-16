@@ -106,3 +106,18 @@ test('profile details belong to the signed-in member and cannot edit loan eligib
  assert.equal(project(saved,owner).state.borrowers[borrower].profileDetails.notes.length,500);
  assert.equal(project(saved,other).state.borrowers[borrower],undefined);
 });
+
+test('staff count corrections affect loan slots and preserve tracked loans',()=>{
+ const s=base();
+ s.staff.push({id:'9000102',role:'staff'});
+ const payload={id:borrower,completed:4,active:1,reason:'Imported existing loan history'};
+ assert.throws(()=>applyAction(s,borrower,'adjustLoanCounts',payload),/Staff permission/);
+ const updated=applyAction(s,'9000102','adjustLoanCounts',payload);
+ assert.equal(updated.borrowers[borrower].completed,4);
+ assert.deepEqual(updated.loans,s.loans);
+ assert.equal(loanSlots(updated,borrower,{lane:'faction',tier:0}).remaining,0);
+ assert.equal(apply(updated).loans.length,0);
+ const funded=apply(s);
+ funded.loans[0].status='active';
+ assert.throws(()=>applyAction(funded,owner,'adjustLoanCounts',{...payload,active:0}),/recorded active loans/);
+});
