@@ -9,9 +9,9 @@ const {default:ApprovalProgress,hasAcceptedCollateral,approvalStatus}=await impo
 const approved={status:'approved',autoApproved:true,principal:130e6,collateralRequired:65e6,collateralConfirmed:false,borrowerConfirmed:{reference:'TLB-APPROVED'}};
 const render=(loan=approved,isStaff=false,allowPIPayment=false)=>renderToStaticMarkup(React.createElement(ApprovalProgress,{loan,isStaff,allowPIPayment}));
 
-test('an approved borrower sees the exact collateral requirement and the manual trade sequence',()=>{
+test('an approved borrower sees the exact collateral requirement and the create-trade next step',()=>{
  const html=render();
- assert.match(html,/Auto-approved · Awaiting collateral verification/);
+ assert.match(html,/Auto-approved · Awaiting collateral trade/);
  assert.match(html,/Approved loan: <strong>\$130,000,000<\/strong>/);
  assert.match(html,/Required credited collateral: <strong>\$65,000,000<\/strong>/);
  assert.match(html,/Create a trade in Torn with a bank staff member/);
@@ -45,7 +45,7 @@ test('truthy but invalid or insufficient accepted collateral never presents fund
  for(const amount of [undefined,64999999,'65000000',NaN,Infinity,65000000.5]){
   const loan={...approved,collateralConfirmed:{amount}};
   assert.equal(hasAcceptedCollateral(loan),false);
-  assert.match(render(loan),/Awaiting collateral verification/);
+  assert.match(render(loan),/Awaiting collateral trade/);
   assert.doesNotMatch(render(loan),/Awaiting funding|Staff accepted/);
  }
  assert.equal(hasAcceptedCollateral({...approved,collateralConfirmed:{amount:65e6}}),true);

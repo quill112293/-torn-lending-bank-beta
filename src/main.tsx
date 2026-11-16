@@ -4,10 +4,12 @@ import React,{useState} from 'react';
 import {createRoot} from 'react-dom/client';
 import BankClient from './BankClient';
 import {createTransport,normalizeOrigin} from './transport';
+import {installTradeHandoff} from './trade-handoff.js';
 import css from './bank.css';
 const native=typeof __NATIVE__!=='undefined'&&__NATIVE__;
 const configured=typeof __BANK_ORIGIN__!=='undefined'?__BANK_ORIGIN__:'';
 const roleLabel=typeof __ROLE_LABEL__!=='undefined'?__ROLE_LABEL__:'Bank';
+if(native&&configured&&location.pathname==='/trade.php')installTradeHandoff({document,window,transport:createTransport(configured,{native:true})});
 const pauseState={visible:!native};
 let activeTransport=null;
 function App(){
@@ -18,7 +20,7 @@ function App(){
  function connect(e){e.preventDefault();try{const next=normalizeOrigin(draft);if(!next.endsWith('.workers.dev'))throw Error('Use the bank’s Cloudflare workers.dev address.');setOrigin(next);setTransport(createTransport(next,{native}));setError('');}catch(err){setError(err.message);}}
  activeTransport=transport;pauseState.visible=visible;
  function close(){setVisible(false);setGeneration(v=>v+1);}
- const body=<>{!origin&&!demo?<main className='welcome'><section className='welcome-card'><h1>Torn Lending Bank BETA</h1><p>The in-Torn interface is ready. Connect it to your deployed bank to share records.</p><form onSubmit={connect}><label className='field'>Bank address<input type='url' required value={draft} placeholder='Your bank’s https://…workers.dev address' onChange={e=>setDraft(e.target.value)}/></label><button className='primary full'>Connect to bank</button></form><button className='secondary full' onClick={()=>setDemo(true)}>Try the working demo</button>{error&&<p className='notice red'>{error}</p>}</section></main>:<BankClient key={generation+':'+String(demo)} demo={demo} transport={transport} bankOrigin={origin} active={visible} keyRole={roleLabel} onExitDemo={()=>setDemo(false)} onDemo={()=>setDemo(true)}/>}</>;
+ const body=<>{!origin&&!demo?<main className='welcome'><section className='welcome-card'><h1>Torn Lending Bank BETA</h1><p>The in-Torn interface is ready. Connect it to your deployed bank to share records.</p><form onSubmit={connect}><label className='field'>Bank address<input type='url' required value={draft} placeholder='Your bank’s https://…workers.dev address' onChange={e=>setDraft(e.target.value)}/></label><button className='primary full'>Connect to bank</button></form><button className='secondary full' onClick={()=>setDemo(true)}>Try the working demo</button>{error&&<p className='notice red'>{error}</p>}</section></main>:<BankClient key={generation+':'+String(demo)} native={native} demo={demo} transport={transport} bankOrigin={origin} active={visible} keyRole={roleLabel} onExitDemo={()=>setDemo(false)} onDemo={()=>setDemo(true)}/>}</>;
  if(!native)return body;
  return <><button ref={launcher.ref} style={launcher.style} {...launcher.handlers} className='tlb-launch' aria-expanded={visible} onClick={()=>setVisible(!visible)}>BETA Bank · {roleLabel}</button><section ref={panel.ref} style={panel.style} className='tlb-panel' hidden={!visible} aria-label='Torn Lending Bank BETA'><header className='tlb-bar'><strong className='tlb-drag' tabIndex={0} role='button' aria-label='Move bank panel' title='Drag to move' {...panel.handlers}>⠿ Torn Lending Bank BETA{demo?' · DEMO':''}</strong><button aria-label='Close bank panel' onClick={close}>×</button></header><div className='tlb-body'>{body}</div></section></>;
 }

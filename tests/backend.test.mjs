@@ -712,3 +712,271 @@ test('failed withdrawal persistence rolls back the request and its activity noti
  f.env.DB.batch=originalBatch;
  assert.equal((await f.save(f.borrower,'withdrawApplication',{id:f.appId})).status,200);
 });
+
+function collateralTradeFinancialSnapshot(state){
+ return {
+  applications:state.applications,
+  loans:state.loans.map(({collateralTrade,...loan})=>loan),
+  ledger:state.ledger,collateral:state.collateral,receipts:state.receipts,
+  pendingPayments:state.pendingPayments,paymentIntents:state.paymentIntents
+ };
+}
+function collateralTradeEvents(env){
+ return env.DB.sqlite.prepare('SELECT data FROM push_events').all().map(row=>JSON.parse(row.data));
+}
+async function prepareTradeScenario(){
+ const f=await withdrawalScenario();
+ const prepared=await f.save(f.borrower,'prepareCollateralTrade',{loanId:f.loanId,recipientId:OWNER});
+ assert.equal(prepared.status,200,prepared.data.error);
+ return {...f,intent:f.read().loans[0].collateralTrade};
+}
+
+test('collateral trade API follows actual auto-approval and preserves the exact loan reference and financial records',async()=>{
+ const f=await withdrawalScenario(),initial=f.read(),loan=initial.loans[0];
+ assert.equal(initial.applications[0].decision.automatic,true);
+ assert.equal(loan.status,'approved');assert.equal(loan.issuer,null);assert.equal(loan.collateralConfirmed,false);
+ const financial=collateralTradeFinancialSnapshot(initial);
+ const prepared=await f.save(f.borrower,'prepareCollateralTrade',{
+  loanId:f.loanId,recipientId:OWNER,reference:'TLB-FORGED',borrowerId:OTHER,issuer:OTHER
+ });
+ assert.equal(prepared.status,200,prepared.data.error);
+ const intent=f.read().loans[0].collateralTrade;
+ assert.equal(intent.status,'prepared');assert.equal(intent.loanId,loan.id);
+ assert.equal(intent.borrowerId,BORROWER);assert.equal(intent.recipientId,OWNER);
+ assert.equal(intent.reference,loan.reference);assert.equal(intent.reference,initial.applications[0].reference);
+ assert.equal(intent.uiTradeId,undefined);assert.equal(intent.claimedAt,undefined);assert.equal(intent.reportedAt,undefined);
+ assert.deepEqual(collateralTradeFinancialSnapshot(f.read()),financial);
+ const same=await f.save(f.borrower,'prepareCollateralTrade',{loanId:f.loanId,recipientId:OWNER});
+ assert.equal(same.status,200,same.data.error);
+ assert.equal(f.read().loans[0].collateralTrade.intentId,intent.intentId);
+ assert.equal(f.read().audit.filter(entry=>entry.event==='Collateral trade prepared').length,1);
+ const report={loanId:f.loanId,intentId:intent.intentId,uiTradeId:'11687899',reference:loan.reference};
+ const premature=await f.save(f.borrower,'recordCollateralTrade',report);
+ assert.equal(premature.status,400);assert.equal(f.read().loans[0].collateralTrade.status,'prepared');
+ assert.equal(f.read().loans[0].collateralTrade.uiTradeId,undefined);
+ const claimRevision=f.read().revision,claimRequest='claim-native-trade-once';
+ const claimed=await f.save(f.borrower,'claimCollateralTrade',{loanId:f.loanId,intentId:intent.intentId},claimRevision,claimRequest);
+ assert.equal(claimed.status,200,claimed.data.error);
+ assert.equal(f.read().loans[0].collateralTrade.status,'claimed');
+ assert.equal(f.read().loans[0].collateralTrade.uiTradeId,undefined);
+ const retry=await f.save(f.borrower,'claimCollateralTrade',{loanId:f.loanId,intentId:intent.intentId},claimRevision,claimRequest);
+ assert.equal(retry.status,200,retry.data.error);
+ const duplicate=await f.save(f.borrower,'claimCollateralTrade',{loanId:f.loanId,intentId:intent.intentId});
+ assert.equal(duplicate.status,400);assert.match(duplicate.data.error,/already been attempted/);
+ for(const changed of [{reference:'TLB-FORGED'},{uiTradeId:'https://www.torn.com/trade.php#step=view&ID=11687899'},{intentId:'wrong-intent'}]){
+  assert.equal((await f.save(f.borrower,'recordCollateralTrade',{...report,...changed})).status,400);
+  assert.equal(f.read().loans[0].collateralTrade.status,'claimed');
+ }
+ const created=await f.save(f.borrower,'recordCollateralTrade',report);
+ assert.equal(created.status,200,created.data.error);
+ assert.equal(f.read().loans[0].collateralTrade.status,'created');
+ assert.equal(f.read().loans[0].collateralTrade.uiTradeId,'11687899');
+ assert.equal(f.read().loans[0].collateralTrade.source,'Borrower browser observation');
+ assert.deepEqual(collateralTradeFinancialSnapshot(f.read()),financial);
+ assert.equal((await f.save(f.borrower,'recordCollateralTrade',report)).status,200);
+ assert.equal((await f.save(f.borrower,'recordCollateralTrade',{...report,uiTradeId:'11687900'})).status,400);
+ assert.equal((await f.save(f.borrower,'prepareCollateralTrade',{loanId:f.loanId,recipientId:OWNER})).status,400);
+ for(const event of ['Collateral trade prepared','Collateral trade creation requested','Collateral trade creation reported']){
+  assert.equal(f.read().audit.filter(entry=>entry.event===event).length,1);
+  assert.equal(collateralTradeEvents(f.env).filter(entry=>entry.event===event).length,1);
+ }
+ const reloaded=await call(f.env,'bank',{token:f.borrower});
+ assert.equal(reloaded.status,200,reloaded.data.error);
+ assert.equal(reloaded.data.state.loans[0].collateralTrade.uiTradeId,'11687899');
+ assert.equal(reloaded.data.state.loans[0].status,'approved');
+ assert.equal(reloaded.data.state.loans[0].collateralConfirmed,false);
+});
+
+test('collateral trade API rejects other borrowers, staff acting for borrowers, and disabled or self recipients',async()=>{
+ const f=await withdrawalScenario();
+ assert.equal((await call(f.env,'access',{token:f.owner,body:{action:'invite',lane:'faction',id:OTHER}})).status,200);
+ const other=(await login(f.env,'other')).data.token;
+ const before=f.read();
+ for(const token of [other,f.owner]){
+  const denied=await f.save(token,'prepareCollateralTrade',{loanId:f.loanId,recipientId:OWNER});
+  assert.equal(denied.status,400);assert.match(denied.data.error,/Only the borrower/);
+  assert.deepEqual(f.read(),before);
+ }
+ const disabled=f.read();disabled.staff.push({id:OTHER,name:'Disabled recipient',role:'staff',disabled:true});
+ f.env.DB.sqlite.prepare('UPDATE bank_state SET data=? WHERE id=?').run(JSON.stringify(disabled),'main');
+ for(const recipientId of [BORROWER,OTHER,'9999999']){
+  const denied=await f.save(f.borrower,'prepareCollateralTrade',{loanId:f.loanId,recipientId});
+  assert.equal(denied.status,400);assert.match(denied.data.error,/enabled receiving staff member/);
+  assert.deepEqual(f.read(),disabled);
+ }
+ assert.equal(f.read().loans[0].collateralTrade,undefined);
+ assert.equal(collateralTradeEvents(f.env).filter(entry=>entry.event.startsWith('Collateral trade')).length,0);
+});
+
+test('collateral trade API rejects pending, funded and withdrawn requests without changing their records',async()=>{
+ for(const status of ['pending','funded','withdrawn']){
+  const f=await withdrawalScenario(status!=='pending');
+  if(status==='funded'){
+   const ready=f.read(),loan=ready.loans[0];
+   loan.collateralConfirmed={by:OWNER,amount:loan.collateralRequired,reference:'TEST-RECEIVED-COLLATERAL'};
+   ready.collateral=[{id:'trade-test-custody',loanId:loan.id,borrowerId:BORROWER,event:'received',holder:OWNER,amount:loan.collateralRequired,reference:'TEST-RECEIVED-COLLATERAL',date:TB.today(),by:OWNER}];
+   f.env.DB.sqlite.prepare('UPDATE bank_state SET data=? WHERE id=?').run(JSON.stringify(ready),'main');
+   const funded=await f.save(f.owner,'fund',{id:f.loanId,reference:'TEST-COMPLETED-TRANSFER'});
+   assert.equal(funded.status,200,funded.data.error);assert.equal(f.read().loans[0].status,'active');
+  }else if(status==='withdrawn'){
+   assert.equal((await f.save(f.borrower,'withdrawApplication',{id:f.appId})).status,200);
+  }
+  const before=f.read(),eventCount=collateralTradeEvents(f.env).length;
+  const denied=await f.save(f.borrower,'prepareCollateralTrade',{loanId:f.loanId||f.appId,recipientId:OWNER});
+  assert.equal(denied.status,400,status);
+  assert.deepEqual(f.read(),before);
+  assert.equal(collateralTradeEvents(f.env).length,eventCount);
+ }
+});
+
+test('collateral trade claim rechecks recipient availability after preparation',async()=>{
+ const f=await withdrawalScenario(),state=f.read();
+ state.staff.push({id:OTHER,name:'Receiving staff',role:'staff'});
+ f.env.DB.sqlite.prepare('UPDATE bank_state SET data=? WHERE id=?').run(JSON.stringify(state),'main');
+ const prepared=await f.save(f.borrower,'prepareCollateralTrade',{loanId:f.loanId,recipientId:OTHER});
+ assert.equal(prepared.status,200,prepared.data.error);
+ const disabled=f.read(),intent=disabled.loans[0].collateralTrade;
+ disabled.staff.find(person=>person.id===OTHER).disabled=true;
+ f.env.DB.sqlite.prepare('UPDATE bank_state SET data=? WHERE id=?').run(JSON.stringify(disabled),'main');
+ const denied=await f.save(f.borrower,'claimCollateralTrade',{loanId:f.loanId,intentId:intent.intentId});
+ assert.equal(denied.status,400);assert.match(denied.data.error,/enabled receiving staff member/);
+ assert.deepEqual(f.read(),disabled);
+ assert.equal(collateralTradeEvents(f.env).filter(entry=>entry.event==='Collateral trade creation requested').length,0);
+});
+
+test('withdrawing a prepared request cancels its trade setup and prevents a later native submission claim',async()=>{
+ const f=await prepareTradeScenario();
+ const withdrawn=await f.save(f.borrower,'withdrawApplication',{id:f.appId});
+ assert.equal(withdrawn.status,200,withdrawn.data.error);
+ const before=f.read(),cancelled=before.loans[0].collateralTrade;
+ assert.equal(cancelled.status,'cancelled');assert.equal(cancelled.cancelledFrom,'prepared');
+ assert.equal(cancelled.cancellationRequired,false);assert.equal(cancelled.uiTradeId,undefined);
+ assert.equal((await f.save(f.borrower,'claimCollateralTrade',{loanId:f.loanId,intentId:f.intent.intentId})).status,400);
+ assert.equal((await f.save(f.borrower,'recordCollateralTrade',{loanId:f.loanId,intentId:f.intent.intentId,uiTradeId:'11687899',reference:f.intent.reference})).status,400);
+ assert.deepEqual(f.read(),before);
+ assert.equal(collateralTradeEvents(f.env).filter(entry=>entry.event==='Collateral trade creation requested').length,0);
+});
+
+test('collateral trade claims racing withdrawal commit only the winning state and activity event',async()=>{
+ for(const winner of ['claimCollateralTrade','withdrawApplication']){
+  const f=await prepareTradeScenario(),before=f.read(),revision=before.revision;
+  const requests={
+   claimCollateralTrade:{loanId:f.loanId,intentId:f.intent.intentId},
+   withdrawApplication:{id:f.appId}
+  };
+  const loser=winner==='claimCollateralTrade'?'withdrawApplication':'claimCollateralTrade';
+  const originalBatch=f.env.DB.batch;
+  f.env.DB.batch=async statements=>{
+   f.env.DB.batch=originalBatch;
+   const competing=await f.save(f.borrower,winner,requests[winner],revision,'trade-race-winner');
+   assert.equal(competing.status,200,competing.data.error);
+   return originalBatch.call(f.env.DB,statements);
+  };
+  const losing=await f.save(f.borrower,loser,requests[loser],revision,'trade-race-loser');
+  assert.equal(losing.status,409,losing.data.error);
+  const state=f.read(),withdrawn=winner==='withdrawApplication';
+  assert.equal(state.revision,revision+1);
+  assert.equal(state.applications[0].status,withdrawn?'withdrawn':'approved');
+  assert.equal(state.loans[0].status,withdrawn?'withdrawn':'approved');
+  assert.equal(state.loans[0].collateralTrade.status,withdrawn?'cancelled':'claimed');
+  assert.equal(state.loans[0].collateralTrade.uiTradeId,undefined);
+  assert.deepEqual(state.ledger,before.ledger);assert.deepEqual(state.collateral,before.collateral);
+  assert.equal(state.loans[0].issuer,null);assert.equal(state.loans[0].collateralConfirmed,false);
+  for(const events of [state.audit,collateralTradeEvents(f.env)]){
+   assert.equal(events.filter(entry=>entry.event==='Application withdrawn').length,withdrawn?1:0);
+   assert.equal(events.filter(entry=>entry.event==='Collateral trade creation requested').length,withdrawn?0:1);
+  }
+  if(withdrawn){
+   assert.equal((await f.save(f.borrower,'claimCollateralTrade',requests.claimCollateralTrade)).status,400);
+   assert.equal(f.read().loans[0].status,'withdrawn');
+  }
+ }
+});
+
+test('two collateral trade submission claims cannot both win the conditional database save',async()=>{
+ const f=await prepareTradeScenario(),revision=f.read().revision,payload={loanId:f.loanId,intentId:f.intent.intentId};
+ const originalBatch=f.env.DB.batch;
+ f.env.DB.batch=async statements=>{
+  f.env.DB.batch=originalBatch;
+  const first=await f.save(f.borrower,'claimCollateralTrade',payload,revision,'first-claim');
+  assert.equal(first.status,200,first.data.error);
+  return originalBatch.call(f.env.DB,statements);
+ };
+ const second=await f.save(f.borrower,'claimCollateralTrade',payload,revision,'second-claim');
+ assert.equal(second.status,409,second.data.error);
+ assert.equal(f.read().revision,revision+1);assert.equal(f.read().loans[0].collateralTrade.status,'claimed');
+ assert.equal(f.read().audit.filter(entry=>entry.event==='Collateral trade creation requested').length,1);
+ assert.equal(collateralTradeEvents(f.env).filter(entry=>entry.event==='Collateral trade creation requested').length,1);
+ const fresh=await f.save(f.borrower,'claimCollateralTrade',payload);
+ assert.equal(fresh.status,400);assert.match(fresh.data.error,/already been attempted/);
+});
+
+test('a native creation result arriving after withdrawal retains its Torn trade link for cancellation without reviving the loan',async()=>{
+ const f=await prepareTradeScenario();
+ assert.equal((await f.save(f.borrower,'claimCollateralTrade',{loanId:f.loanId,intentId:f.intent.intentId})).status,200);
+ const before=f.read(),revision=before.revision;
+ const report={loanId:f.loanId,intentId:f.intent.intentId,uiTradeId:'11687899',reference:f.intent.reference};
+ const originalBatch=f.env.DB.batch;
+ f.env.DB.batch=async statements=>{
+  f.env.DB.batch=originalBatch;
+  const withdrawn=await f.save(f.borrower,'withdrawApplication',{id:f.appId},revision,'withdraw-during-native-creation');
+  assert.equal(withdrawn.status,200,withdrawn.data.error);
+  return originalBatch.call(f.env.DB,statements);
+ };
+ const staleReport=await f.save(f.borrower,'recordCollateralTrade',report,revision,'stale-native-report');
+ assert.equal(staleReport.status,409,staleReport.data.error);
+ assert.equal(f.read().loans[0].status,'withdrawn');
+ assert.equal(f.read().loans[0].collateralTrade.status,'cancelled');
+ assert.equal(f.read().loans[0].collateralTrade.cancelledFrom,'claimed');
+ assert.equal(f.read().loans[0].collateralTrade.uiTradeId,undefined);
+ assert.equal(collateralTradeEvents(f.env).filter(entry=>entry.event==='Collateral trade creation reported').length,0);
+ const reported=await f.save(f.borrower,'recordCollateralTrade',report);
+ assert.equal(reported.status,200,reported.data.error);
+ const saved=f.read(),trade=saved.loans[0].collateralTrade;
+ assert.equal(saved.applications[0].status,'withdrawn');assert.equal(saved.loans[0].status,'withdrawn');
+ assert.equal(trade.status,'cancelled');assert.equal(trade.cancelledFrom,'claimed');
+ assert.equal(trade.uiTradeId,'11687899');assert.equal(trade.reference,f.intent.reference);
+ assert.equal(trade.cancellationRequired,true);assert.equal(trade.source,'Borrower browser observation');
+ assert.deepEqual(saved.ledger,before.ledger);assert.deepEqual(saved.collateral,before.collateral);
+ assert.deepEqual(saved.receipts,before.receipts);assert.equal(saved.loans[0].issuer,null);
+ assert.equal(saved.loans[0].collateralConfirmed,false);
+ const reloaded=await call(f.env,'bank',{token:f.borrower});
+ assert.equal(reloaded.data.state.loans[0].collateralTrade.uiTradeId,'11687899');
+ assert.equal(reloaded.data.state.loans[0].collateralTrade.cancellationRequired,true);
+ assert.equal((await f.save(f.borrower,'recordCollateralTrade',report)).status,200);
+ assert.equal((await f.save(f.borrower,'claimCollateralTrade',{loanId:f.loanId,intentId:f.intent.intentId})).status,400);
+ for(const events of [f.read().audit,collateralTradeEvents(f.env)]){
+  assert.equal(events.filter(entry=>entry.event==='Application withdrawn').length,1);
+  assert.equal(events.filter(entry=>entry.event==='Collateral trade reported after withdrawal').length,1);
+  assert.equal(events.filter(entry=>entry.event==='Collateral trade creation reported').length,0);
+ }
+});
+
+test('trade creation remains available after staff approval and for approved loans with zero or accepted collateral',async()=>{
+ for(const kind of ['staff-approved','zero-collateral','accepted-collateral']){
+  const f=await withdrawalScenario(kind!=='staff-approved');
+  if(kind==='staff-approved'){
+   const approved=await f.save(f.owner,'approve',{id:f.appId,amount:100e6,reason:'Staff reviewed application',checks:true});
+   assert.equal(approved.status,200,approved.data.error);
+   f.loanId=f.read().loans[0].id;
+   assert.equal(f.read().applications[0].decision.by,OWNER);
+  }
+  const state=f.read(),loan=state.loans[0];
+  if(kind==='zero-collateral')loan.collateralRequired=0;
+  if(kind==='accepted-collateral'){
+   loan.collateralConfirmed={by:OWNER,holder:OWNER,amount:loan.collateralRequired,reference:'TEST-PI-COLLATERAL'};
+   state.collateral=[{id:'existing-accepted-collateral',loanId:loan.id,borrowerId:BORROWER,kind:'pi_payment',event:'received',holder:OWNER,amount:loan.collateralRequired,reference:'TEST-PI-COLLATERAL',date:TB.today(),by:OWNER}];
+  }
+  f.env.DB.sqlite.prepare('UPDATE bank_state SET data=? WHERE id=?').run(JSON.stringify(state),'main');
+  const financial=collateralTradeFinancialSnapshot(state);
+  const prepared=await f.save(f.borrower,'prepareCollateralTrade',{loanId:f.loanId,recipientId:OWNER});
+  assert.equal(prepared.status,200,kind+': '+prepared.data.error);
+  const intent=f.read().loans[0].collateralTrade;
+  const claimed=await f.save(f.borrower,'claimCollateralTrade',{loanId:f.loanId,intentId:intent.intentId});
+  assert.equal(claimed.status,200,kind+': '+claimed.data.error);
+  const reported=await f.save(f.borrower,'recordCollateralTrade',{loanId:f.loanId,intentId:intent.intentId,uiTradeId:'11687899',reference:loan.reference});
+  assert.equal(reported.status,200,kind+': '+reported.data.error);
+  assert.equal(f.read().loans[0].collateralTrade.status,'created');
+  assert.deepEqual(collateralTradeFinancialSnapshot(f.read()),financial,kind);
+ }
+});
