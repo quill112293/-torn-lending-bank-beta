@@ -18,12 +18,12 @@ export default function CollateralItem({item,catalog,catalogStatus,loadCatalog,o
    try{
     const quote=await onQuote(itemId);
     if(cancelled)return;
-    onChange({itemId,reference:quote.reference,source:quote.source,checked:quote.checkedAt,savedEstimate:quote.savedEstimate===true});
+    onChange({itemId,reference:quote.reference,source:quote.source,checked:quote.checkedAt,savedEstimate:quote.savedEstimate===true,officialEstimate:quote.officialEstimate===true});
     setStatus('');
-   }catch{
+   }catch(error){
     if(!cancelled){
      setFailed(true);
-     setStatus('Market price unavailable. Staff can review this item.');
+     setStatus((error.message||'Market price unavailable.')+' Staff can review this item.');
     }
    }
   },400);
@@ -38,7 +38,7 @@ export default function CollateralItem({item,catalog,catalogStatus,loadCatalog,o
   if(value!==item.name||id!==item.itemId){
    setStatus('');
    setFailed(false);
-   onChange({name:value,itemId:id,reference:0,source:'',checked:'',savedEstimate:false});
+   onChange({name:value,itemId:id,reference:0,source:'',checked:'',savedEstimate:false,officialEstimate:false});
   }
  }
  const quantity=Number(item.qty);
@@ -64,8 +64,8 @@ export default function CollateralItem({item,catalog,catalogStatus,loadCatalog,o
    <label className='field'><span>Quantity</span><input type='number' min={1} step={1} value={item.qty} onChange={event=>onChange({qty:event.target.value})}/></label>
   </div>
   {item.reference>0?<div role='status'>
-   <p>{item.savedEstimate?'Last saved price':'Market price'} {formatMoney(item.reference)} each · {formatMoney(total)} total · {formatMoney(Math.floor(total*creditRate))} credited</p>
-   {item.savedEstimate&&<p className='muted'>Live pricing is unavailable. Submission requires a fresh price for automatic approval.</p>}
+   <p>{item.savedEstimate?'Last saved price':item.officialEstimate?'Torn market estimate':'Market price'} {formatMoney(item.reference)} each · {formatMoney(total)} total · {formatMoney(Math.floor(total*creditRate))} credited</p>
+   {(item.savedEstimate||item.officialEstimate)&&<p className='muted'>The bank checks for a live quote at submission. Staff review items without a live quote.</p>}
    {moreNeeded>0&&<p><strong>About {moreNeeded.toLocaleString('en-US')} more needed</strong> if you cover the remaining collateral with this item.</p>}
    {remainingCollateral===0&&<p>Estimated collateral requirement covered.</p>}
   </div>:

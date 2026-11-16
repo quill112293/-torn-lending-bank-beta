@@ -384,3 +384,25 @@ test('a market outage returns a labeled recent quote for previews and rejects ex
   else globalThis.caches=previousCaches;
  }
 });
+
+test('the official Torn item estimate works independently of Weav3r',async()=>{
+ const env=fixture(),token=(await login(env)).data.token;
+ const previousFetch=globalThis.fetch;
+ let reference=848650;
+ globalThis.fetch=async(url,options)=>{
+  if(new URL(url).pathname==='/v2/torn/206/items'){
+   assert.equal(options.headers.Authorization,'ApiKey '+'owner'.padEnd(16,'0'));
+   return Response.json({items:[{id:206,name:'Xanax',value:{market_price:reference}}]});
+  }
+  return previousFetch(url,options);
+ };
+ try{
+  const body={itemId:206,key:'owner'.padEnd(16,'0')};
+  const result=await call(env,'market',{token,body});
+  assert.equal(result.status,200,result.data.error);
+  assert.equal(result.data.reference,848650);
+  assert.equal(result.data.officialEstimate,true);
+  reference=0;
+  assert.equal((await call(env,'market',{token,body})).status,400);
+ }finally{globalThis.fetch=previousFetch;}
+});

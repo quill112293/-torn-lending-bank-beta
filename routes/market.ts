@@ -96,7 +96,17 @@ export function route(env){
   async POST(req:Request){
    try{
     const user=await srv.identity(req);
-    const {key}=await srv.body(req);
+    const {key,itemId}=await srv.body(req);
+    if(itemId!==undefined){
+     if(!Number.isSafeInteger(itemId)||itemId<1||itemId>999999)throw Error('Enter a Torn item ID.');
+     await srv.rateLimit(user.platformId+':market-estimate',15);
+     if(!env.TORN_CATALOG_API_KEY)await srv.ownKey(key,user.torn_id);
+     const result=await srv.torn(env.TORN_CATALOG_API_KEY||key,'torn/'+itemId+'/items');
+     const item=Array.isArray(result.items)?result.items.find(entry=>entry.id===itemId):null;
+     const reference=item?.value?.market_price;
+     if(!Number.isSafeInteger(reference)||reference<=0)throw Error('Torn has no market price for this item.');
+     return srv.response({itemId,name:item.name,reference,source:'Torn catalog market price',checkedAt:new Date().toISOString(),officialEstimate:true});
+    }
     const cache=globalThis.caches?.default;
     const cacheKey=new Request(new URL('/catalog-cache/v1/torn-items',req.url));
     try{
