@@ -1,8 +1,9 @@
-import React from 'react';
+import React,{useEffect,useRef} from 'react';
 import {createRoot} from 'react-dom/client';
 import ExpectedCollateral from './ExpectedCollateral';
 import TradeFlowForm,{tradeFlowLabels} from './TradeFlowForm';
 import {createNativeTradeAccept} from './trade-accept.js';
+import {readCreatedTradeReview,clearCreatedTradeReview} from './trade-handoff.js';
 import {createTradeLoanDetailsController,readTradeLoanContext,tradeDetailLoans,tradeLoanSelectionNotice,loanTradeActions} from './trade-loan-match.js';
 
 const money=value=>Number.isSafeInteger(value)&&value>=0?'$'+value.toLocaleString('en-US'):'Unavailable';
@@ -41,6 +42,8 @@ function TradeProgress({data,loan}){
 }
 
 export function TradeLoanDetails({model,onOpen=()=>{},onRefresh=()=>{},onSelect=()=>{},onBeginReview=()=>{},onCancelReview=()=>{},onSubmitReview=()=>{}}){
+ const reviewFeedback=useRef(null);
+ useEffect(()=>{if(!model.reviewError)return;const node=reviewFeedback.current;node?.focus({preventScroll:true});node?.scrollIntoView?.({block:'nearest',inline:'nearest'});},[model.reviewError]);
  const loans=tradeDetailLoans(model.data),loan=loans.find(record=>record.id===model.selectedLoanId);
  const notice=tradeLoanSelectionNotice(loan,loans,model.context);
  const isStaff=['owner','vault','staff'].includes(model.data?.role);
@@ -55,7 +58,6 @@ export function TradeLoanDetails({model,onOpen=()=>{},onRefresh=()=>{},onSelect=
    <div className='actions'><button className='secondary' type='button' disabled={model.loading||model.saving} onClick={onRefresh}>Refresh loan details</button><a className='secondary' href={bankUrl}>Open bank</a></div>
    {model.loading&&<p role='status'>Loading your bank loans…</p>}
    {model.error&&<p role='alert' className='notice amber'>{model.error}</p>}
-   {model.reviewError&&<p role='alert' className='notice amber'>{model.reviewError}</p>}
    {model.success&&<p role='status' className='notice'>{model.success}</p>}
    {model.data&&<>
     <label className='field'>Select loan<select value={model.selectedLoanId} disabled={model.saving} onChange={event=>onSelect(event.target.value)}>
@@ -95,9 +97,10 @@ export function TradeLoanDetails({model,onOpen=()=>{},onRefresh=()=>{},onSelect=
      {eligible.complete&&!completion&&<p className='micro'>Finish both sides of Torn’s acceptance, then staff can verify the completed transfer.</p>}
      {!review&&<div className='actions'>{['refresh','reset'].filter(action=>eligible[action]).map(action=><button type='button' key={action} className='secondary' disabled={model.saving} onClick={()=>onBeginReview(action)}>{tradeFlowLabels[action]}</button>)}</div>}
      {review&&<TradeFlowForm key={loan.id+':'+review.action} action={review.action} loan={loan} keyRole={String(loan.borrowerId)===String(model.data.user.id)?'Borrower':'Lender'} piAllowed={eligible.piAllowed} savedKeyAvailable={!!model.savedKeyAvailable} saving={!!model.saving} onSubmit={onSubmitReview} onCancel={onCancelReview}/>}
-     <p className='micro'>Use this panel to compare the saved request with Torn. Selecting a loan does not accept a trade or verify receipt.</p>
     </>}
    </>}
+   {model.reviewError&&<p ref={reviewFeedback} tabIndex={-1} role='alert' className='notice amber'>{model.reviewError}</p>}
+   {loan&&<p className='micro'>Use this panel to compare the saved request with Torn. Selecting a loan does not accept a trade or verify receipt.</p>}
   </div>
  </details>;
 }
@@ -122,13 +125,16 @@ export function installTradeLoanDetails({document,window,transport,css=''}){
  let controller;
  const readContext=()=>readTradeLoanContext(document,window.location.href),nativeAccept=createNativeTradeAccept({document,window,readContext});
  const render=model=>root.render(<TradeLoanDetails model={model} onOpen={open=>controller.setOpen(open)} onRefresh={()=>controller.refresh()} onSelect={id=>controller.select(id)} onBeginReview={action=>controller.beginReview(action)} onCancelReview={()=>controller.cancelReview()} onSubmitReview={input=>controller.submitReview(input)}/>);
- controller=createTradeLoanDetailsController({transport,readContext,nativeAccept,onChange:render});
+ let reviewStorage;try{reviewStorage=window.sessionStorage;}catch{}
+ controller=createTradeLoanDetailsController({transport,readContext,nativeAccept,onChange:render,onCreatedTradeReviewConsumed:detail=>clearCreatedTradeReview(reviewStorage,detail)});
  render(controller.getState());
  let timer=null;
  const update=()=>{timer=null;const context=readTradeLoanContext(document,window.location.href);if(host.hidden===context.page)host.hidden=!context.page;controller.contextChanged();};
  const schedule=()=>{if(timer===null)timer=window.setTimeout(update,80);};
  const observer=new window.MutationObserver(schedule);
  observer.observe(document.documentElement,{subtree:true,childList:true,characterData:true,attributes:true,attributeFilter:['uid','name','value','hidden','aria-hidden','style','class','href','disabled','aria-disabled']});
- window.addEventListener('hashchange',update);window.addEventListener('popstate',update);window.addEventListener('pageshow',update);
- return {dispose(){controller.dispose();observer.disconnect();if(timer!==null)window.clearTimeout(timer);window.removeEventListener('hashchange',update);window.removeEventListener('popstate',update);window.removeEventListener('pageshow',update);root.unmount();host.remove();}};
+ const created=event=>controller.openCreatedTrade(event.detail);
+ window.addEventListener('hashchange',update);window.addEventListener('popstate',update);window.addEventListener('pageshow',update);window.addEventListener('tlb:loan-trade-created',created);
+ const pendingReview=readCreatedTradeReview(reviewStorage,window.location.href);if(pendingReview)controller.openCreatedTrade(pendingReview);
+ return {dispose(){controller.dispose();observer.disconnect();if(timer!==null)window.clearTimeout(timer);window.removeEventListener('hashchange',update);window.removeEventListener('popstate',update);window.removeEventListener('pageshow',update);window.removeEventListener('tlb:loan-trade-created',created);root.unmount();host.remove();}};
 }

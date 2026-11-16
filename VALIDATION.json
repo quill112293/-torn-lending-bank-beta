@@ -1,9 +1,9 @@
 {
   "channel": "beta",
-  "version": "1.1.0-beta.66",
-  "basedOn": "1.1.0-beta.65",
+  "version": "1.1.0-beta.67",
+  "basedOn": "1.1.0-beta.66",
   "build": "passed",
-  "tests": 414,
+  "tests": 429,
   "workerPackaging": "Production build and Wrangler 4.92.0 deploy --dry-run passed against the configured beta Worker and its dedicated database binding. Encrypted push delivery passed in local workerd with the existing 2026-05-22 runtime-test compatibility date.",
   "sessionChecks": [
     "No time limit, including simulated ten-year passage",
@@ -207,6 +207,48 @@
     "newTransport": 1,
     "totalNew": 62,
     "fullSuite": 414,
+    "encryptedPushRuntime": "passed",
+    "workerDryRun": "passed",
+    "validatedIn": "1.1.0-beta.66 baseline; retained in beta.67 full suite"
+  },
+  "tradeConfirmationClickFix": {
+    "result": "passed",
+    "reportedEvidence": "User screenshot shows the enabled initial Confirm collateral placed button with no review form, with the long panel scrolled below its earlier feedback area. The exact native trade heading on that phone was not captured.",
+    "checks": [
+      "An unclassified native heading can open a non-Accept review only with an exact saved native trade ID. Both borrower and receiving-staff paths pass; opening performs no write.",
+      "Explicit description, recognizable TLB reference, native ID, account and ambiguity conflicts retain their blockers. Classification changes invalidate a pending review. Native Accept remains strict.",
+      "Refusal feedback is beside the action area and focused/scrolled into view; opened forms focus their heading.",
+      "Required terms and placement confirmation, missing/malformed keys and malformed optional API IDs display specific inline alerts without a request. Corrected input submits once; no native validation popup is required.",
+      "Temporary replacement keys remain only in their password field during local corrections and clear before a valid controller submission. They never enter error state, messages, storage or diagnostics."
+    ],
+    "productionDOM": "Mounted minified production React with real bank CSS and a closed shadow root passed the screenshot-style refusal, generic-heading fallback, form focus, every required-field failure and single corrected submission.",
+    "limits": "Synthetic native DOM and visibility only; the exact phone page and live iPhone/Torn PDA interaction were not available."
+  },
+  "createdTradeReviewOpening": {
+    "result": "passed",
+    "checks": [
+      "Only an observed, recorded created trade for the current borrower emits an opening request. Start/list navigation opens that existing native trade on the same Torn origin.",
+      "The controller waits for the matching view page and performs a fresh bank read, validating saved loan, created intent, borrower, native ID, exact reference and initial eligibility before opening the form.",
+      "A 10-minute per-tab continuation contains only loan, intent, native trade and borrower identifiers. Expired/malformed/foreign-page data is rejected and consumption clears only the matching identity.",
+      "Repeated events, dismissal, another account/trade, a different manual loan selection, cancellation, funded results and advanced stages do not reopen the review.",
+      "Automatic opening never sets consent/check boxes, posts verification, initiates another trade, accepts a trade, or changes financial state."
+    ],
+    "productionDOM": {
+      "result": "passed",
+      "bankReads": 3,
+      "verificationPosts": 0,
+      "nativeAcceptClicks": 0,
+      "nativeFormSubmits": 0,
+      "scenarios": [
+        "ordinary collapsed load",
+        "fresh created-trade announcement",
+        "duplicate dismissed event",
+        "reload continuation",
+        "list-to-matching-detail continuation"
+      ]
+    },
+    "newPersistentTests": 15,
+    "fullSuite": 429,
     "encryptedPushRuntime": "passed",
     "workerDryRun": "passed"
   }

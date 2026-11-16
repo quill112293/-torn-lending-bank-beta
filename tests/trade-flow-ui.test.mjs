@@ -159,5 +159,13 @@ test('saving disables selector, refresh and review controls; wrong-loan review b
 
 test('review errors survive a closed form and native Accept feedback never becomes completion proof',()=>{
  const html=render(model({stage:'funds_reviewed',review:null,reviewError:'Trade permissions are missing. Enter a replacement key.',success:'Continue Torn confirmation. The bank has not marked the transfer complete.'}));
- assert.match(html,/<p role="alert"[^>]*>Trade permissions are missing/);assert.match(html,/<p role="status"[^>]*>Continue Torn confirmation/);assert.doesNotMatch(html,/aria-label="Completed loan trade"|<form/);
+ assert.match(html,/<p[^>]*tabindex="-1"[^>]*role="alert"[^>]*>Trade permissions are missing/);assert.match(html,/<p role="status"[^>]*>Continue Torn confirmation/);assert.doesNotMatch(html,/aria-label="Completed loan trade"|<form/);
+ assert.ok(html.indexOf('role="alert"')>html.indexOf('>Reset trade review</button>'),'review refusal stays beside the action area rather than above the loan selector');
+});
+
+test('placement forms expose app-managed validation while retaining explicit required fields and a focusable heading',()=>{
+ const html=render(model({role:'borrower',userId:BORROWER,reviewAction:'collateral-placed',savedKeyAvailable:false,loan:{borrowerConfirmed:false}}));
+ assert.match(html,/<form[^>]*noValidate=""/);assert.match(html,/<h3 tabindex="-1">Confirm collateral placed<\/h3>/);
+ for(const name of ['acceptTerms','checked','key'])assert.match(inputTag(html,name),/required=""/);
+ assert.match(inputTag(html,'tradeId'),/pattern="\[1-9\]\[0-9\]\*"/);assert.match(inputTag(html,'key'),/minLength="16"/);
 });

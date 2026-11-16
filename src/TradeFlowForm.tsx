@@ -1,5 +1,6 @@
-import React from 'react';
+import React,{useEffect,useId,useRef,useState} from 'react';
 import {customKeyLink} from './key-link.js';
+import {validTornKey} from './api-key.js';
 
 export const tradeFlowLabels={
  'collateral-placed':'Confirm collateral placed',
@@ -16,6 +17,11 @@ const money=value=>Number.isSafeInteger(value)&&value>=0?'$'+value.toLocaleStrin
 export default function TradeFlowForm({action,loan,keyRole='Borrower',piAllowed=false,savedKeyAvailable=false,saving=false,onSubmit=()=>{},onCancel=()=>{}}){
  const collateralReview=action==='collateral-reviewed',staffId=loan.tradeFlow?.staffId||loan.collateralTrade?.recipientId||loan.issuer;
  const needsTerms=action==='collateral-placed'&&!loan.borrowerConfirmed;
+ const [validation,setValidation]=useState(null),heading=useRef(null),formRef=useRef(null),validationId=useId();
+ useEffect(()=>{const node=heading.current;node?.focus({preventScroll:true});node?.scrollIntoView?.({block:'start',inline:'nearest'});},[]);
+ useEffect(()=>{if(!validation)return;const field=formRef.current?.elements.namedItem(validation.field);field?.focus({preventScroll:true});field?.closest('label')?.scrollIntoView?.({block:'nearest',inline:'nearest'});},[validation]);
+ const fieldFeedback=name=>validation?.field===name?{'aria-invalid':true,'aria-describedby':validationId}:{};
+ const fieldError=name=>validation?.field===name?<small id={validationId} style={{display:'block',color:'var(--amber)'}}>{validation.message}</small>:null;
  const credit=loan.rules?.itemCredit;
  const descriptions={
   'collateral-placed':'Place the listed cash and items in this same Torn trade. This check reads the open trade before recording that collateral is placed.',
@@ -40,14 +46,22 @@ export default function TradeFlowForm({action,loan,keyRole='Borrower',piAllowed=
  function submit(event){
   event.preventDefault();if(saving)return;
   const form=event.currentTarget,fields=new FormData(form);
+  const fail=(field,message)=>{setValidation({field,message});};
+  const tradeId=String(fields.get('tradeId')||'').trim(),key=String(fields.get('key')||'').trim();
+  if(needsTerms&&fields.get('acceptTerms')!=='on')return fail('acceptTerms','Tick the loan terms checkbox to accept the approved terms shown above.');
+  if(tradeId&&!/^[1-9]\d{0,15}$/.test(tradeId))return fail('tradeId','Enter a numeric Torn API trade ID of up to 16 digits, or leave it blank to find this loan’s trade.');
+  if(!key&&!savedKeyAvailable)return fail('key','Enter your 16-character Torn API key, or create a suitable key using the link below.');
+  if(key&&!validTornKey(key))return fail('key','The Torn API key must contain exactly 16 letters or numbers.');
+  if(fields.get('checked')!=='on')return fail('checked',action==='collateral-placed'?'Tick the placement checkbox to confirm you placed the listed collateral in this trade.':'Tick the trade confirmation checkbox above before continuing.');
+  setValidation(null);
   const input={key:String(fields.get('key')||''),tradeId:String(fields.get('tradeId')||''),checked:fields.get('checked')==='on',
    ...(needsTerms&&fields.get('acceptTerms')==='on'?{acceptTerms:true}:{}),
    ...(collateralReview?{itemReference:String(fields.get('itemReference')||''),piAmount:piAllowed?String(fields.get('piAmount')||''):'',notes:String(fields.get('notes')||'')}:{} )};
   form.elements.namedItem('key').value='';
   onSubmit(input);
  }
- return <form className='stack tight' aria-label={tradeFlowLabels[action]} aria-busy={saving} onSubmit={submit}>
-  <h3>{tradeFlowLabels[action]}</h3>
+ return <form ref={formRef} className='stack tight' aria-label={tradeFlowLabels[action]} aria-busy={saving} noValidate onSubmit={submit} onChange={event=>{if(event.target.name===validation?.field)setValidation(null);}}>
+  <h3 ref={heading} tabIndex={-1}>{tradeFlowLabels[action]}</h3>
   <p>{descriptions[action]}</p>
   <dl className='breakdown'>
    <div><dt>Exact trade description</dt><dd><strong>{loan.reference}</strong></dd></div>
@@ -66,18 +80,19 @@ export default function TradeFlowForm({action,loan,keyRole='Borrower',piAllowed=
     <div><dt>Repayment schedule</dt><dd>{loan.product==='regular'?(Number.isSafeInteger(loan.schedule)&&loan.schedule>0?'Every '+loan.schedule+' days':'Not recorded'):['house','bank'].includes(loan.product)?'Full repayment at maturity':'Not recorded'}</dd></div>
     {loan.product==='regular'&&<div><dt>Agreed installment</dt><dd>{money(loan.installment)}</dd></div>}
    </dl>
-   <label className='check'><input type='checkbox' name='acceptTerms' required disabled={saving}/><span>I accept the approved loan principal, interest rate, start date and repayment terms shown above for {loan.reference}.</span></label>
+   <label className='check'><input type='checkbox' name='acceptTerms' required disabled={saving} {...fieldFeedback('acceptTerms')}/><span>I accept the approved loan principal, interest rate, start date and repayment terms shown above for {loan.reference}.{fieldError('acceptTerms')}</span></label>
   </section>}
   {collateralReview&&<>
    <label className='field'><span>Accepted item market value</span><input name='itemReference' type='text' defaultValue='0' disabled={saving}/><small>Total reviewed market value of offered items{Number.isFinite(credit)?'; credited at '+(credit*100).toLocaleString('en-US')+'%':''}. Use 0 when no items are offered. Amounts such as 500k, 25m or 1b are accepted.</small></label>
    {piAllowed&&<label className='field'><span>Accepted PI payment value</span><input name='piAmount' type='text' defaultValue='0' disabled={saving}/><small>Optional eligible PI payment value, reviewed separately from the trade’s cash and items.</small></label>}
    <label className='field'><span>Item / PI valuation notes and source</span><textarea name='notes' rows={3} maxLength={1000} disabled={saving}/><small>Include reviewed values and their source when accepting item or PI payment collateral.</small></label>
   </>}
-  <label className='field'><span>Torn API trade ID (optional)</span><input name='tradeId' type='text' inputMode='numeric' pattern='[1-9][0-9]*' maxLength={16} disabled={saving} autoComplete='off'/><small>Leave blank to find the trade by this loan’s exact reference. If needed, enter its API trade ID. The page’s address may use a different number.</small></label>
+  <label className='field'><span>Torn API trade ID (optional)</span><input name='tradeId' type='text' inputMode='numeric' pattern='[1-9][0-9]*' maxLength={16} disabled={saving} autoComplete='off' {...fieldFeedback('tradeId')}/><small>Leave blank to find the trade by this loan’s exact reference. If needed, enter its API trade ID. The page’s address may use a different number.</small>{fieldError('tradeId')}</label>
   <p className='micro'>{savedKeyAvailable?'Saved Torn API key available. Leave the key field blank to use it for this check.':'Enter a Torn API key with trade and trades access for your current account.'}</p>
-  <label className='field'><span>{savedKeyAvailable?'Different Torn API key (optional)':'Torn API key'}</span><input name='key' type='password' minLength={16} maxLength={16} required={!savedKeyAvailable} autoComplete='off' disabled={saving}/><small>A key entered here is used only for this check and is not saved.</small></label>
+  <label className='field'><span>{savedKeyAvailable?'Different Torn API key (optional)':'Torn API key'}</span><input name='key' type='password' minLength={16} maxLength={16} required={!savedKeyAvailable} autoComplete='off' disabled={saving} {...fieldFeedback('key')}/><small>A key entered here is used only for this check and is not saved.</small>{fieldError('key')}</label>
   <a className='secondary left' href={customKeyLink(keyRole)} target='_blank' rel='noopener noreferrer'>Create suitable Torn key</a>
-  <label className='check'><input type='checkbox' name='checked' required disabled={saving}/><span>{confirmations[action]}</span></label>
+  <label className='check'><input type='checkbox' name='checked' required disabled={saving} {...fieldFeedback('checked')}/><span>{confirmations[action]}{fieldError('checked')}</span></label>
+  {validation&&<p className='notice amber' role='alert'>{validation.message}</p>}
   <div className='actions'><button type='submit' className='primary' disabled={saving}>{saving?'Checking trade…':tradeFlowLabels[action]}</button><button type='button' className='secondary' disabled={saving} onClick={onCancel}>Cancel review</button></div>
  </form>;
 }

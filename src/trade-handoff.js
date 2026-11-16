@@ -7,6 +7,7 @@ const uiId=value=>/^[1-9]\d{0,15}$/.test(String(value??''))?String(value):null;
 const need=(condition,message)=>{if(!condition)throw Error(message);};
 const normalized=value=>String(value??'').replace(/\s+/g,' ').trim();
 const resumeKey='tlb-beta-trade-observation';
+const reviewKey='tlb-beta-created-trade-review',reviewLifetime=10*60*1000;
 
 function tornTradePage(href){
  try{const url=new URL(href);return url.protocol==='https:'&&hosts.has(url.hostname)&&!url.port&&url.pathname==='/trade.php'&&!url.username&&!url.password;}catch{return false;}
@@ -131,6 +132,45 @@ export function readTradeResume(storage,href){
 
 export function rememberTradeResume(storage,handoff){
  try{storage.setItem(resumeKey,JSON.stringify({loanId:handoff.loanId,intentId:handoff.intentId,recipientId:handoff.recipientId}));return true;}catch{return false;}
+}
+
+function createdReviewDetail(value){
+ if(!value||!identifier(value.loanId)||!identifier(value.intentId)||!uiId(value.nativeTradeId)||!playerId(value.borrowerId))return null;
+ return {loanId:value.loanId,intentId:value.intentId,nativeTradeId:uiId(value.nativeTradeId),borrowerId:playerId(value.borrowerId)};
+}
+
+export function readCreatedTradeReview(storage,href,now=Date.now()){
+ if(!tornTradePage(href))return null;
+ try{
+  const value=JSON.parse(storage.getItem(reviewKey)),detail=createdReviewDetail(value);
+  return detail&&Number.isSafeInteger(value.expiresAt)&&value.expiresAt>now&&value.expiresAt<=now+reviewLifetime?detail:null;
+ }catch{return null;}
+}
+
+export function clearCreatedTradeReview(storage,detail){
+ try{
+  const pending=createdReviewDetail(JSON.parse(storage.getItem(reviewKey))),expected=createdReviewDetail(detail);
+  if(!pending||!expected||Object.keys(expected).some(key=>pending[key]!==expected[key]))return false;
+  storage.removeItem(reviewKey);return true;
+ }catch{return false;}
+}
+
+// This only opens the observed trade and asks Loan details to revalidate and
+// show its review form. It never sends a verification or an acceptance.
+export function announceCreatedTradeReview({document,window,storage,intent,now=Date.now()}){
+ const detail=createdReviewDetail({...intent,nativeTradeId:intent?.uiTradeId});
+ if(!detail||intent.status!=='created'||intent.cancellationRequired||intent.reportedAfterFunding||!tornTradePage(window.location.href)||window.top!==window.self||currentTornAccount(document)!==detail.borrowerId)return false;
+ const currentId=activeTradeId(window.location.href,window.location.href);
+ if(currentId&&currentId!==detail.nativeTradeId)return false;
+ const location=new URL(window.location.href),params=location.hash?new URLSearchParams(location.hash.slice(1)):location.searchParams;
+ if(currentId&&params.get('step')!=='view')return false;
+ try{storage.setItem(reviewKey,JSON.stringify({...detail,expiresAt:now+reviewLifetime}));}catch{}
+ try{window.dispatchEvent(new window.CustomEvent('tlb:loan-trade-created',{detail}));}catch{return false;}
+ if(!currentId){
+  const destination=new URL(tradeViewUrl(detail.nativeTradeId));destination.hostname=location.hostname;
+  try{window.location.assign(destination.href);}catch{}
+ }
+ return true;
 }
 
 function waitFor(probe,window,timeout=15000,onTimeout=()=>Error('The Torn trade screen is not ready.')){
@@ -309,7 +349,7 @@ export function installTradeHandoff({document,window,transport}){
  const title=document.createElement('strong'),reference=document.createElement('p'),message=document.createElement('p'),actions=document.createElement('div');
  title.textContent='Torn Lending Bank · Create a trade';message.textContent='Checking the approved loan and receiving lender…';
  box.append(title,reference,message,actions);document.body.prepend(box);
- let intent=null,observed=null,checking=false,attemptPending=!!remembered;
+ let intent=null,observed=null,checking=false,attemptPending=!!remembered,reviewAnnounced=false;
  const page=createTornTradePage(document,window);
  function link(text,url){const node=document.createElement('a');node.textContent=text;node.href=url;node.style.cssText='color:#facc15;margin-right:16px';actions.append(node);}
  function drawActions(checkAgain=false){
@@ -346,7 +386,8 @@ export function installTradeHandoff({document,window,transport}){
   else if(update.status==='observed')message.textContent='Torn is showing the trade. Saving its link to your loan…';
   else if(update.status==='recorded'){
    page.dispose();attemptPending=false;try{storage.removeItem(resumeKey);}catch{}
-   message.textContent=intent.cancellationRequired||intent.status==='cancelled'?'This loan request was withdrawn. Open the Torn trade and cancel it; the bank request remains withdrawn.':intent.reportedAfterFunding?'The trade link is saved. Loan funding is already recorded; review any open trade with the receiving lender.':'Your loan trade is created with the reference shown above. Open Loan details on the trade page to confirm collateral placed, review the loan funds and complete the trade checks with staff.';
+   message.textContent=intent.cancellationRequired||intent.status==='cancelled'?'This loan request was withdrawn. Open the Torn trade and cancel it; the bank request remains withdrawn.':intent.reportedAfterFunding?'The trade link is saved. Loan funding is already recorded; review any open trade with the receiving lender.':'Your loan trade is created with the reference shown above. Its collateral review opens in Loan details. Add the required collateral in this trade, then confirm it in the review form.';
+   if(!reviewAnnounced)reviewAnnounced=announceCreatedTradeReview({document,window,storage,intent});
   }
   drawActions();
  }

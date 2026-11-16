@@ -18,7 +18,7 @@ function deferred(){let resolve,reject;const promise=new Promise((yes,no)=>{reso
 const tick=async()=>{for(let i=0;i<5;i++)await Promise.resolve();};
 function scenario(action='collateral-placed'){
  const [stage,actor]=kinds[action]||['funds_reviewed',OWNER];
- const f={data:data(stage,actor),action,key:KEY,calls:[],models:[],readCount:0,onRead:null,onWrite:null,nativeClicks:0,nativeReady:true};
+ const f={data:data(stage,actor),action,key:KEY,calls:[],models:[],consumedCreated:[],readCount:0,onRead:null,onWrite:null,nativeClicks:0,nativeReady:true};
  f.context={page:true,route:'https://www.torn.com/trade.php#step=view&ID='+NATIVE,accountId:actor,tradeId:NATIVE,reference:REFERENCE,ambiguous:false};
  f.result=(payload)=>{
   const loan=f.data.state.loans.find(record=>record.id===payload.loanId);
@@ -37,11 +37,139 @@ function scenario(action='collateral-placed'){
   assert.equal(path,'loan-trade');const override=await f.onWrite?.(payload,f);return override??f.result(payload);
  }};
  const nativeAccept={availability:()=>({ready:f.nativeReady,reason:f.nativeReady?'':'Native control unavailable.'}),accept(input){assert.equal(input.flow.apiTradeId,API);assert.equal(input.tradeCheck.ready,true);f.nativeClicks++;return {message:'Continue Torn confirmation. The bank has not marked the transfer complete.'};}};
- f.controller=createTradeLoanDetailsController({transport,readContext:()=>f.context,nativeAccept,onChange:model=>f.models.push(JSON.stringify(model))});
+ f.controller=createTradeLoanDetailsController({transport,readContext:()=>f.context,nativeAccept,onChange:model=>f.models.push(JSON.stringify(model)),onCreatedTradeReviewConsumed:detail=>f.consumedCreated.push(clone(detail))});
  f.open=async()=>{await f.controller.setOpen(true);assert.equal(f.controller.getState().selectedLoanId,'LOAN-1');};
  f.input={checked:true,...(action==='collateral-reviewed'?{itemReference:'12m',piAmount:'2m',notes:'Reviewed exact quantities and accepted values.'}:{})};
  f.posts=()=>f.calls.filter(call=>call.path!=='bank');return f;
 }
+
+function createdTrade(f){
+ const loan=f.data.state.loans[0];
+ Object.assign(loan.collateralTrade,{intentId:'TRADE-1',loanId:loan.id,borrowerId:loan.borrowerId,reference:loan.reference,status:'created'});
+ return {loanId:loan.id,intentId:'TRADE-1',nativeTradeId:NATIVE,borrowerId:loan.borrowerId};
+}
+
+test('an observed newly created own trade opens its review once after a fresh read, without consent or writes',async()=>{
+ const f=scenario(),detail=createdTrade(f);delete f.data.state.loans[0].borrowerConfirmed;
+ const before=clone(f.data);f.context={...f.context,reference:'Trade',referenceEvidence:'unclassified'};
+ assert.equal(await f.controller.openCreatedTrade(detail),true);
+ const model=f.controller.getState();assert.equal(model.open,true);assert.equal(model.selectedLoanId,'LOAN-1');
+ assert.deepEqual(model.review,{action:'collateral-placed',loanId:'LOAN-1'});assert.deepEqual(f.calls.map(call=>call.path),['bank']);
+ assert.deepEqual(f.data,before);assert.equal(model.data.state.loans[0].borrowerConfirmed,undefined);assert.equal(f.posts().length,0);assert.equal(f.nativeClicks,0);
+ assert.deepEqual(f.consumedCreated,[detail]);
+ await f.controller.setOpen(false);await f.controller.setOpen(true);const reads=f.calls.length;
+ assert.equal(f.controller.getState().review,null);assert.equal(await f.controller.openCreatedTrade(detail),false);assert.equal(f.calls.length,reads);
+});
+
+test('observed creation waits for its matching native detail without polling and cancels on an explicit close or different trade',async()=>{
+ for(const outcome of ['matching','close','different','account']){
+  const f=scenario(),detail=createdTrade(f),matching={...f.context};
+  f.context={...f.context,route:'https://www.torn.com/trade.php#step=start',tradeId:null,reference:null};
+  assert.equal(await f.controller.openCreatedTrade(detail),false);await f.controller.contextChanged();
+  assert.equal(f.calls.length,0);assert.equal(f.controller.getState().open,false);assert.equal(f.consumedCreated.length,0);
+  if(outcome==='close')await f.controller.setOpen(false);
+  if(outcome==='different'||outcome==='account'){
+   f.context={...matching,...(outcome==='different'?{tradeId:'11687900',reference:'TLB-SECOND'}:{accountId:OTHER})};
+   await f.controller.contextChanged();assert.equal(f.calls.length,0);assert.equal(f.consumedCreated.length,1);
+  }
+  f.context=matching;await f.controller.contextChanged();
+  assert.equal(!!f.controller.getState().review,outcome==='matching');assert.equal(f.calls.length,outcome==='matching'?1:0);
+  assert.equal(f.posts().length,0);assert.equal(f.nativeClicks,0);assert.equal(f.consumedCreated.length,1);
+ }
+});
+
+test('created-trade events are bound to fresh saved intent, own borrower, native identity and the initial stage',async()=>{
+ const mutations=[
+  f=>{f.data.state.loans[0].collateralTrade.status='prepared';},
+  f=>{f.data.state.loans[0].collateralTrade.intentId='TRADE-OTHER';},
+  f=>{f.data.state.loans[0].collateralTrade.loanId='LOAN-2';},
+  f=>{f.data.state.loans[0].collateralTrade.uiTradeId='11687900';},
+  f=>{f.data.state.loans[0].collateralTrade.borrowerId=OTHER;},
+  f=>{f.data.state.loans[0].collateralTrade.reference='TLB-OTHER';},
+  f=>{f.data.state.loans[0].collateralTrade.cancellationRequired=true;},
+  f=>{f.data.state.loans[0].status='withdrawn';},
+  f=>{f.data.state.loans[0].borrowerId=OTHER;},
+  f=>{f.data.state.loans[0].tradeFlow={stage:'collateral_placed'};},
+  f=>{f.data.user.id=OTHER;},
+  f=>{f.context.reference='TLB-OTHER';f.context.referenceEvidence='loan-reference';},
+  f=>{f.context.reference='An unrelated item sale';f.context.referenceEvidence='description';},
+  f=>{f.context.ambiguous=true;},
+  f=>{f.context.accountId=OWNER;},
+  ...['accept','accept2','cancel'].map(step=>f=>{f.context.route='https://www.torn.com/trade.php#step='+step+'&ID='+NATIVE;})
+ ];
+ for(const mutate of mutations){
+  const f=scenario(),detail=createdTrade(f);mutate(f);
+  assert.equal(await f.controller.openCreatedTrade(detail),false);assert.equal(f.controller.getState().review,null);
+  assert.equal(f.posts().length,0);assert.equal(f.nativeClicks,0);assert.equal(f.consumedCreated.length,1);
+ }
+ const unknown=scenario(),detail=createdTrade(unknown);detail.loanId='LOAN-UNKNOWN';
+ assert.equal(await unknown.controller.openCreatedTrade(detail),false);assert.equal(unknown.controller.getState().review,null);
+});
+
+test('duplicate created events and cancellation during the fresh read never reopen or submit a stale review',async()=>{
+ for(const cancel of [false,true]){
+  const f=scenario(),detail=createdTrade(f),pending=deferred();f.onRead=()=>pending.promise;
+  const opening=f.controller.openCreatedTrade(detail);await tick();
+  assert.equal(await f.controller.openCreatedTrade({...detail,key:REPLACEMENT}),false);assert.equal(f.calls.length,1);
+  if(cancel)await f.controller.setOpen(false);
+  pending.resolve(clone(f.data));assert.equal(await opening,!cancel);
+  assert.equal(!!f.controller.getState().review,!cancel);assert.equal(f.posts().length,0);assert.equal(f.consumedCreated.length,1);
+  assert.equal(JSON.stringify(f.consumedCreated).includes(REPLACEMENT),false);
+ }
+ const busy=scenario(),detail=createdTrade(busy);await busy.open();busy.controller.beginReview(busy.action);
+ assert.equal(await busy.controller.openCreatedTrade(detail),false);assert.equal(busy.calls.length,1);assert.ok(busy.controller.getState().review);
+ const other=scenario(),event=createdTrade(other);other.data.role='owner';other.data.state.loans[1].borrowerId=BORROWER;await other.open();other.controller.select('LOAN-2');
+ assert.equal(await other.controller.openCreatedTrade(event),false);assert.equal(other.calls.length,1);assert.equal(other.controller.getState().selectedLoanId,'LOAN-2');assert.equal(other.controller.getState().review,null);
+});
+
+test('both participants can open a non-Accept review from an unclassified heading only with their saved native trade ID',async()=>{
+ for(const action of ['collateral-placed','collateral-reviewed']){
+  const f=scenario(action);f.context={...f.context,reference:'Current trade',referenceEvidence:'unclassified'};
+  await f.controller.setOpen(true);f.controller.select('LOAN-1');
+  assert.equal(loanTradeActions(f.data,f.data.state.loans[0])[action],true);
+  assert.equal(f.controller.beginReview(action),true,action);
+  assert.deepEqual(f.controller.getState().review,{action,loanId:'LOAN-1'});
+  assert.deepEqual(f.calls.map(call=>call.path),['bank']);assert.equal(f.posts().length,0);
+  await f.controller.submitReview(f.input);
+  assert.deepEqual(f.calls.map(call=>call.path),['bank','bank','loan-trade']);
+  assert.equal(f.posts()[0].payload.loanId,'LOAN-1');assert.equal(Object.hasOwn(f.posts()[0].payload,'tradeId'),false);
+  assert.equal(Object.hasOwn(f.posts()[0].payload,'nativeTradeId'),false);
+ }
+});
+
+test('unclassified-heading fallback preserves real description, reference, ambiguity, native ID and account conflicts',async()=>{
+ const changes=[
+  f=>{f.context.reference='TLB-OTHER';f.context.referenceEvidence='loan-reference';},
+  f=>{f.context.reference='Trade TLB-OTHER awaiting acceptance';f.context.referenceEvidence='loan-reference';},
+  f=>{f.context.reference='An unrelated item sale';f.context.referenceEvidence='description';},
+  f=>{f.context.referenceEvidence='description';},
+  f=>{delete f.context.referenceEvidence;},
+  f=>{f.context.ambiguous=true;},
+  f=>{f.context.tradeId='11687900';},
+  f=>{f.context.tradeId=null;},
+  f=>{delete f.data.state.loans[0].collateralTrade.uiTradeId;if(f.data.state.loans[0].tradeFlow)delete f.data.state.loans[0].tradeFlow.nativeTradeId;},
+  f=>{f.context.accountId=OTHER;},
+  f=>{f.data.user.id=OTHER;f.context.accountId=OTHER;f.data.role='staff';}
+ ];
+ for(const action of ['collateral-placed','collateral-reviewed'])for(const mutate of changes){
+  const f=scenario(action);f.context={...f.context,reference:'Trade',referenceEvidence:'unclassified'};mutate(f);
+  await f.controller.setOpen(true);f.controller.select('LOAN-1');
+  assert.equal(f.controller.beginReview(action),false,action);assert.equal(f.controller.getState().review,null);
+  await f.controller.submitReview(f.input);assert.equal(f.posts().length,0);
+ }
+});
+
+test('Accept remains strict and changed heading evidence invalidates an in-flight review',async()=>{
+ const accept=scenario('accept-ready');accept.context={...accept.context,reference:'Trade',referenceEvidence:'unclassified'};
+ await accept.controller.setOpen(true);accept.controller.select('LOAN-1');
+ assert.equal(accept.controller.beginReview('accept-ready'),false);await accept.controller.submitReview({checked:true});
+ assert.equal(accept.posts().length,0);assert.equal(accept.nativeClicks,0);
+ const f=scenario(),pending=deferred();f.context={...f.context,reference:'Trade',referenceEvidence:'unclassified'};
+ await f.controller.setOpen(true);f.controller.select('LOAN-1');assert.equal(f.controller.beginReview(f.action),true);
+ f.onRead=n=>n===2?pending.promise:undefined;const submit=f.controller.submitReview(f.input);await tick();
+ f.context={...f.context,referenceEvidence:'description'};pending.resolve(clone(f.data));await submit;
+ assert.equal(f.posts().length,0);assert.equal(f.controller.getState().success,'');
+});
 
 test('roles follow the same-trade stages and only the bound receiving staff can review or fund',()=>{
  for(const [action,[stage,actor]] of Object.entries(kinds)){

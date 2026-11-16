@@ -86,14 +86,14 @@ test('automatic selection requires a unique exact reference or saved native trad
  assert.match(tradeLoanSelectionNotice(loans[1],loans,context({reference:null,tradeId:null})).text,/Manually selected loan/);
 });
 
-function nativeDocument({account=OWNER,reference=REFERENCE,hidden=false,extraHeading=false}={}){
+function nativeDocument({account=OWNER,reference=REFERENCE,headingText,hidden=false,extraHeading=false}={}){
  const document={defaultView:{getComputedStyle:()=>({display:'block',visibility:'visible'})}};
  function element(children=[],changes={}){
   const node={nodeType:1,ownerDocument:document,hidden:false,parentElement:null,classList:{contains:()=>false},getClientRects:()=>[{}],closest(){for(let parent=this;parent;parent=parent.parentElement)if(parent.hidden)return parent;return null;},childNodes:[],...changes};
   node.childNodes=children.map(child=>typeof child==='string'?{nodeType:3,textContent:child}:child);for(const child of node.childNodes)child.parentElement=node;
   return node;
  }
- const heading=element(['Description: '+reference],{hidden});
+ const heading=element([headingText??'Description: '+reference],{hidden});
  const root=element([heading]);root.querySelectorAll=selector=>{assert.equal(selector,':scope > .title-black');return extraHeading?[heading,element([REFERENCE])]:[heading];};
  const accountNode={getAttribute:()=>account};
  document.querySelectorAll=selector=>selector==='script[uid][name]'?account?[accountNode]:[]:selector==='#torn-user'?[]:selector==='#trade-container'?[root]:(assert.fail('Unexpected native selector '+selector));
@@ -102,7 +102,7 @@ function nativeDocument({account=OWNER,reference=REFERENCE,hidden=false,extraHea
 
 test('native context reads only the visible opened-trade description and uses exact account and numeric IDs',()=>{
  const f=nativeDocument(),href=page+'#step=view&ID=11687899';
- assert.deepEqual(readTradeLoanContext(f.document,href),context({route:href}));
+ assert.deepEqual(readTradeLoanContext(f.document,href),context({route:href,referenceEvidence:'description'}));
  assert.equal(readTradeLoanContext(f.document,page+'#step=view&ID=11687899&ID=2').tradeId,null);
  assert.equal(readTradeLoanContext(f.document,page+'#step=start&ID=11687899').tradeId,null);
  assert.equal(readTradeLoanContext(f.document,page+'#step=view&ID=javascript%3Aalert(1)').tradeId,null);
@@ -113,6 +113,23 @@ test('native context reads only the visible opened-trade description and uses ex
  for(const address of ['https://evil.example/trade.php','https://www.torn.com/bank.php','http://www.torn.com/trade.php'])assert.equal(readTradeLoanContext(f.document,address).page,false);
  const badge=f.element([' Wrong reference'],{classList:{contains:name=>name==='trade-status-indicator'}});badge.parentElement=f.heading;f.heading.childNodes.push(badge);
  assert.equal(readTradeLoanContext(f.document,href).reference,REFERENCE);
+});
+
+test('native headings distinguish explicit descriptions and embedded loan references from unclassified text',()=>{
+ const href=page+'#step=view&ID=11687899';
+ for(const [headingText,referenceEvidence,reference] of [
+  ['Trade','unclassified','Trade'],
+  ['Current trade with borrower','unclassified','Current trade with borrower'],
+  ['Description: An unrelated item sale','description','An unrelated item sale'],
+  ['Trade description: Trade','description','Trade'],
+  [REFERENCE,'loan-reference',REFERENCE],
+  ['Trade '+REFERENCE+' awaiting acceptance','loan-reference','Trade '+REFERENCE+' awaiting acceptance'],
+  ['',null,null]
+ ]){
+  const result=readTradeLoanContext(nativeDocument({headingText}).document,href);
+  assert.equal(result.referenceEvidence,referenceEvidence,headingText);assert.equal(result.reference,reference,headingText);
+ }
+ assert.equal(readTradeLoanContext(nativeDocument({headingText:'Trade',extraHeading:true}).document,href).ambiguous,true);
 });
 
 test('controller fetches only on open and explicit refresh, automatically selects the linked loan and supports manual choice',async()=>{

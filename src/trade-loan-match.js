@@ -19,12 +19,13 @@ function renderedText(node){
  return [...node.childNodes].map(renderedText).join('');
 }
 
-// Only the native opened-trade heading is a description source. Chat, logs,
-// userscript content and arbitrary TLB references elsewhere on the page are not.
+// Read only the native opened-trade heading. An explicit description or loan
+// reference is stronger evidence than an otherwise unclassified heading.
+// Chat, logs and arbitrary references elsewhere on the page are not read.
 export function readTradeLoanContext(document,href){
- let url;try{url=new URL(href);}catch{return {page:false,route:'',accountId:null,tradeId:null,reference:null,ambiguous:false};}
+ let url;try{url=new URL(href);}catch{return {page:false,route:'',accountId:null,tradeId:null,reference:null,referenceEvidence:null,ambiguous:false};}
  const page=url.protocol==='https:'&&hosts.has(url.hostname)&&!url.port&&!url.username&&!url.password&&url.pathname==='/trade.php';
- const context={page,route:url.href,accountId:null,tradeId:null,reference:null,ambiguous:false};
+ const context={page,route:url.href,accountId:null,tradeId:null,reference:null,referenceEvidence:null,ambiguous:false};
  if(!page)return context;
  context.accountId=currentTornAccount(document);
  const params=url.hash?new URLSearchParams(url.hash.slice(1)):url.searchParams;
@@ -35,9 +36,10 @@ export function readTradeLoanContext(document,href){
   const headings=[...roots[0].querySelectorAll(':scope > .title-black')].filter(visible);
   if(headings.length>1)context.ambiguous=true;
   if(headings.length===1){
-   const reference=normalized(renderedText(headings[0])).replace(/^(?:trade\s+)?description\s*:\s*/i,'');
-   // Preserve a non-loan description too: it must contradict a saved trade
-   // link rather than silently allowing that link to select a different loan.
+   const heading=normalized(renderedText(headings[0])),description=/^(?:trade\s+)?description\s*:\s*/i;
+   const reference=heading.replace(description,'');
+   context.referenceEvidence=description.test(heading)?'description':/\bTLB-[a-z0-9]/i.test(heading)?'loan-reference':heading?'unclassified':null;
+   // Keep the full reference for selection notices and strict native Accept.
    context.reference=reference||null;
   }
  }
@@ -79,7 +81,7 @@ export function tradeLoanSelectionNotice(loan,loans,context){
  return {tone:'amber',text:'Manually selected loan. Compare its reference and borrower with Torn’s trade description and participants.'};
 }
 
-const contextKey=context=>JSON.stringify([context.page,context.route,context.accountId,context.tradeId,context.reference,context.ambiguous]);
+const contextKey=context=>JSON.stringify([context.page,context.route,context.accountId,context.tradeId,context.reference,context.referenceEvidence,context.ambiguous]);
 const linkedNativeId=loan=>String(loan?.tradeFlow?.nativeTradeId??loan?.collateralTrade?.uiTradeId??'');
 const actionStages={'collateral-placed':'collateral_placed','collateral-reviewed':'collateral_reviewed','funds-added':'funds_added','funds-reviewed':'funds_reviewed',complete:'completed'};
 const actionRecords={'collateral-placed':'collateralPlaced','collateral-reviewed':'collateralReviewed','funds-added':'fundsAdded','funds-reviewed':'fundsReviewed',complete:'completion'};
@@ -129,7 +131,11 @@ function redactedMessage(error,keys=[]){
  for(const key of keys)if(key)message=message.split(key).join('[redacted]');
  return message.replace(/([?&](?:key|api_?key)=)[^&#\s]+/gi,'$1[redacted]').slice(0,700);
 }
-function nativeConflict(context,loan){return context.ambiguous||context.reference&&context.reference!==loan.reference||context.tradeId&&linkedNativeId(loan)&&context.tradeId!==linkedNativeId(loan);}
+function nativeConflict(context,loan,allowUnclassifiedHeading=false){
+ const savedId=linkedNativeId(loan);
+ const linkedUnclassified=allowUnclassifiedHeading&&context.referenceEvidence==='unclassified'&&nativeId(context.tradeId)&&context.tradeId===savedId;
+ return context.ambiguous||context.reference&&context.reference!==loan.reference&&!linkedUnclassified||context.tradeId&&savedId&&context.tradeId!==savedId;
+}
 function responseLoan(result,bound){
  const loan=tradeDetailLoans(result).find(record=>record.id===bound.loanId),flow=loan?.tradeFlow,check=result?.tradeCheck;
  if(String(result?.user?.id??'')!==bound.context.accountId||!loan||loan.reference!==bound.loan.reference||loan.borrowerId!==bound.loan.borrowerId||loan.principal!==bound.loan.principal||!flow||flow.reference!==loan.reference||String(flow.borrowerId)!==String(loan.borrowerId)||!check||check.stage!==(flow.stage||'')||String(check.apiTradeId)!==String(flow.apiTradeId))return null;
@@ -141,9 +147,13 @@ function responseLoan(result,bound){
 
 // Viewing only reads the bank. Every explicit trade step rechecks its bound loan
 // before one API action. Unknown outcomes are reconciled by reads, never replay.
-export function createTradeLoanDetailsController({transport,readContext,nativeAccept=null,onChange=()=>{}}){
+export function createTradeLoanDetailsController({transport,readContext,nativeAccept=null,onChange=()=>{},onCreatedTradeReviewConsumed=()=>{}}){
  let model={open:false,loading:false,error:'',data:null,selectedLoanId:'',manual:false,context:readContext(),review:null,saving:false,reviewError:'',success:'',savedKeyAvailable:false,tradeCheck:null,nativeAcceptAvailable:false,nativeAcceptReason:''};
  let epoch=0,disposed=false,writeInFlight=false,boundReview=null;
+ let pendingCreated=null,openingCreated=null;
+ const consumedCreated=new Set(),createdKey=detail=>JSON.stringify([detail.loanId,detail.intentId,detail.nativeTradeId,detail.borrowerId]);
+ function consumeCreated(detail){if(!detail)return;consumedCreated.add(createdKey(detail));try{onCreatedTradeReviewConsumed(detail);}catch{}}
+ function cancelCreated(){const pending=pendingCreated,opening=openingCreated;pendingCreated=null;openingCreated=null;consumeCreated(pending);consumeCreated(opening);}
  const selectedLoan=data=>tradeDetailLoans(data).find(loan=>loan.id===model.selectedLoanId);
  function nativeReadiness(){
   const loan=selectedLoan(model.data);
@@ -173,6 +183,7 @@ export function createTradeLoanDetailsController({transport,readContext,nativeAc
    const loans=tradeDetailLoans(data),manual=!!previous&&loans.some(loan=>loan.id===previous);
    const selectedLoanId=manual?previous:matchTradeLoan(loans,context).loanId;
    publish({data,selectedLoanId,manual,loading:false});
+   return {data,context,generation};
   }catch(error){if(current(generation,context))publish({error:redactedMessage(error,[savedKey()]),loading:false,data:null,selectedLoanId:'',manual:false});}
  }
  function beginReview(action){
@@ -181,10 +192,43 @@ export function createTradeLoanDetailsController({transport,readContext,nativeAc
   if(!flowActions.has(action)||!context.page||!context.accountId||contextKey(context)!==contextKey(model.context)||String(model.data?.user?.id??'')!==context.accountId||!loanTradeActions(model.data,loan)[action]){
    publish({...resetReview(),reviewError:'This loan is not ready for that trade step. Refresh its details.'});return false;
   }
-  if(nativeConflict(context,loan)){publish({...resetReview(),reviewError:'The selected loan does not match the current Torn trade. Open its matching trade before continuing.'});return false;}
+  if(nativeConflict(context,loan,action!=='accept-ready')){publish({...resetReview(),reviewError:'The selected loan does not match the current Torn trade. Open its matching trade before continuing.'});return false;}
   if(action==='accept-ready'&&!model.nativeAcceptAvailable){publish({...resetReview(),reviewError:model.nativeAcceptReason||'Torn’s initial Accept control is unavailable.'});return false;}
   boundReview={action,loanId:loan.id,loan:JSON.parse(JSON.stringify(loan)),signature:reviewSignature(model.data,loan),context,generation:epoch,attempt:{}};
   publish({review:{action,loanId:loan.id},reviewError:'',success:'',savedKeyAvailable:validTornKey(savedKey())});return true;
+ }
+ async function tryCreatedTrade(){
+  const detail=pendingCreated;if(!detail||disposed)return false;
+  const context=readContext();
+  if(!context.page||context.ambiguous||context.accountId&&context.accountId!==detail.borrowerId||context.tradeId&&context.tradeId!==detail.nativeTradeId||writeInFlight||model.review||model.manual&&model.selectedLoanId&&model.selectedLoanId!==detail.loanId){cancelCreated();return false;}
+  let step;try{const url=new URL(context.route);step=(url.hash?new URLSearchParams(url.hash.slice(1)):url.searchParams).get('step');}catch{cancelCreated();return false;}
+  if(['accept','accept2','cancel'].includes(step)){cancelCreated();return false;}
+  // The observed-created event can arrive before Torn renders its detail page.
+  // Wait for native context changes; do not poll or fetch while it is missing.
+  if(step!=='view'||!context.accountId||context.tradeId!==detail.nativeTradeId||!context.reference)return false;
+  pendingCreated=null;openingCreated=detail;
+  if(!model.open)publish({open:true});
+  const loaded=await load();
+  if(openingCreated!==detail)return false;
+  openingCreated=null;
+  let opened=false;
+  if(loaded&&model.open&&current(loaded.generation,loaded.context)){
+   const loan=tradeDetailLoans(loaded.data).find(record=>record.id===detail.loanId),intent=loan?.collateralTrade;
+   if(String(loaded.data.user.id)===detail.borrowerId&&String(loan?.borrowerId)===detail.borrowerId&&intent?.status==='created'&&intent.intentId===detail.intentId&&intent.loanId===detail.loanId&&String(intent.borrowerId)===detail.borrowerId&&String(intent.uiTradeId)===detail.nativeTradeId&&intent.reference===loan.reference&&!intent.cancellationRequired&&!intent.reportedAfterFunding&&loanTradeActions(loaded.data,loan)['collateral-placed']&&!nativeConflict(loaded.context,loan,true)){
+    publish({selectedLoanId:loan.id,manual:true});
+    opened=beginReview('collateral-placed');
+   }
+  }
+  consumeCreated(detail);return opened;
+ }
+ function openCreatedTrade(input){
+  if(disposed||!input||!['loanId','intentId'].every(field=>typeof input[field]==='string'&&/^[A-Za-z0-9_-]{1,100}$/.test(input[field])))return Promise.resolve(false);
+  const detail={loanId:input.loanId,intentId:input.intentId,nativeTradeId:String(input.nativeTradeId??''),borrowerId:String(input.borrowerId??'')};
+  if(!nativeId(detail.nativeTradeId)||!/^\d{1,10}$/.test(detail.borrowerId)||detail.borrowerId[0]==='0')return Promise.resolve(false);
+  const key=createdKey(detail);
+  if(consumedCreated.has(key)){consumeCreated(detail);return Promise.resolve(false);}
+  if(pendingCreated&&createdKey(pendingCreated)===key||openingCreated&&createdKey(openingCreated)===key)return Promise.resolve(false);
+  cancelCreated();pendingCreated=detail;return tryCreatedTrade();
  }
  async function submitReview(input={}){
   if(disposed||writeInFlight)return;
@@ -261,21 +305,25 @@ export function createTradeLoanDetailsController({transport,readContext,nativeAc
  return {
   getState:()=>model,
   async setOpen(open){
+   if(!open)cancelCreated();
    if(disposed||model.open===open)return;
    epoch++;publish({open,loading:false,error:'',data:null,selectedLoanId:'',manual:false,...resetReview()});
    if(open)return load();
   },
-  refresh(){if(!disposed&&!writeInFlight&&model.open)return load();},
-  select(id){if(!disposed&&!writeInFlight&&model.data&&(!id||tradeDetailLoans(model.data).some(loan=>loan.id===id)))publish({selectedLoanId:id,manual:!!id,...resetReview()});},
+  refresh(){if(!disposed&&!writeInFlight&&model.open){cancelCreated();return load();}},
+  select(id){if(!disposed&&!writeInFlight&&model.data&&(!id||tradeDetailLoans(model.data).some(loan=>loan.id===id))){cancelCreated();publish({selectedLoanId:id,manual:!!id,...resetReview()});}},
+  openCreatedTrade,
   beginReview,
-  cancelReview(){if(!disposed&&!writeInFlight)publish({...resetReview()});},
+  cancelReview(){if(!disposed&&!writeInFlight){cancelCreated();publish({...resetReview()});}},
   submitReview,
   contextChanged(){
    if(disposed)return;
-   const context=readContext();if(contextKey(context)===contextKey(model.context)){const readiness=nativeReadiness();if(readiness.nativeAcceptAvailable!==model.nativeAcceptAvailable||readiness.nativeAcceptReason!==model.nativeAcceptReason)publish(readiness);return;}
+   const context=readContext();if(contextKey(context)===contextKey(model.context)){const readiness=nativeReadiness();if(readiness.nativeAcceptAvailable!==model.nativeAcceptAvailable||readiness.nativeAcceptReason!==model.nativeAcceptReason)publish(readiness);return tryCreatedTrade();}
+   if(openingCreated)cancelCreated();
    epoch++;publish({context,loading:false,error:'',data:null,selectedLoanId:'',manual:false,...resetReview()});
+   if(pendingCreated){const opened=tryCreatedTrade();if(pendingCreated||openingCreated)return opened;}
    if(model.open&&context.page)return load();
   },
-  dispose(){disposed=true;epoch++;boundReview=null;}
+  dispose(){cancelCreated();disposed=true;epoch++;boundReview=null;}
  };
 }
