@@ -1,10 +1,10 @@
 {
   "channel": "beta",
-  "version": "1.1.0-beta.68",
-  "basedOn": "1.1.0-beta.67",
+  "version": "1.1.0-beta.69",
+  "basedOn": "1.1.0-beta.68",
   "build": "passed",
-  "tests": 473,
-  "workerPackaging": "Production build and Wrangler 4.92.0 deploy --dry-run passed against the configured beta Worker and its dedicated database binding after explicit release authorization. Encrypted push delivery passed in local workerd with the existing runtime-test compatibility date.",
+  "tests": 489,
+  "workerPackaging": "Production build, Wrangler 4.92.0 deploy --dry-run and existing encrypted push-runtime test passed. No binding, schema or Worker behavior change beyond release version.",
   "sessionChecks": [
     "No time limit, including simulated ten-year passage",
     "Scheduled cleanup preserves permanent sessions",
@@ -13,8 +13,8 @@
     "Invitation revocation still blocks existing sessions",
     "Legacy timed sessions remain supported"
   ],
-  "deployment": "Publication to the existing beta Cloudflare Worker and GitHub repository was explicitly authorized. The deployed result is verified separately through Workers Builds, /api/health and exact userscript download comparison.",
-  "deviceTesting": "Collateral pricing interactions passed in mounted React DOM. Final iPhone/Torn PDA interaction remains to be confirmed on-device.",
+  "deployment": "Release published through the existing beta main branch; live deployment result is verified separately through Workers Builds.",
+  "deviceTesting": "16 new policy and mounted JSDOM interaction tests passed. Chromium could not launch because the execution environment denied its socket operation. No live Torn transfer or iPhone/Torn PDA interaction was performed.",
   "lobbyChecks": [
     "Lender script omits Welcome lobby and starts on Overview",
     "Borrower script retains Welcome lobby as its initial page",
@@ -82,7 +82,7 @@
     "Existing quotes can be explicitly refreshed; source, check time and retained estimates are shown.",
     "Mounted React DOM checks passed fallback recovery, quantity edits during requests, failed-refresh retention, retry recovery and stale-result cancellation."
   ],
-  "collateralTotalDisplay": "Application detail shows the combined face-value total and the existing credited collateral separately. Screenshot example: $20,000,000 cash + 31 × $838,912 + $24,244,000 = $70,250,272; credited at 90% for items = $65,225,244. No valuation or approval rule changed.",
+  "collateralTotalDisplay": "Application detail shows the combined face-value total and the existing credited collateral separately. Screenshot example: $20,000,000 cash + 31 \u00d7 $838,912 + $24,244,000 = $70,250,272; credited at 90% for items = $65,225,244. No valuation or approval rule changed.",
   "withdrawalChecks": [
     "Only the application borrower may withdraw a pending or approved, unfunded request; existing withdrawals are idempotent.",
     "Original request, approval, notes and collateral evidence remain; status-based loan slots and lender reservations are released without changing cash or successful repayment counts.",
@@ -107,7 +107,7 @@
     "A valid pre-funding claim can report after actual recorded disbursement or repayment as nonfinancial follow-up; new preparation and claiming remain blocked.",
     "Reported creation is a borrower browser observation, never collateral proof; completed collateral verification and funding gates remain enforced."
   ],
-  "tradeCreationUI": "14 rendered action/navigation tests and 36 controller/native DOM-adapter/observation tests passed, including six new native keyup validation and staged-timeout regressions. Nine API integration tests and 17 backend domain tests remain included. Existing approval progress and withdrawal regressions passed in the beta.64 baseline; they are also included in this release’s full suite.",
+  "tradeCreationUI": "14 rendered action/navigation tests and 36 controller/native DOM-adapter/observation tests passed, including six new native keyup validation and staged-timeout regressions. Nine API integration tests and 17 backend domain tests remain included. Existing approval progress and withdrawal regressions passed in the beta.64 baseline; they are also included in this release\u2019s full suite.",
   "tradeCreationLimitations": "No live Torn trade or asset transfer was performed in this session, and actual iPhone/Torn PDA interaction remains untested. Missing or ambiguous native controls stop the helper. Trade creation remains single-use. The staged menu forwards only an explicitly requested initial native Accept after fresh checks, preserving Torn confirmation; it does not automatically finalize, cancel, or transfer assets.",
   "tradeReadinessFix": [
     "Confirmed the missing event against Torn's public native trade_initiate.js asset: its recipient/description validator listens to keyup before enabling the submit input. Beta.63 sent only input/change.",
@@ -133,14 +133,14 @@
     "limits": "This check does not establish visual or on-device compatibility and does not exercise the server claim; separate controller/API regressions cover claiming."
   },
   "expectedCollateralChecks": [
-    "Automatic and staff approvals capture each request’s cash, exact item names and quantities, optional item IDs, and PI payment value in a compact loan snapshot. Client-supplied snapshots cannot replace it.",
+    "Automatic and staff approvals capture each request\u2019s cash, exact item names and quantities, optional item IDs, and PI payment value in a compact loan snapshot. Client-supplied snapshots cannot replace it.",
     "Snapshots survive native trade setup, single-use claim, observed creation, staff completed-trade acceptance, funding and reload without altering financial state or the exact loan reference.",
     "Legacy loans resolve matching original live or archived applications before privacy projection. Conflicting/incomplete sources stay unavailable; explicit empty proposals remain known; invalid foreign snapshots are removed.",
     "Non-owner staff receive relevant compact snapshots without archives; borrowers receive only their own loan snapshots. Read-only projection does not persist changes; the next normal action saves valid enrichment.",
     "UI reads the already projected snapshot rather than re-resolving partial application data after archive filtering."
   ],
   "expectedCollateralUI": [
-    "Application/loan trade sections and both staff collateral-review dialogs display exact quantities such as 14 × Xanax, expected cash and separately reviewed PI payment value.",
+    "Application/loan trade sections and both staff collateral-review dialogs display exact quantities such as 14 \u00d7 Xanax, expected cash and separately reviewed PI payment value.",
     "Historical/accepted/withdrawn loans label the proposal as saved history, not current custody or an additional amount due. Missing original data is distinct from zero collateral.",
     "Item names render as escaped text with mobile wrapping; each selected loan uses its own saved assets and reference."
   ],
@@ -156,7 +156,7 @@
     "runtime": "Mounted React with existing jsdom 26.1.0; no project dependencies added",
     "checks": [
       "Actual summary click starts from collapsed with zero reads, then opens and loads the matched loan.",
-      "Native select change swaps 14 Xanax, 2 Donator Packs, $20M cash and $5M PI for the second loan’s 7 First Aid Kits, $3M cash and no PI; no additional request on selection.",
+      "Native select change swaps 14 Xanax, 2 Donator Packs, $20M cash and $5M PI for the second loan\u2019s 7 First Aid Kits, $3M cash and no PI; no additional request on selection.",
       "Collapse clears loaded/loading state; reopening refreshes; responses delivered after close are ignored.",
       "Native hash/title navigation discards a pending old response and selects the new loan from a fresh response.",
       "Leaving the trade page hides and clears the panel; disposal removes the host.",
@@ -282,5 +282,16 @@
       ]
     },
     "limits": "No signed-in Torn trade, real asset movement or iPhone/Torn PDA interaction was performed. Torn exposes ongoing and finished categories, without an explicit expired/cancelled status; actual asset return is explicitly attested by the relevant participant."
-  }
+  },
+  "exactLoanCashEntryChecks": [
+    "200m principal: native Change disabled for 202m and 199m, enabled for 200m and zero removal",
+    "Window capture blocks native click, submit and Enter handlers for mismatched cash",
+    "Visible and hidden money values must agree at submission",
+    "Current Torn account and saved native trade identity bind receiving lender to approved amount",
+    "Unrelated trade and borrower collateral inputs remain unchanged",
+    "Stale read pauses submission for fresh approval and another explicit click",
+    "Known loan stays protected after refresh failure; initial unavailable protection is explicitly shown",
+    "Route/account changes discard late reads, replacement forms regain protection, original native disabled state is preserved",
+    "No automatic cash submission, asset changes or acceptance; existing API exact-principal checks retained"
+  ]
 }
