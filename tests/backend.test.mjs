@@ -314,3 +314,37 @@ test('Xanax lookup uses a reported market price when listing pages disagree or c
   else globalThis.caches=previousCaches;
  }
 });
+
+test('item suggestions load all Torn item categories, even without market listings',async()=>{
+ const env=fixture(),token=(await login(env)).data.token;
+ const previousFetch=globalThis.fetch,previousCaches=globalThis.caches;
+ const stored=new Map(),requests=[];
+ globalThis.caches={default:{
+  match:async request=>stored.get(request.url)?.clone(),
+  put:async(request,response)=>{stored.set(request.url,response.clone());}
+ }};
+ globalThis.fetch=async(url,options)=>{
+  const path=new URL(url).pathname;
+  requests.push(path);
+  if(path!=='/v2/torn/items')return previousFetch(url,options);
+  assert.equal(new URL(url).searchParams.has('cat'),false);
+  return Response.json({items:[
+   {id:206,name:'Xanax',type:'Drug'},
+   {id:283,name:'Donator Pack',type:'Special'},
+   {id:9999,name:'New Event Item',type:'Collectible',market_value:null}
+  ]});
+ };
+ try{
+  const original=await call(env,'market',{token,body:{key:'owner'.padEnd(16,'0')}});
+  assert.equal(original.status,200,original.data.error);
+  assert.deepEqual(original.data.items,[{id:283,name:'Donator Pack'},{id:9999,name:'New Event Item'},{id:206,name:'Xanax'}]);
+  const cached=await call(env,'market',{token,body:{}});
+  assert.equal(cached.status,200,cached.data.error);
+  assert.deepEqual(cached.data,original.data);
+  assert.deepEqual(requests,['/v2/user/basic','/v2/torn/items']);
+ }finally{
+  globalThis.fetch=previousFetch;
+  if(previousCaches===undefined)delete globalThis.caches;
+  else globalThis.caches=previousCaches;
+ }
+});

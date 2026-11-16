@@ -63,7 +63,7 @@ export function ApplicationForm({user,rules,initial,onSave,onMarket,onItemQuote,
  const piEligible=hasPIStatus(bankState||{},a.borrowerId);
  useEffect(()=>{if(eligible)setA(x=>({...x,tier:eligible.assignedTier,piRto:eligible.piRto,oilEligible:eligible.oilEligible}));},[a.lane,eligible?.assignedTier,eligible?.piRto,eligible?.oilEligible]);
  const set=(k,v)=>setA(x=>({...x,[k]:v}));
- const [catalog,setCatalog]=useState([{id:206,name:'Xanax'},{id:283,name:'Donator Pack'}]);
+ const [catalog,setCatalog]=useState([]);
  const [catalogStatus,setCatalogStatus]=useState('Loading Torn item names…');
  const catalogRequested=React.useRef(false);
  async function loadCatalog(){
@@ -72,12 +72,11 @@ export function ApplicationForm({user,rules,initial,onSave,onMarket,onItemQuote,
   setCatalogStatus('Loading Torn item names…');
   try{
    const {items}=await onItemCatalog();
-   setCatalog(previous=>[...new Map([...previous,...items].map(item=>[item.id,item])).values()]
-    .sort((a,b)=>a.name.localeCompare(b.name)));
+   setCatalog(items);
    setCatalogStatus('No matching item names. You can also enter a Torn item ID.');
-  }catch{
+  }catch(error){
    catalogRequested.current=false;
-   setCatalogStatus('Full item list unavailable. You can enter a Torn item ID.');
+   setCatalogStatus(error.message||'Full item list unavailable. You can enter a Torn item ID.');
   }
  }
  function updateItem(key,changes){
@@ -171,9 +170,8 @@ export default function BankClient({demo=false,transport,bankOrigin,active=true,
   return request('market?id='+encodeURIComponent(id));
  }
  async function itemCatalog(){
-  if(demo)return {items:[{id:206,name:'Xanax'}]};
-  if(!keyReady)throw Error('Connect a Torn API key to search the item catalog.');
-  return request('market',{key:apiKey});
+  if(demo)return {items:[{id:283,name:'Donator Pack'},{id:206,name:'Xanax'}]};
+  return request('market',keyReady?{key:apiKey}:{});
  }
  async function market(id){if(demo){setToast('Demo price: $150M. Connect the live bank to request Weav3r.');return {name:'Demo item',reference:150e6,source:'Fictional demo reference',checkedAt:TB.today()};}setBusy(true);try{return await request('market?id='+encodeURIComponent(id));}catch(e){setError(e.message);}finally{setBusy(false);}}
  async function syncTrades(){if(demo){setToast('Live trade verification is available after connecting your Torn account.');return;}if(!requireCheckKey())return;setBusy(true);try{const v=await request('trades',{key:apiKey});setCheckResult(v);await refresh();setToast('Completed-trade check finished.');}catch(e){setAuto(false);setError(e.message);}finally{setBusy(false);}}

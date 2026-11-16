@@ -32,6 +32,8 @@ export default function CollateralItem({item,catalog,catalogStatus,loadCatalog,o
 
  const query=name.toLowerCase();
  const matches=catalog.filter(entry=>entry.name.toLowerCase().includes(query));
+ const matchingNames=new Map<string,number>();
+ for(const entry of matches)matchingNames.set(entry.name,(matchingNames.get(entry.name)||0)+1);
  function changeItemName(value,id=undefined){
   if(value!==item.name||id!==item.itemId){
    setStatus('');
@@ -49,13 +51,13 @@ export default function CollateralItem({item,catalog,catalogStatus,loadCatalog,o
      <input autoComplete='off' value={item.name} onFocus={()=>{setShowSuggestions(true);loadCatalog();}}
       onChange={event=>{setShowSuggestions(true);changeItemName(event.target.value);}}/>
     </label>
-    {showSuggestions&&name&&matches.length>0&&<ul className='item-suggestions' aria-label='Matching Torn items'>
+    {showSuggestions&&matches.length>0&&<ul className='item-suggestions' aria-label='Matching Torn items'>
      {matches.map(entry=><li key={entry.id}><button type='button' onPointerDown={event=>event.preventDefault()} onClick={()=>{
       changeItemName(entry.name,entry.id);
       setShowSuggestions(false);
-     }}>{entry.name}</button></li>)}
+     }}>{entry.name}{matchingNames.get(entry.name)>1&&' · #'+entry.id}</button></li>)}
     </ul>}
-    {showSuggestions&&name&&!itemId&&matches.length===0&&<p className='muted' role='status'>{catalogStatus}</p>}
+    {showSuggestions&&!itemId&&matches.length===0&&<p className='muted' role='status'>{catalogStatus}</p>}
    </div>
    <label className='field'><span>Quantity</span><input type='number' min={1} step={1} value={item.qty} onChange={event=>onChange({qty:event.target.value})}/></label>
   </div>

@@ -64,11 +64,24 @@ export function route(env){
    try{
     const user=await srv.identity(req);
     const {key}=await srv.body(req);
+    const cache=globalThis.caches?.default;
+    const cacheKey=new Request(new URL('/catalog-cache/v1/torn-items',req.url));
+    try{
+     const cached=await cache?.match(cacheKey);
+     if(cached)return srv.response(await cached.json());
+    }catch(error){console.warn('Item catalog cache read failed',error);}
     await srv.rateLimit(user.platformId+':item-catalog',3);
-    await srv.ownKey(key,user.torn_id);
-    const catalog=await srv.torn(key,'torn/items');
-    if(!Array.isArray(catalog.items))throw Error('Torn item names are temporarily unavailable.');
-    return srv.response({items:catalog.items.filter(item=>Number.isSafeInteger(item.id)&&typeof item.name==='string').map(({id,name})=>({id,name}))});
+    if(!env.TORN_CATALOG_API_KEY&&!key)throw Error('Connect your Torn API key to load the full item catalog.');
+    if(!env.TORN_CATALOG_API_KEY)await srv.ownKey(key,user.torn_id);
+    const catalog=await srv.torn(env.TORN_CATALOG_API_KEY||key,'torn/items');
+    if(!Array.isArray(catalog.items)||catalog.items.length===0)throw Error('Torn item names are temporarily unavailable.');
+    const items=catalog.items.filter(item=>Number.isSafeInteger(item.id)&&item.id>0&&typeof item.name==='string'&&item.name.trim())
+     .map(({id,name})=>({id,name})).sort((a,b)=>a.name.localeCompare(b.name)||a.id-b.id);
+    if(!items.length)throw Error('Torn item names are temporarily unavailable.');
+    const result={items};
+    try{await cache?.put(cacheKey,Response.json(result,{headers:{'Cache-Control':'public, max-age=21600'}}));}
+    catch(error){console.warn('Item catalog cache write failed',error);}
+    return srv.response(result);
    }catch(e:any){return srv.response({error:e.message},e.status||400);}
   }
  };
