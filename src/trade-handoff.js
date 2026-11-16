@@ -88,6 +88,13 @@ function renderedText(current){
  return [...current.childNodes].map(renderedText).join('');
 }
 
+function openedTradeId(href){
+ if(!tornTradePage(href))return null;
+ const url=new URL(href),params=url.hash?new URLSearchParams(url.hash.slice(1)):url.searchParams;
+ if(url.hash&&(url.searchParams.has('step')||url.searchParams.has('ID')))return null;
+ return params.get('step')==='view'?activeTradeId(href,href):null;
+}
+
 function exactDescription(node,reference){
  const text=normalized(renderedText(node)).replace(/^(?:trade\s+)?description\s*:\s*/i,'');
  return text===reference;
@@ -221,7 +228,7 @@ export function tradeHandoffFailureMessage(error,{attempted=false}={}){
 }
 
 export function createTornTradePage(document,window){
- let initiated=false,armed=false,watchIntent=null,clickSeen=false,submitSeen=false;
+ let initiated=false,armed=false,watchIntent=null,clickSeen=false,submitSeen=false,submissionRoute='',capturedId='';
  const foreground=()=>need(!document.hidden&&document.visibilityState!=='hidden','Keep Torn visible while creating the trade. Reopen the request to continue.');
  function account(intent){
   const actual=currentTornAccount(document);
@@ -247,6 +254,28 @@ export function createTornTradePage(document,window){
  }
  function ready(intent){account(intent);const controls=form(intent);need(controls,'Open the new-trade form and check its Description and Initiate controls.');return controls;}
  const enabled=button=>!button.disabled&&button.getAttribute('aria-disabled')!=='true';
+ function markInitiated(){
+  if(!initiated)submissionRoute=window.location.href;
+  initiated=true;
+ }
+ function findResult(intent){
+  const href=window.location.href;
+  const observed=observedTrade(document,intent,href);
+  if(observed)return observed;
+  // A confirmed native submit can navigate straight to an ID before any trade
+  // markup appears. This route is a candidate and still needs the API check.
+  if(!submissionRoute)return null;
+  let id=openedTradeId(href);
+  if(!id&&href===submissionRoute&&!Array.from(document.querySelectorAll('.init-trade.m-top10')).some(visible)){
+   const links=[...document.querySelectorAll('#trade-container .trade-cancel a[href]')].filter(visible);
+   const ids=new Set(links.map(link=>activeTradeId(link.getAttribute('href'),href)).filter(Boolean));
+   if(ids.size===1)id=[...ids][0];
+  }
+  if(!id||intent.excludedNativeTradeIds?.includes(id))return null;
+  if(capturedId&&capturedId!==id)return null;
+  capturedId=id;
+  return {uiTradeId:id,reference:intent.reference,recipientId:String(intent.recipientId),verifyDescription:true};
+ }
  function nativeInitiation(event){
   const target=event.target;
   if(!watchIntent||!target?.closest?.('.init-trade.m-top10'))return;
@@ -256,10 +285,10 @@ export function createTornTradePage(document,window){
   // The helper will then only observe its result and will not click again.
   if(event.type==='click'){
    if(clickSeen||submitSeen){event.preventDefault();event.stopImmediatePropagation();return;}
-   clickSeen=true;initiated=true;
+   clickSeen=true;markInitiated();
   }else if(event.type==='submit'){
    if(submitSeen){event.preventDefault();event.stopImmediatePropagation();return;}
-   submitSeen=true;initiated=true;
+   submitSeen=true;markInitiated();
   }
  }
  return {
@@ -299,19 +328,19 @@ export function createTornTradePage(document,window){
   submit(intent){
    need(!initiated,'A trade creation was already attempted on this page.');
    const controls=ready(intent);need(controls.description.value===intent.reference&&enabled(controls.initiate),'The trade reference or Initiate control changed before initiation.');
-   initiated=true;
+   markInitiated();
    controls.initiate.click();
   },
   async waitForResult(intent){
    let previous=null;
    return waitFor(()=>{
     foreground();account(intent);
-    const result=observedTrade(document,intent,window.location.href);
+    const result=findResult(intent);
     const same=result&&previous===result.uiTradeId;previous=result?.uiTradeId||null;
     return same?result:null;
-   },window,20000,()=>timeoutError('torn_result_timeout','Torn has not shown a matching created trade yet.'));
+   },window,20000,()=>timeoutError('torn_result_timeout','Torn has not confirmed the new trade yet.'));
   },
-  observed(intent){account(intent);return observedTrade(document,intent,window.location.href);}
+  observed(intent){account(intent);return findResult(intent);}
  };
 }
 
@@ -325,18 +354,21 @@ function matchedIntent(data,handoff){
  return {loan,intent:excludedNativeTradeIds.length?{...intent,excludedNativeTradeIds}:intent};
 }
 
-async function saveObservedTrade(transport,handoff,observed,requestId){
+async function saveObservedTrade(transport,handoff,observed,requestId,enteredKey=''){
  const latest=await transport.request('bank'),{intent}=matchedIntent(latest,handoff);
  need(observed&&observed.reference===intent.reference&&String(observed.recipientId)===String(intent.recipientId)&&uiId(observed.uiTradeId),'Torn has not shown a matching created trade yet.');
  need(!intent.excludedNativeTradeIds?.includes(String(observed.uiTradeId)),'That trade belongs to an earlier attempt. Open the current loan trade before continuing.');
  const payload={loanId:handoff.loanId,intentId:handoff.intentId,reference:intent.reference,uiTradeId:observed.uiTradeId};
- if(observed.verifyDescription){
-  const key=transport.getSavedKey?.();
-  need(validTornKey(key),'Open the bank and remember your Torn API key on this device, then return to this trade so its description can be verified.');
+ if(intent.uiTradeId){need(intent.uiTradeId===observed.uiTradeId,'A different Torn trade is already linked to this setup.');return intent;}
+ if(intent.status==='claimed'){
+  const key=enteredKey||transport.getSavedKey?.();
+  need(validTornKey(key),'Enter your Torn API key with trade access below, then check the open trade.');
   Object.assign(payload,{verifyDescription:true,key});
  }
  const saved=await transport.request('bank',{action:'recordCollateralTrade',payload,revision:latest.state.revision,requestId:requestId()});
- return matchedIntent(saved,handoff).intent;
+ const linked=matchedIntent(saved,handoff).intent;
+ need(linked.uiTradeId===observed.uiTradeId,'The bank did not confirm this trade link. Check the existing trade again.');
+ return linked;
 }
 
 export async function runTradeHandoff({handoff,transport,page,onStatus=()=>{},now=()=>Date.now(),requestId=()=>crypto.randomUUID()}){
@@ -394,7 +426,7 @@ export function installTradeHandoff({document,window,transport}){
  function drawActions(checkAgain=false){
   actions.replaceChildren();
   const id=observed?.uiTradeId||intent?.uiTradeId;
-  if(id)link('Open trade',tradeViewUrl(id));
+  if(id)link(intent?.uiTradeId?'Open linked trade':'Open trade to verify',tradeViewUrl(id));
   if(attemptPending&&!id)link('Check trades in Torn','https://www.torn.com/trade.php');
   link('Back to bank','https://www.torn.com/bank.php');
   if(intent){
@@ -402,12 +434,17 @@ export function installTradeHandoff({document,window,transport}){
    copy.onclick=async()=>{try{await window.navigator.clipboard.writeText(intent.reference);copy.textContent='Reference copied';}catch{copy.textContent='Copy the reference shown above';}};actions.append(copy);
   }
   if(checkAgain&&intent&&(intent.claimedAt||attemptPending)){
+   const keyInput=document.createElement('input');
+   if(intent.status==='claimed'&&!validTornKey(transport.getSavedKey?.())){
+    keyInput.type='password';keyInput.maxLength=16;keyInput.autocomplete='off';
+    const label=document.createElement('label');label.textContent='Torn API key with trade access ';label.append(keyInput);actions.append(label);
+   }
    const check=document.createElement('button');check.type='button';check.textContent='Check current trade';
    check.onclick=async()=>{
     if(checking)return;checking=true;check.disabled=true;
-    try{const latest=await transport.request('bank');intent=matchedIntent(latest,handoff).intent;observed=page.observed(intent);intent=await saveObservedTrade(transport,handoff,observed,()=>crypto.randomUUID());show({status:'recorded',intent});}
+    try{const latest=await transport.request('bank');intent=matchedIntent(latest,handoff).intent;observed=page.observed(intent);intent=await saveObservedTrade(transport,handoff,observed,()=>crypto.randomUUID(),keyInput.value.trim());show({status:'recorded',intent});}
     catch(error){message.textContent=error.message+' This check does not initiate another trade.';}
-    finally{checking=false;check.disabled=false;}
+    finally{keyInput.value='';checking=false;check.disabled=false;}
    };actions.append(check);
   }
  }
@@ -441,7 +478,7 @@ export function installTradeHandoff({document,window,transport}){
   }catch(latestError){
    if(latestError.code==='trade_setup_changed'){attemptPending=false;clearTradeResume(storage,handoff);page.dispose();}
   }
-  title.textContent='Torn Lending Bank · Check trade setup';
+  title.textContent=attemptPending?'Torn Lending Bank · Trade verification pending':'Torn Lending Bank · Check trade setup';
   message.textContent=tradeHandoffFailureMessage(error,{attempted:attemptPending||!!intent?.claimedAt||page.hasInitiated()});
   drawActions(true);
  });

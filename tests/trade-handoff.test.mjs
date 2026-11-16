@@ -17,7 +17,7 @@ function scenario(reference='TLB-0BE1AA730D7B',options={}){
  const writes=[],steps=[],statuses=[],user={id:borrower};let submits=0,manual=false,assertions=0,sequence=0;
  const response=()=>({state:clone(state),user:clone(user),role:'borrower'});
  const fixture={get state(){return state;},set state(value){state=value;},user,handoff,writes,steps,statuses,get submits(){return submits;},set manual(value){manual=value;},intent:()=>state.loans[0].collateralTrade,observation:()=>({uiTradeId:'11687899',reference,recipientId:recipient})};
- fixture.transport={ready:Promise.resolve(),async request(path,body){
+ fixture.transport={ready:Promise.resolve(),getSavedKey:()=> 'abcdefghijklmnop',async request(path,body){
   assert.equal(path,'bank');
   if(!body)return response();
   writes.push(clone(body));
@@ -276,6 +276,20 @@ test('native adapter fills the exact reference, handles initially disabled Initi
  assert.equal(f.nativeSubmissions,1,'the first native click and its default submit must both be allowed');
  f.button.click();f.enter();assert.equal(f.clicks,1);assert.equal(f.nativeSubmissions,1);assert.throws(()=>f.page.submit(f.intent),/already attempted/);
  f.page.dispose();assert.equal(f.events.size,0);
+});
+
+test('creation captures Torn’s new view route before markup loads and checks its API description',async()=>{
+ const f=nativeForm();
+ f.page.fillReference(f.intent);await f.page.waitUntilReady(f.intent);f.page.arm(f.intent);f.page.submit(f.intent);
+ f.window.location.href='https://www.torn.com/trade.php#step=view&ID=11687899';
+ const result=f.page.waitForResult(f.intent);
+ [...f.timers.values()].find(entry=>entry.type==='interval').fn();
+ assert.deepEqual(await result,{uiTradeId:'11687899',reference:f.intent.reference,recipientId:recipient,verifyDescription:true});
+ assert.equal(f.nativeSubmissions,1);
+ const resumed=nativeForm();resumed.window.location.href=f.window.location.href;
+ assert.equal(resumed.page.observed(resumed.intent),null,'a bare trade route after a reload is not a creation handoff');
+ const bank=scenario();await bank.run();
+ assert.equal(bank.writes[1].payload.verifyDescription,true);
 });
 
 test('the native textarea enables Initiate only through Torn keyup validation without Enter, focus or a disabled-control bypass',async()=>{

@@ -1113,6 +1113,29 @@ async function withLoanTradeAPI(f,run){
  try{return await run();}finally{globalThis.fetch=tornFetch;}
 }
 
+test('creation verification rejects a wrong receiving lender and pins the exact Torn API trade',async()=>{
+ const f=await loanTradeScenario(true,{claimedOnly:true}),loan=f.read().loans[0];
+ const payload={loanId:loan.id,intentId:loan.collateralTrade.intentId,reference:loan.reference,uiTradeId:'11687899',verifyDescription:true,key:'borrower00000000'};
+ await withLoanTradeAPI(f,async()=>{
+  f.listOverride=[{...f.trade,trader:{id:Number(OTHER)}}];
+  assert.equal((await f.save(f.borrower,'recordCollateralTrade',payload)).status,400);
+  assert.equal(f.read().loans[0].collateralTrade.status,'claimed');
+  f.listOverride=undefined;
+  const result=await f.save(f.borrower,'recordCollateralTrade',payload);
+  assert.equal(result.status,200,result.data.error);
+  const intent=f.read().loans[0].collateralTrade;
+  assert.equal(intent.uiTradeId,'11687899');
+  assert.equal(intent.verifiedApiTradeId,'88444');
+  assert.equal(f.read().loans[0].tradeFlow,undefined);
+  assert.equal((await f.step(f.borrower,'collateral-placed',{tradeId:'88445',acceptTerms:true})).status,400);
+  f.apiCalls.length=0;
+  const placement=await f.step(f.borrower,'collateral-placed',{tradeId:undefined,acceptTerms:true});
+  assert.equal(placement.status,200,placement.data.error);
+  assert.equal(f.apiCalls.some(call=>call.path==='/v2/user/trades'),false);
+  assert.equal(f.read().loans[0].tradeFlow.apiTradeId,'88444');
+ });
+});
+
 test('borrower can link an existing claimed trade and confirm collateral in one verified request',async()=>{
  const f=await loanTradeScenario(true,{claimedOnly:true}),loan=f.read().loans[0];
  const input={linkOpenTrade:true,intentId:loan.collateralTrade.intentId,reference:loan.reference,tradeId:undefined,acceptTerms:true};

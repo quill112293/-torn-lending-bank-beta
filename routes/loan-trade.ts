@@ -38,7 +38,7 @@ export function route(env){
    await srv.rateLimit(user.platformId+':loan-trade',12);
    await srv.ownKey(input.key,user.torn_id);
    let trades=[];
-   if(recover||!context.loan.tradeFlow?.apiTradeId&&!input.tradeId)trades=(await srv.torn(input.key,'user/trades?cat=ongoing&timestamp='+Date.now())).trades;
+   if(recover||!context.loan.tradeFlow?.apiTradeId&&!context.loan.collateralTrade?.verifiedApiTradeId&&!input.tradeId)trades=(await srv.torn(input.key,'user/trades?cat=ongoing&timestamp='+Date.now())).trades;
    const tradeId=recover?verifyClaimedTradeDescription(initial,user.torn_id,input,trades):selectLoanTrade(initial,user.torn_id,input.loanId,trades,input.tradeId);
    const trade=(await srv.torn(input.key,'user/'+tradeId+'/trade?timestamp='+Date.now())).trade;
    TB.need(trade&&String(trade.id)===tradeId,'Torn returned a different API trade; check the selected API trade ID.');

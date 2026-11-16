@@ -79,6 +79,18 @@ test('an observed newly created own trade opens its review once after a fresh re
  assert.equal(f.controller.getState().review,null);assert.equal(await f.controller.openCreatedTrade(detail),false);assert.equal(f.calls.length,reads);
 });
 
+test('the created review survives Torn rendering its heading while the bank is loading',async()=>{
+ const f=scenario(),detail=createdTrade(f),first=deferred();
+ f.context={...f.context,reference:null};f.onRead=n=>n===1?first.promise:undefined;
+ const opening=f.controller.openCreatedTrade(detail);await tick();
+ f.context={...f.context,reference:'Trade between Borrower & Lender',referenceEvidence:'unclassified'};
+ assert.equal(await f.controller.contextChanged(),true);
+ first.resolve(clone(f.data));await opening;
+ assert.equal(f.controller.getState().review.action,'collateral-placed');
+ assert.equal(f.posts().length,0);
+ assert.deepEqual(f.consumedCreated,[detail]);
+});
+
 test('observed creation waits for its matching native detail without polling and cancels on an explicit close or different trade',async()=>{
  for(const outcome of ['matching','close','different','account']){
   const f=scenario(),detail=createdTrade(f),matching={...f.context};

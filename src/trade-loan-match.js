@@ -253,7 +253,7 @@ export function createTradeLoanDetailsController({transport,readContext,nativeAc
   if(['accept','accept2','cancel'].includes(step)){cancelCreated();return false;}
   // The observed-created event can arrive before Torn renders its detail page.
   // Wait for native context changes; do not poll or fetch while it is missing.
-  if(step!=='view'||!context.accountId||context.tradeId!==detail.nativeTradeId||!context.reference)return false;
+  if(step!=='view'||!context.accountId||context.tradeId!==detail.nativeTradeId)return false;
   pendingCreated=null;openingCreated=detail;
   if(!model.open)publish({open:true});
   const loaded=await load();
@@ -394,7 +394,12 @@ export function createTradeLoanDetailsController({transport,readContext,nativeAc
   contextChanged(){
    if(disposed)return;
    const context=readContext();if(contextKey(context)===contextKey(model.context)){const readiness=nativeReadiness();if(readiness.nativeAcceptAvailable!==model.nativeAcceptAvailable||readiness.nativeAcceptReason!==model.nativeAcceptReason)publish(readiness);return tryCreatedTrade();}
-   if(openingCreated)cancelCreated();
+   if(openingCreated){
+    const detail=openingCreated;
+    if(context.route===model.context.route&&context.accountId===detail.borrowerId&&context.tradeId===detail.nativeTradeId&&!context.ambiguous){
+     openingCreated=null;pendingCreated=detail;
+    }else cancelCreated();
+   }
    epoch++;publish({context,loading:false,error:'',data:null,selectedLoanId:'',manual:false,...resetReview()});
    if(pendingCreated){const opened=tryCreatedTrade();if(pendingCreated||openingCreated)return opened;}
    if(model.open&&context.page)return load();
