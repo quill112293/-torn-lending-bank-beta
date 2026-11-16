@@ -1,12 +1,31 @@
 import {createServer} from '../server/context.js';
 
-export async function marketQuote(itemId:number){
+const freshQuoteMs=5*60*1000;
+const savedQuoteMs=24*60*60*1000;
+
+export async function marketQuote(itemId:number,requestUrl:string,{allowSavedEstimate=false}={}){
  const cache=globalThis.caches?.default;
- const key=new Request('https://tlb-market-cache.local/item/'+itemId);
+ const key=new Request(new URL('/catalog-cache/v1/market/'+itemId,requestUrl));
+ let previous;
  try{
   const cached=await cache?.match(key);
-  if(cached)return await cached.json();
+  if(cached)previous=await cached.json();
  }catch(error){console.warn('Market cache read failed',error);}
+ const age=Date.now()-Date.parse(previous?.checkedAt);
+ const validPrevious=previous?.itemId===itemId&&Number.isSafeInteger(previous.reference)&&previous.reference>0&&age>=0&&age<savedQuoteMs;
+ if(validPrevious&&age<freshQuoteMs)return previous;
+ try{
+  const quote=await fetchMarketQuote(itemId);
+  try{await cache?.put(key,Response.json(quote,{headers:{'Cache-Control':'public, max-age='+savedQuoteMs/1000}}));}
+  catch(error){console.warn('Market cache write failed',error);}
+  return quote;
+ }catch(error){
+  if(validPrevious&&allowSavedEstimate)return {...previous,savedEstimate:true};
+  throw error;
+ }
+}
+
+async function fetchMarketQuote(itemId:number){
  const pages=new Map<number,any>();
  const deadline=AbortSignal.timeout(12000);
  async function get(page:number){
@@ -42,10 +61,7 @@ export async function marketQuote(itemId:number){
   reference=first.market_price;
   source='Torn market price reported by Weav3r';
  }
- const quote={itemId,name:first.item_name,median,reference,listingCount:count,source,checkedAt:new Date().toISOString(),generatedAt:first.generated_at,credit90:Math.floor(reference*.9)};
- try{await cache?.put(key,Response.json(quote,{headers:{'Cache-Control':'public, max-age=300'}}));}
- catch(error){console.warn('Market cache write failed',error);}
- return quote;
+ return {itemId,name:first.item_name,median,reference,listingCount:count,source,checkedAt:new Date().toISOString(),generatedAt:first.generated_at,credit90:Math.floor(reference*.9)};
 }
 
 export async function loadTornItemCatalog(torn, key:string){
@@ -74,7 +90,7 @@ export function route(env){
     const id=new URL(req.url).searchParams.get('id');
     if(!/^\d{1,6}$/.test(id||'')||Number(id)<1)throw Error('Enter a Torn item ID.');
     await srv.rateLimit(user.platformId+':market',15);
-    return srv.response(await marketQuote(Number(id)));
+    return srv.response(await marketQuote(Number(id),req.url,{allowSavedEstimate:true}));
    }catch(e:any){return srv.response({error:e.message},e.status||400);}
   },
   async POST(req:Request){

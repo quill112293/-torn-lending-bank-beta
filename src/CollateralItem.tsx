@@ -18,7 +18,7 @@ export default function CollateralItem({item,catalog,catalogStatus,loadCatalog,o
    try{
     const quote=await onQuote(itemId);
     if(cancelled)return;
-    onChange({itemId,reference:quote.reference,source:quote.source,checked:quote.checkedAt});
+    onChange({itemId,reference:quote.reference,source:quote.source,checked:quote.checkedAt,savedEstimate:quote.savedEstimate===true});
     setStatus('');
    }catch{
     if(!cancelled){
@@ -38,7 +38,7 @@ export default function CollateralItem({item,catalog,catalogStatus,loadCatalog,o
   if(value!==item.name||id!==item.itemId){
    setStatus('');
    setFailed(false);
-   onChange({name:value,itemId:id,reference:0,source:'',checked:''});
+   onChange({name:value,itemId:id,reference:0,source:'',checked:'',savedEstimate:false});
   }
  }
  const quantity=Number(item.qty);
@@ -64,9 +64,10 @@ export default function CollateralItem({item,catalog,catalogStatus,loadCatalog,o
    <label className='field'><span>Quantity</span><input type='number' min={1} step={1} value={item.qty} onChange={event=>onChange({qty:event.target.value})}/></label>
   </div>
   {item.reference>0?<div role='status'>
-   <p>Market price {formatMoney(item.reference)} each · {formatMoney(total)} total · {formatMoney(Math.floor(total*creditRate))} credited</p>
+   <p>{item.savedEstimate?'Last saved price':'Market price'} {formatMoney(item.reference)} each · {formatMoney(total)} total · {formatMoney(Math.floor(total*creditRate))} credited</p>
+   {item.savedEstimate&&<p className='muted'>Live pricing is unavailable. Submission requires a fresh price for automatic approval.</p>}
    {moreNeeded>0&&<p><strong>About {moreNeeded.toLocaleString('en-US')} more needed</strong> if you cover the remaining collateral with this item.</p>}
-   {remainingCollateral===0&&<p>Collateral requirement covered at current prices.</p>}
+   {remainingCollateral===0&&<p>Estimated collateral requirement covered.</p>}
   </div>:
    <p className='muted' role='status'>{status||(name&&!itemId&&!showSuggestions?'Unpriced items go to staff review.':'')}</p>}
   {failed&&<button type='button' className='secondary' onClick={()=>{setFailed(false);setStatus('Checking market price…');setAttempt(previous=>previous+1);}}>Retry market price</button>}

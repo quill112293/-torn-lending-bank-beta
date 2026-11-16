@@ -363,3 +363,24 @@ test('sign-in rejects a key without Torn Items access before creating a session'
  }finally{globalThis.fetch=previousFetch;}
  assert.equal((await login(env)).status,200);
 });
+
+test('a market outage returns a labeled recent quote for previews and rejects expired estimates',async()=>{
+ const env=fixture(),token=(await login(env)).data.token;
+ const previousFetch=globalThis.fetch,previousCaches=globalThis.caches;
+ const quote={itemId:206,name:'Xanax',reference:848650,checkedAt:new Date(Date.now()-600000).toISOString()};
+ globalThis.caches={default:{match:async()=>Response.json(quote)}};
+ globalThis.fetch=async()=>new Response('',{status:503});
+ try{
+  const result=await call(env,'market?id=206',{token});
+  assert.equal(result.status,200,result.data.error);
+  assert.equal(result.data.savedEstimate,true);
+  assert.equal(result.data.reference,848650);
+  assert.equal(result.data.checkedAt,quote.checkedAt);
+  quote.checkedAt=new Date(Date.now()-25*3600000).toISOString();
+  assert.equal((await call(env,'market?id=206',{token})).status,400);
+ }finally{
+  globalThis.fetch=previousFetch;
+  if(previousCaches===undefined)delete globalThis.caches;
+  else globalThis.caches=previousCaches;
+ }
+});
