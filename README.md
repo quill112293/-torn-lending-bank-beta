@@ -256,3 +256,7 @@ The Bank tab separates the reserve from each person's holdings. Only the owner c
 Setting personal availability to Offline returns the full recorded balance to Bank and leaves that holder at zero. Bank is also a destination in Transfer / end shift. Pending handovers and committed loan funds block ending a shift until resolved; they cannot be silently erased. Global bank Online/Offline status does not end everybody's shift. Reserve returns and withdrawals are accounting movements, not Torn money transfers. No existing balance is migrated automatically. Reserve and staff balances both count toward available lending funds; moving cash between them does not change total funds or the restock threshold.
 
 Update both scripts to **1.1.0-beta.78** and reload Torn. No database migration is required.
+
+## Beta.79 completed-loan level synchronization
+
+Staff-entered completed-loan counts now synchronize faction trust progression. Existing saved counts also inform faction eligibility on refresh, fixing profiles that showed one completed loan but Level 1. Non-faction eligibility continues to use its own completed-loan thresholds; regression checks cover Levels 1–3, VIP, VIP-PI and owner overrides. Profiles, prequalification and new applications share the resulting eligibility. Existing loan terms and explicit owner-assigned levels remain unchanged. Faction promotion retains the existing per-level completion thresholds. Update scripts to **1.1.0-beta.79** and refresh the bank; counts already saved do not need to be entered again.

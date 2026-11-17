@@ -201,7 +201,8 @@ test('staff count corrections affect loan slots and preserve tracked loans',()=>
  assert.equal(updated.borrowers[borrower].completed,4);
  assert.deepEqual(updated.loans,s.loans);
  assert.equal(loanSlots(updated,borrower,{lane:'faction',tier:0}).remaining,0);
- assert.equal(apply(updated).loans.length,0);
+ assert.throws(()=>apply(updated),/recorded loan history/);
+ assert.equal(apply(updated,input({tier:1})).loans.length,1);
  const funded=apply(s);
  funded.loans[0].status='active';
  assert.throws(()=>applyAction(funded,owner,'adjustLoanCounts',{...payload,active:0}),/recorded active loans/);
