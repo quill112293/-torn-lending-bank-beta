@@ -11,8 +11,8 @@ const render=(loan=approved,isStaff=false,allowPIPayment=false)=>renderToStaticM
 
 test('an approved borrower sees the exact collateral requirement and the create-trade next step',()=>{
  const html=render();
- assert.match(html,/Auto-approved · Awaiting collateral trade/);
- assert.match(html,/Approved loan: <strong>\$130,000,000<\/strong>/);
+ assert.match(html,/Auto-approved · Awaiting trade/);
+ assert.match(html,/Approved amount: <strong>\$130,000,000<\/strong>/);
  assert.match(html,/Required credited collateral: <strong>\$65,000,000<\/strong>/);
  assert.match(html,/Create a trade in Torn with a bank staff member/);
  assert.match(html,/confirm collateral placed/);
@@ -26,7 +26,8 @@ test('staff sees the staged review and funds in the same trade before completion
  assert.match(html,/Review the approved amount and collateral requirement/);
  assert.match(html,/verify the collateral, add \$130,000,000 to the same trade/);
  assert.match(html,/Verify completed transfer/);
- assert.match(html,/only after staff verifies the completed exchange/);
+ assert.match(html,/until staff verifies the completed transfer in the Torn trade menu/);
+ assert.match(html,/Only then is a loan created and shown in Loans/);
  assert.doesNotMatch(html,/Create a trade in Torn with a bank staff member/);
 });
 
@@ -39,42 +40,44 @@ test('approved trade stages show the next participant and protect the reserved e
  assert.match(render(loan),/remove the funds and reset the trade review first/);
 });
 
-test('sufficient accepted collateral moves to funding without another borrower confirmation',()=>{
+test('legacy received collateral requires reconciliation instead of a separate funding path',()=>{
  const loan={...approved,collateralConfirmed:{amount:65401664}};
  assert.equal(hasAcceptedCollateral(loan),true);
  for(const staff of [false,true]){
   const html=render(loan,staff);
-  assert.match(html,/Auto-approved · Awaiting funding/);
-  assert.match(html,/Staff accepted \$65,401,664 in credited collateral/);
-  assert.doesNotMatch(html,/Create a trade|Awaiting collateral verification|terms confirmation/);
+  assert.match(html,/Auto-approved · Received collateral needs reconciliation/);
+  assert.match(html,/Staff must reconcile the existing collateral before continuing/);
+  assert.doesNotMatch(html,/Create a trade|add the required collateral|record the completed disbursement/);
  }
- assert.match(render(loan,true),/send the funds in Torn, then record the completed disbursement/);
- assert.match(render(loan,false),/waiting for staff to send and record the funds/);
+ assert.match(render(loan,true),/Do not place it again or send funds outside the verified trade process/);
+ assert.match(render(loan,false),/This remains an approved application/);
 });
 
 test('truthy but invalid or insufficient accepted collateral never presents funding as ready',()=>{
  for(const amount of [undefined,64999999,'65000000',NaN,Infinity,65000000.5]){
   const loan={...approved,collateralConfirmed:{amount}};
   assert.equal(hasAcceptedCollateral(loan),false);
-  assert.match(render(loan),/Awaiting collateral trade/);
+  assert.match(render(loan),/Received collateral needs reconciliation/);
   assert.doesNotMatch(render(loan),/Awaiting funding|Staff accepted/);
  }
  assert.equal(hasAcceptedCollateral({...approved,collateralConfirmed:{amount:65e6}}),true);
 });
 
-test('changed terms need borrower confirmation after collateral was accepted',()=>{
- const loan={...approved,collateralConfirmed:{amount:65e6},borrowerConfirmed:null};
- assert.equal(approvalStatus(loan),'Auto-approved · Awaiting terms confirmation');
- assert.match(render(loan),/Confirm the current loan terms before staff sends the funds/);
- assert.match(render(loan,true),/Obtain the borrower’s confirmation of the current loan terms/);
+test('changed terms are confirmed only within the Torn trade menu',()=>{
+ const loan={...approved,borrowerConfirmed:null};
+ assert.equal(approvalStatus(loan),'Auto-approved · Awaiting trade');
+ assert.match(render(loan),/explicitly accept the current loan terms in Loan details/);
+ assert.match(render(loan,true),/explicitly accept the current loan terms when confirming collateral placed in Loan details/);
+ assert.doesNotMatch(render(loan),/<button|confirmation reference|Record disbursement/);
 });
 
-test('collateral-free and PI cases retain their approved paths without requiring an extra trade',()=>{
+test('collateral-free and PI applications use the same verified Torn trade process',()=>{
  const free={...approved,collateralRequired:0};
- assert.match(render(free),/Awaiting funding/);
- assert.match(render(free),/This loan has no collateral requirement/);
- assert.doesNotMatch(render(free),/Create a trade|Awaiting collateral verification/);
- assert.match(render(approved,false,true),/staff can review and record the accepted PI payment value/);
+ assert.match(render(free),/Awaiting trade/);
+ assert.match(render(free),/This application has no collateral requirement/);
+ assert.match(render(free),/Create a trade/);
+ assert.match(render(approved,false,true),/staff reviews the accepted PI payment value within the Torn trade menu/);
+ assert.doesNotMatch(render(free),/Record disbursement|record the completed disbursement here/);
 });
 
 test('active and closed loans no longer display approval waiting instructions',()=>{

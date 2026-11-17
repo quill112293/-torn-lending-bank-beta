@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import TB from '../lib/engine.js';
+import {fundingRecord,seedHistoricalFundedLoan} from './helpers/funding.mjs';
 import {applyAction,project} from '../lib/operations.js';
 import {eligibility} from '../lib/eligibility.js';
 import {removalPlan} from '../lib/manage.js';
@@ -16,33 +17,33 @@ test('only owner can assign test, VIP and special user statuses',()=>{
  assert.throws(()=>status(s,{assignedTiers:{external:4},piRto:false}),/Private Island/);
 });
 test('borrower application detects owner assignments and ignores submitted status claims',()=>{
- let s=status(state(),{assignedTiers:{faction:2,external:3},piRto:true,oilEligible:true});s=act(s,B,'apply',app({tier:2,piRto:false,oilEligible:false}));const a=s.applications[0];assert.equal(a.piRto,true);assert.equal(a.oilEligible,true);assert.equal(a.isTest,true);assert.equal(a.ownerAssignedTier,true);assert.equal(s.loans[0].isTest,true);
+ let s=status(state(),{assignedTiers:{faction:2,external:3},piRto:true,oilEligible:true});s=act(s,B,'apply',app({tier:2,piRto:false,oilEligible:false}));const a=s.applications[0];assert.equal(a.piRto,true);assert.equal(a.oilEligible,true);assert.equal(a.isTest,true);assert.equal(a.ownerAssignedTier,true);assert.equal(s.fundingRequests[0].isTest,true);assert.equal(s.loans.length,0);
  assert.throws(()=>act(s,B,'apply',app({tier:3})),/does not qualify/);
  const live=act(state(),B,'apply',{...app(),isTest:true,oilEligible:true,piRto:true});assert.equal(live.applications[0].isTest,false);assert.equal(live.applications[0].oilEligible,false);
 });
 test('manually assigned external level overrides completed-loan threshold but not collateral rules',()=>{
  const s=status(state(),{assignedTiers:{external:3}}),a=app({lane:'external',product:'bank',tier:3});s.borrowers[B].memberProgram='external';const out=act(s,B,'apply',a);assert.equal(out.applications[0].completed,0);assert.equal(out.applications[0].decision.automatic,true);
 });
-test('test status does not relabel old real loans and ending it does not relabel test loans',()=>{
- let s=act(state(),B,'apply',app());const live=s.loans[0].id;s=status(s);s=act(s,B,'apply',app());const testLoan=s.loans[1].id;
- assert.equal(s.loans.find(l=>l.id===live).isTest,false);assert.equal(s.loans.find(l=>l.id===testLoan).isTest,true);s=act(s,O,'testParticipant',{id:B,enabled:false,reason:'Finished'});assert.equal(s.loans[1].isTest,true);
+test('test status does not relabel old real approvals and ending it does not relabel test approvals',()=>{
+ let s=act(state(),B,'apply',app());const live=s.fundingRequests[0].id;s=status(s);s=act(s,B,'apply',app());const testLoan=s.fundingRequests[1].id;
+ assert.equal(s.fundingRequests.find(l=>l.id===live).isTest,false);assert.equal(s.fundingRequests.find(l=>l.id===testLoan).isTest,true);s=act(s,O,'testParticipant',{id:B,enabled:false,reason:'Finished'});assert.equal(s.fundingRequests[1].isTest,true);
 });
 test('archiving real-money test loan preserves ledger, outstanding snapshot and all real loans',()=>{
- let s=act(state(),B,'apply',app());const live=s.loans[0].id;s=status(s);s=act(s,B,'apply',app());const l=s.loans[1];l.collateralConfirmed={amount:l.collateralRequired,source:'Torn API completed trade',reference:'torn-api-trade:99'};s=act(s,B,'confirmTerms',{id:l.id});s=act(s,O,'fund',{id:l.id,reference:'real outgoing test transfer'});
+ let s=act(state(),B,'apply',app());const live=s.fundingRequests[0].id;seedHistoricalFundedLoan(s,live,{staffId:O,reference:'Historical live loan'});s=status(s);s=act(s,B,'apply',app());const l=s.fundingRequests[0];l.collateralConfirmed={amount:l.collateralRequired,source:'Torn API completed trade',reference:'torn-api-trade:99'};seedHistoricalFundedLoan(s,l.id,{staffId:O,reference:'Historical real outgoing test transfer'});
  const plan=removalPlan(s,'testPerson',B);assert.equal(plan.outstanding,100e6);assert.equal(plan.recordedCashOut,100e6);const ledger=JSON.stringify(s.ledger),cash=TB.cash(s,O);
  s=act(s,O,'removeRecords',{kind:'testPerson',id:B,confirm:'REMOVE '+B,reason:'Test complete'});assert.equal(TB.cash(s,O),cash);assert.equal(JSON.stringify(s.ledger),ledger);assert.equal(s.loans.length,1);assert.equal(s.loans[0].id,live);assert.equal(s.recordArchives[0].records.loans[0].id,l.id);assert.equal(project(s,B).state.recordArchives,undefined);
 });
 test('funded real loans cannot be removed and confirmation is exact',()=>{
- let s=act(state(),B,'apply',app());const l=s.loans[0];l.collateralConfirmed={amount:l.collateralRequired,reference:'real receipt'};s=act(s,B,'confirmTerms',{id:l.id});s=act(s,O,'fund',{id:l.id,reference:'real disbursement'});
+ let s=act(state(),B,'apply',app());const l=fundingRecord(s);l.collateralConfirmed={amount:l.collateralRequired,reference:'real receipt'};seedHistoricalFundedLoan(s,l.id,{staffId:O,reference:'Historical real disbursement'});
  assert.throws(()=>removalPlan(s,'loan',l.id),/Funded real/);assert.throws(()=>act(s,O,'removeRecords',{kind:'allTests',id:'TESTS',confirm:'yes',reason:'test'}),/exact/);
 });
 test('test repayment and overdue dates do not change real trust, completion or strikes',()=>{
- let s=status(state());s=act(s,B,'apply',app());const l=s.loans[0];l.collateralConfirmed={amount:l.collateralRequired,reference:'actual received test collateral'};s=act(s,B,'confirmTerms',{id:l.id});s=act(s,O,'fund',{id:l.id,reference:'actual test funding'});
+ let s=status(state());s=act(s,B,'apply',app());const l=fundingRecord(s);l.collateralConfirmed={amount:l.collateralRequired,reference:'actual received test collateral'};seedHistoricalFundedLoan(s,l.id,{staffId:O,reference:'Historical actual test funding'});
  s=act(s,O,'payment',{id:l.id,cash:100e6,date:TB.today(),reference:'actual repayment',recipient:O});s=act(s,O,'acceptPayment',{id:s.pendingPayments[0].id});assert.equal(s.loans[0].status,'repaid');assert.equal(s.borrowers[B].completed,undefined);assert.equal(s.borrowers[B].trust,undefined);
  s.testDate=TB.addDays(TB.today(),100);TB.refreshStrikes(s);assert.equal(s.borrowers[B].strikes.length,0);
 });
 test('clear all tests keeps real records, funds, statuses and blocks reuse of archived receipts',()=>{
- let s=status(state());s=act(s,B,'apply',app());const l=s.loans[0];s.receipts=[{id:'r',loanId:l.id,reference:'torn-api-trade:123'}];const ledger=JSON.stringify(s.ledger);
+ let s=status(state());s=act(s,B,'apply',app());const l=fundingRecord(s);s.receipts=[{id:'r',loanId:l.id,reference:'torn-api-trade:123'}];const ledger=JSON.stringify(s.ledger);
  s=act(s,O,'removeRecords',{kind:'allTests',id:'TESTS',confirm:'REMOVE TESTS',reason:'Clean start'});assert.equal(s.loans.length,0);assert.equal(s.applications.length,0);assert.equal(s.borrowers[B].testParticipant,true);assert.equal(JSON.stringify(s.ledger),ledger);
  const t={id:123,completed_at:1,user:{id:Number(O)},trader:{id:Number(B)},items:[]};assert.equal(reconcileTrade(s,O,t).status,'Already recorded');
 });
@@ -52,7 +53,7 @@ test('pending payment deletion removes linked requests but not money movements',
 });
 
 test('application-only archive preserves a funded loan, related records and ledger',()=>{
- let s=act(state(),B,'apply',app());const a=s.applications[0],l=s.loans[0];l.collateralConfirmed={amount:l.collateralRequired,reference:'received collateral'};s=act(s,B,'confirmTerms',{id:l.id});s=act(s,O,'fund',{id:l.id,reference:'funded loan'});
+ let s=act(state(),B,'apply',app());const a=s.applications[0],l=fundingRecord(s);l.collateralConfirmed={amount:l.collateralRequired,reference:'received collateral'};seedHistoricalFundedLoan(s,l.id,{staffId:O,reference:'Historical funded loan'});
  s=act(s,B,'paymentIntent',{id:l.id,amount:10e6,recipient:O});s.collateral=[{id:'c',loanId:l.id,reference:'received collateral'}];
  const before=JSON.stringify({loans:s.loans,requests:s.paymentIntents,collateral:s.collateral,ledger:s.ledger});
  const plan=removalPlan(s,'application',a.id);assert.deepEqual(plan.summary,[{type:'applications',count:1}]);
@@ -60,7 +61,7 @@ test('application-only archive preserves a funded loan, related records and ledg
  assert.equal(s.applications.length,0);assert.equal(JSON.stringify({loans:s.loans,requests:s.paymentIntents,collateral:s.collateral,ledger:s.ledger}),before);assert.equal(s.recordArchives[0].records.applications[0].id,a.id);assert.equal(project(s,B).state.loans[0].reference,a.reference);
 });
 test('loan-only archive keeps approved application and removes only that loans dependent records',()=>{
- let s=act(status(state()),B,'apply',app());const l=s.loans[0],apps=JSON.stringify(s.applications),ledger=JSON.stringify(s.ledger);
+ let s=act(status(state()),B,'apply',app());const l=s.fundingRequests[0];seedHistoricalFundedLoan(s,l.id,{staffId:O});const apps=JSON.stringify(s.applications),ledger=JSON.stringify(s.ledger);
  for(const key of ['pendingPayments','paymentIntents','extensionRequests','collateral','receipts'])s[key]=[{id:key+'-selected',loanId:l.id,reference:key+'-receipt'},{id:key+'-other',loanId:'other-loan'}];
  const plan=removalPlan(s,'loan',l.id);assert.deepEqual(plan.applications,[]);assert.deepEqual(plan.loans,[l.id]);
  s=act(s,O,'removeRecords',{kind:'loan',id:l.id,confirm:'REMOVE '+l.id,reason:'Archive loan only'});
@@ -68,6 +69,11 @@ test('loan-only archive keeps approved application and removes only that loans d
  for(const key of ['pendingPayments','paymentIntents','extensionRequests','collateral','receipts'])assert.deepEqual(s[key].map(x=>x.id),[key+'-other']);
  assert.throws(()=>act(s,O,'approve',{id:s.applications[0].id,amount:100e6,reason:'Do not reopen',checks:true}),/pending application/);
 });
-test('unfunded live loan removal also keeps its application',()=>{
- let s=act(state(),B,'apply',app());const a=s.applications[0],l=s.loans[0];s=act(s,O,'removeRecords',{kind:'loan',id:l.id,confirm:'REMOVE '+l.id,reason:'Cancel unfunded loan'});assert.equal(s.loans.length,0);assert.deepEqual(s.applications[0],a);
+test('an unfunded approval archives with its application and cannot be removed as a loan',()=>{
+ let s=act(state(),B,'apply',app());const a=s.applications[0],request=s.fundingRequests[0],before=JSON.stringify(s.ledger);
+ assert.throws(()=>removalPlan(s,'loan',request.id),/Loan no longer exists/);
+ s=act(s,O,'removeRecords',{kind:'application',id:a.id,confirm:'REMOVE '+a.id,reason:'Archive unused approval'});
+ assert.equal(s.loans.length,0);assert.equal(s.fundingRequests.length,0);assert.equal(s.applications.length,0);
+ assert.equal(s.recordArchives[0].records.applications[0].id,a.id);
+ assert.equal(s.recordArchives[0].records.fundingRequests[0].id,request.id);assert.equal(JSON.stringify(s.ledger),before);
 });

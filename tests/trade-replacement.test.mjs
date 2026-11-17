@@ -15,27 +15,27 @@ function fixture(manual=false){
  if(manual)state=applyAction(state,owner,'approve',{id:state.applications[0].id,amount:100e6,checks:true,reason:'Reviewed'});
  state.applications[0].created=new Date(started-60000).toISOString();
  state.staff.push({id:vault,name:'Other staff',role:'vault'});
- const loan=state.loans[0];prepareCollateralTrade(state,borrower,{loanId:loan.id,recipientId:owner},started);
+ const loan=state.fundingRequests[0];prepareCollateralTrade(state,borrower,{loanId:loan.id,recipientId:owner},started);
  claimCollateralTrade(state,borrower,{loanId:loan.id,intentId:loan.collateralTrade.intentId},started+1);
  recordCollateralTrade(state,borrower,{loanId:loan.id,intentId:loan.collateralTrade.intentId,uiTradeId:nativeId,reference:loan.reference},started+2);
  return state;
 }
-const input=(state,extra={})=>({loanId:state.loans[0].id,intentId:state.loans[0].collateralTrade.intentId,recipientId:owner,checked:true,...extra});
+const input=(state,extra={})=>({loanId:state.fundingRequests[0].id,intentId:state.fundingRequests[0].collateralTrade.intentId,recipientId:owner,checked:true,...extra});
 const evidence=(state,changes={})=>({ongoing:[],finished:[],since:Math.floor(started/1000)-1,startedAt:new Date(now-1000).toISOString(),checkedAt:new Date(now).toISOString(),ongoingComplete:true,finishedComplete:true,finishedRequests:1,...changes});
 const replace=(state,changes={},proof=evidence(state))=>applyTradeReplacement(state,borrower,'replace-expired',input(state,changes),proof,now);
-const reconcile=(state,changes={},proof=evidence(state))=>applyTradeReplacement(state,owner,'reconcile-expired',input(state,{returnedAmount:state.loans[0].principal,notes:'Checked the expired trade and my returned Torn cash.',...changes}),proof,now);
-const flow=(state,extra={})=>({version:1,reference:state.loans[0].reference,borrowerId:borrower,staffId:owner,apiTradeId:apiId,nativeTradeId:nativeId,stage:'collateral_placed',reservedBy:null,collateralPlaced:{by:borrower,at:new Date(started+3000).toISOString()},...extra});
-const record=(state,id=apiId,completed=null)=>({id:Number(id),description:state.loans[0].reference,user:{id:Number(borrower)},trader:{id:Number(owner)},completed_at:completed,expires_at:completed?null:Math.floor(now/1000)+600,modified_at:completed?null:Math.floor(now/1000)});
-const financial=state=>({ledger:state.ledger,collateral:state.collateral,receipts:state.receipts,borrowers:state.borrowers,terms:state.loans[0].borrowerConfirmed,issuer:state.loans[0].issuer,principal:state.loans[0].principal,status:state.loans[0].status});
+const reconcile=(state,changes={},proof=evidence(state))=>applyTradeReplacement(state,owner,'reconcile-expired',input(state,{returnedAmount:state.fundingRequests[0].principal,notes:'Checked the expired trade and my returned Torn cash.',...changes}),proof,now);
+const flow=(state,extra={})=>({version:1,reference:state.fundingRequests[0].reference,borrowerId:borrower,staffId:owner,apiTradeId:apiId,nativeTradeId:nativeId,stage:'collateral_placed',reservedBy:null,collateralPlaced:{by:borrower,at:new Date(started+3000).toISOString()},...extra});
+const record=(state,id=apiId,completed=null)=>({id:Number(id),description:state.fundingRequests[0].reference,user:{id:Number(borrower)},trader:{id:Number(owner)},completed_at:completed,expires_at:completed?null:Math.floor(now/1000)+600,modified_at:completed?null:Math.floor(now/1000)});
+const financial=state=>({ledger:state.ledger,collateral:state.collateral,receipts:state.receipts,borrowers:state.borrowers,terms:state.fundingRequests[0].borrowerConfirmed,issuer:state.fundingRequests[0].issuer,principal:state.fundingRequests[0].principal,status:state.fundingRequests[0].status});
 
 test('every auto/staff approved loan can repeatedly replace expired attempts with the same reference and new single-use intents',()=>{
  for(const manual of [false,true]){
-  let state=fixture(manual);const original=TB.clone(state),reference=state.loans[0].reference,terms=TB.clone(state.loans[0].borrowerConfirmed||null),ids=new Set();
+  let state=fixture(manual);const original=TB.clone(state),reference=state.fundingRequests[0].reference,terms=TB.clone(state.fundingRequests[0].borrowerConfirmed||null),ids=new Set();
   for(let iteration=0;iteration<4;iteration++){
-   const loan=state.loans[0],old=TB.clone(loan.collateralTrade);ids.add(old.intentId);
+   const loan=state.fundingRequests[0],old=TB.clone(loan.collateralTrade);ids.add(old.intentId);
    loan.tradeFlow=flow(state,{apiTradeId:String(Number(apiId)+iteration),nativeTradeId:old.uiTradeId});const savedFlow=TB.clone(loan.tradeFlow);
-   const result=replace(state),next=result.state.loans[0];
-   assert.equal(result.replacementCheck.status,'prepared');assert.equal(result.replacementCheck.previousIntentId,old.intentId);
+   const result=replace(state),next=result.state.fundingRequests[0];
+   assert.equal(result.state.loans.length,0);assert.equal(result.replacementCheck.status,'prepared');assert.equal(result.replacementCheck.previousIntentId,old.intentId);
    assert.equal(next.reference,reference);assert.equal(next.collateralTrade.reference,reference);assert.equal(next.collateralTrade.status,'prepared');
    assert.ok(!ids.has(next.collateralTrade.intentId));assert.equal(next.collateralTrade.replacesIntentId,old.intentId);assert.equal(next.tradeFlow,undefined);
    assert.equal(next.collateralTradeHistory.length,iteration+1);assert.deepEqual(next.collateralTradeHistory.at(-1).intent,old);assert.deepEqual(next.collateralTradeHistory.at(-1).flow,savedFlow);
@@ -49,7 +49,7 @@ test('every auto/staff approved loan can repeatedly replace expired attempts wit
    recordCollateralTrade(result.state,borrower,{loanId:next.id,intentId:next.collateralTrade.intentId,uiTradeId:String(Number(nativeId)+iteration+1),reference},started+iteration*1000+2);
    state=result.state;
   }
-  assert.deepEqual(original.loans[0].collateralTradeHistory,undefined);
+  assert.deepEqual(original.fundingRequests[0].collateralTradeHistory,undefined);
  }
 });
 
@@ -59,23 +59,23 @@ test('replacement requires the current own approved attempt, explicit returned-a
  assert.throws(()=>replace(state,{checked:false}),/Confirm the old trade/);
  assert.throws(()=>replace(state,{intentId:'stale'}),/attempt changed/);
  assert.throws(()=>replace(state,{recipientId:'9999999'}),/enabled receiving staff/);
- const recent=TB.clone(state);recent.loans[0].collateralTrade.claimedAt=new Date(now).toISOString();assert.throws(()=>replace(recent),/still recent/);
- for(const status of ['active','withdrawn','repaid']){const invalid=TB.clone(state);invalid.loans[0].status=status;assert.equal(tradeReplacementEligibility(invalid,invalid.loans[0],borrower).available,false);assert.throws(()=>replace(invalid),/Only/);}
- for(const mutate of [s=>{s.loans[0].collateralConfirmed={amount:1,by:owner};},s=>{s.loans[0].fundsReceived={amount:100e6};},s=>{s.ledger.push({loanId:s.loans[0].id});},s=>{s.collateral.push({loanId:s.loans[0].id,event:'received',holder:owner});},s=>{s.recordArchives=[{records:{loans:[{...s.loans[0],status:'active'}]}}];}]){const invalid=TB.clone(state);mutate(invalid);assert.throws(()=>replace(invalid),/records|reconciliation/);}
+ const recent=TB.clone(state);recent.fundingRequests[0].collateralTrade.claimedAt=new Date(now).toISOString();assert.throws(()=>replace(recent),/still recent/);
+ for(const status of ['active','withdrawn','repaid']){const invalid=TB.clone(state);invalid.fundingRequests[0].status=status;assert.equal(tradeReplacementEligibility(invalid,invalid.fundingRequests[0],borrower).available,false);assert.throws(()=>replace(invalid),/Only/);}
+ for(const mutate of [s=>{s.fundingRequests[0].collateralConfirmed={amount:1,by:owner};},s=>{s.fundingRequests[0].fundsReceived={amount:100e6};},s=>{s.ledger.push({loanId:s.fundingRequests[0].id});},s=>{s.collateral.push({loanId:s.fundingRequests[0].id,event:'received',holder:owner});},s=>{s.recordArchives=[{records:{loans:[{...s.fundingRequests[0],status:'active'}]}}];}]){const invalid=TB.clone(state);mutate(invalid);assert.throws(()=>replace(invalid),/records|reconciliation/);}
  assert.deepEqual(state,before);
 });
 
 test('ongoing or completed evidence blocks both replacement and manual reconciliation, including retired API IDs with changed descriptions',()=>{
- const state=fixture();state.loans[0].tradeFlow=flow(state,{reservedBy:owner,fundsAdded:{by:owner},stage:'funds_added'});
+ const state=fixture();state.fundingRequests[0].tradeFlow=flow(state,{reservedBy:owner,fundsAdded:{by:owner},stage:'funds_added'});
  const ongoing=record(state),finished=record(state,apiId,Math.floor(now/1000));
  for(const proof of [evidence(state,{ongoing:[ongoing]}),evidence(state,{finished:[finished]}),evidence(state,{finished:[{...finished,description:'changed'}]})])assert.throws(()=>reconcile(state,{},proof),/ongoing|completed/);
- state.loans[0].tradeFlow.reservedBy=null;delete state.loans[0].tradeFlow.fundsAdded;
+ state.fundingRequests[0].tradeFlow.reservedBy=null;delete state.fundingRequests[0].tradeFlow.fundsAdded;
  for(const proof of [evidence(state,{ongoing:[ongoing]}),evidence(state,{finished:[finished]})])assert.throws(()=>replace(state,{},proof),/ongoing|completed/);
  for(const proof of [evidence(state,{finishedComplete:false}),evidence(state,{since:Math.floor(now/1000)}),evidence(state,{startedAt:new Date(now-130000).toISOString()})])assert.throws(()=>replace(state,{},proof),/complete fresh|expired/);
 });
 
 test('history coverage begins at preparation even when native creation happened before the bank claim saved',()=>{
- const state=fixture();state.loans[0].collateralTrade.claimedAt=new Date(started+60000).toISOString();
+ const state=fixture();state.fundingRequests[0].collateralTrade.claimedAt=new Date(started+60000).toISOString();
  const context=inspectTradeReplacement(state,borrower,'replace-expired',input(state),now);
  assert.equal(context.since,Math.floor(started/1000)-1);
  const finished=record(state,apiId,Math.floor((started+30000)/1000));
@@ -83,23 +83,23 @@ test('history coverage begins at preparation even when native creation happened 
 });
 
 test('only receiving staff can explicitly reconcile all returned funds; absence never releases a reservation',()=>{
- const state=fixture();state.loans[0].tradeFlow=flow(state,{reservedBy:owner,fundsAdded:{by:owner,at:new Date(started+4000).toISOString()},fundsReviewed:{by:borrower},stage:'funds_reviewed'});
- const before=TB.clone(state),reserved=TB.reserved(state,owner),eligible=tradeReplacementEligibility(state,state.loans[0],borrower);
- assert.equal(eligible.available,true);assert.equal(eligible.canReplace,false);assert.match(eligible.reason,/staff member/);assert.equal(tradeReplacementEligibility(state,state.loans[0],owner).canReconcile,true);
+ const state=fixture();state.fundingRequests[0].tradeFlow=flow(state,{reservedBy:owner,fundsAdded:{by:owner,at:new Date(started+4000).toISOString()},fundsReviewed:{by:borrower},stage:'funds_reviewed'});
+ const before=TB.clone(state),reserved=TB.reserved(state,owner),eligible=tradeReplacementEligibility(state,state.fundingRequests[0],borrower);
+ assert.equal(eligible.available,true);assert.equal(eligible.canReplace,false);assert.match(eligible.reason,/staff member/);assert.equal(tradeReplacementEligibility(state,state.fundingRequests[0],owner).canReconcile,true);
  assert.throws(()=>replace(state),/returned/);
  for(const actor of [borrower,vault])assert.throws(()=>applyTradeReplacement(state,actor,'reconcile-expired',input(state,{returnedAmount:100e6,notes:'All funds returned.'}),evidence(state),now),/Only/);
  for(const values of [{checked:false},{returnedAmount:99e6},{returnedAmount:'100000000'},{notes:'ok'}])assert.throws(()=>reconcile(state,values),/Confirm|partial|Describe/);
- const result=reconcile(state),loan=result.state.loans[0];
+ const result=reconcile(state),loan=result.state.fundingRequests[0];
  assert.equal(result.replacementCheck.reconciled,true);assert.equal(loan.tradeFlow.reservedBy,null);assert.equal(loan.tradeFlow.stage,'');assert.equal(loan.tradeFlow.fundsAdded,undefined);
  assert.equal(TB.reserved(result.state,owner),reserved-100e6);assert.deepEqual(financial(result.state),financial(state));
- assert.deepEqual(loan.collateralTrade.fundsReturnReconciled.previousFlow,before.loans[0].tradeFlow);assert.equal(loan.collateralTrade.fundsReturnReconciled.source,'Staff confirmed expired trade funds returned');
+ assert.deepEqual(loan.collateralTrade.fundsReturnReconciled.previousFlow,before.fundingRequests[0].tradeFlow);assert.equal(loan.collateralTrade.fundsReturnReconciled.source,'Staff confirmed expired trade funds returned');
  assert.throws(()=>inspectLoanTrade(result.state,borrower,loan.id),/reconciled/);
- const replaced=replace(result.state);assert.equal(replaced.state.loans[0].collateralTrade.status,'prepared');assert.equal(replaced.state.loans[0].collateralTradeHistory[0].intent.fundsReturnReconciled.amount,100e6);
+ const replaced=replace(result.state);assert.equal(replaced.state.fundingRequests[0].collateralTrade.status,'prepared');assert.equal(replaced.state.fundingRequests[0].collateralTradeHistory[0].intent.fundsReturnReconciled.amount,100e6);
  assert.deepEqual(state,before);
 });
 
 test('new attempts cannot review retired API/native trades or accept stale intent form submissions',async()=>{
- const state=fixture();state.loans[0].tradeFlow=flow(state);const result=replace(state),loan=result.state.loans[0],intent=loan.collateralTrade;
+ const state=fixture();state.fundingRequests[0].tradeFlow=flow(state);const result=replace(state),loan=result.state.fundingRequests[0],intent=loan.collateralTrade;
  assert.throws(()=>inspectLoanTrade(result.state,borrower,loan.id),/Create and open/);
  intent.status='created';intent.uiTradeId='11687900';
  assert.throws(()=>selectLoanTrade(result.state,borrower,loan.id,[],apiId),/earlier attempt/);
@@ -109,7 +109,7 @@ test('new attempts cannot review retired API/native trades or accept stale inten
  await assert.rejects(applyLoanTrade(result.state,borrower,'collateral-placed',{...check,intentId:undefined},newTrade),/Refresh the replacement/);
  await assert.rejects(applyLoanTrade(result.state,borrower,'collateral-placed',{...check,nativeTradeId:nativeId},newTrade),/earlier attempt/);
  await assert.rejects(applyLoanTrade(result.state,borrower,'collateral-placed',check,{...newTrade,id:Number(apiId)}),/earlier attempt/);
- const fresh=await applyLoanTrade(result.state,borrower,'collateral-placed',check,newTrade);assert.equal(fresh.state.loans[0].tradeFlow.apiTradeId,'88445');assert.equal(fresh.state.loans[0].tradeFlow.stage,'collateral_placed');
+ const fresh=await applyLoanTrade(result.state,borrower,'collateral-placed',check,newTrade);assert.equal(fresh.state.fundingRequests[0].tradeFlow.apiTradeId,'88445');assert.equal(fresh.state.fundingRequests[0].tradeFlow.stage,'collateral_placed');
 });
 
 test('finished-history collection checks ongoing first and splits full timestamp ranges without dropping shared timestamps',async()=>{
@@ -128,8 +128,8 @@ test('finished-history collection checks ongoing first and splits full timestamp
 
 test('retired API and native IDs cannot be reused by a different loan, including archived attempts',async()=>{
  for(const archived of [false,true]){
-  const state=fixture(),loan=state.loans[0],oldLoan={id:'OLD-LOAN',applicationId:'OLD-APP',collateralTradeHistory:[{intent:{uiTradeId:nativeId},flow:{apiTradeId:apiId,nativeTradeId:nativeId}}]};
-  if(archived)state.recordArchives=[{records:{loans:[oldLoan]}}];else state.loans.push(oldLoan);
+  const state=fixture(),loan=state.fundingRequests[0],oldLoan={id:'OLD-LOAN',applicationId:'OLD-APP',collateralTradeHistory:[{intent:{uiTradeId:nativeId},flow:{apiTradeId:apiId,nativeTradeId:nativeId}}]};
+  if(archived)state.recordArchives=[{records:{loans:[oldLoan]}}];else state.fundingRequests.push(oldLoan);
   assert.throws(()=>selectLoanTrade(state,borrower,loan.id,[],apiId),/earlier attempt/);
   await assert.rejects(applyLoanTrade(state,borrower,'refresh',input(state),record(state)),/earlier attempt/);
   await assert.rejects(applyLoanTrade(state,borrower,'refresh',input(state),record(state,'88445')),/earlier attempt/);
@@ -147,7 +147,7 @@ test('an ongoing trade appearing while finished history is checked still blocks 
 
 test('renaming an ongoing trade during history checks cannot erase the initial matching observation',async()=>{
  const state=fixture();let reads=0;
- const proof=await collectTradeReplacementEvidence(async path=>path.includes('cat=ongoing')?{trades:[{...record(state),description:++reads===1?state.loans[0].reference:'Renamed during check'}]}:{trades:[],_metadata:{links:{next:null}}},Math.floor(started/1000)-1);
+ const proof=await collectTradeReplacementEvidence(async path=>path.includes('cat=ongoing')?{trades:[{...record(state),description:++reads===1?state.fundingRequests[0].reference:'Renamed during check'}]}:{trades:[],_metadata:{links:{next:null}}},Math.floor(started/1000)-1);
  assert.equal(proof.ongoing.length,2);
  assert.throws(()=>applyTradeReplacement(state,borrower,'replace-expired',input(state),proof,Date.now()),/ongoing Torn trade/);
 });

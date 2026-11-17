@@ -1,3 +1,4 @@
+import {allLoanRecords} from '../lib/funding-lifecycle.js';
 import {currentTornAccount,isGenericTradeHeading} from './trade-handoff.js';
 import {validTornKey} from './api-key.js';
 import {hasPIStatus} from '../lib/pi-collateral.js';
@@ -54,9 +55,9 @@ export function readTradeLoanContext(document,href){
 }
 
 export function tradeDetailLoans(data){
- if(!data?.user?.id||!Array.isArray(data.state?.loans))return [];
+ if(!data?.user?.id||!data.state)return [];
  const staff=staffRoles.has(data.role),id=String(data.user.id);
- return data.state.loans.filter(loan=>loan&&typeof loan.id==='string'&&(staff||String(loan.borrowerId)===id)).slice().reverse();
+ return allLoanRecords(data.state).filter(loan=>loan&&typeof loan.id==='string'&&(staff||String(loan.borrowerId)===id)).slice().reverse();
 }
 
 export function matchTradeLoan(loans,context){
@@ -113,7 +114,7 @@ export function loanTradeActions(data,loan){
  const participant=borrower||receiver||accessible&&staff&&!staffId;
  const attemptReady=!loan?.collateralTrade?.fundsReturnReconciled&&(!(loan?.collateralTradeHistory||[]).length||loan?.collateralTrade?.status==='created');
  const placementReady=attemptReady||loan?.collateralTrade?.status==='claimed'&&!loan?.collateralTrade?.fundsReturnReconciled;
- const approved=accessible&&loan.status==='approved'&&!loan.collateralConfirmed&&Number.isSafeInteger(loan.principal)&&loan.principal>0;
+ const approved=accessible&&!loan.fundingReconciliation&&loan.status==='approved'&&!loan.collateralConfirmed&&Number.isSafeInteger(loan.principal)&&loan.principal>0;
  const pending=approved&&attemptReady;
  const terms=pending&&!!loan.borrowerConfirmed;
  const stage=flow?.stage||'';
@@ -349,8 +350,8 @@ export function createTradeLoanDetailsController({transport,readContext,navigate
    const stage=actionStages[bound.action],record=actionRecords[bound.action];
    if(stage&&(flow.stage!==stage||String(flow[record]?.by)!==bound.context.accountId))throw Error('The bank did not confirm that trade step. Review the latest loan details.');
    if(bound.action==='collateral-placed'&&!bound.loan.borrowerConfirmed&&(String(updated.borrowerConfirmed?.by)!==String(bound.loan.borrowerId)||updated.borrowerConfirmed?.reference!==bound.loan.reference||updated.borrowerConfirmed?.source!=='Accepted with collateral placement'))throw Error('The bank did not confirm acceptance of the approved loan terms. Refresh its details before continuing.');
-   if(bound.action==='complete'&&(updated.status!=='active'||updated.collateralConfirmed?.source!=='Torn API completed loan trade'||updated.fundsReceived?.source!=='Torn API completed loan trade'))throw Error('The bank did not confirm the completed loan transfer. Refresh its details.');
-   const messages={'collateral-placed':'Collateral offer confirmed. Receiving staff can review it.','collateral-reviewed':'Collateral offer reviewed. Receiving staff can add the approved loan funds.','funds-added':'Loan funds added and reserved. The borrower can review the offered funds.','funds-reviewed':'Loan funds reviewed. Continue with the matching trade’s Accept control.',complete:'Completed loan transfer verified and recorded.',refresh:'Trade review refreshed from Torn.',reset:'Trade review reset. Follow the current stage shown below.'};
+   if(bound.action==='complete'&&(updated.status!=='active'||!(result.state?.loans||[]).some(record=>record.id===updated.id)||(result.state?.fundingRequests||[]).some(record=>record.id===updated.id)||updated.collateralConfirmed?.source!=='Torn API completed loan trade'||updated.fundsReceived?.source!=='Torn API completed loan trade'))throw Error('The bank did not confirm the completed loan transfer. Refresh its details.');
+   const messages={'collateral-placed':'Collateral offer confirmed. Receiving staff can review it.','collateral-reviewed':'Collateral offer reviewed. Receiving staff can add the approved loan funds.','funds-added':'Loan funds added and reserved. The borrower can review the offered funds.','funds-reviewed':'Loan funds reviewed. Continue with the matching trade’s Accept control.',complete:'Completed transfer verified. The approved application is now an active loan.',refresh:'Trade review refreshed from Torn.',reset:'Trade review reset. Follow the current stage shown below.'};
    publish({data:result,selectedLoanId:bound.loanId,...resetReview(),tradeCheck:check,success:messages[bound.action]});
   }catch(error){
    failed=true;

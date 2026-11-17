@@ -59,7 +59,7 @@ test('reported non-faction profile shows 1/3 open loans and 2 remaining with leg
  for(const onAdjust of [undefined,async()=>true]){
   const html=renderProfile({state,id,name:'Member',verified,onAdjust});
   assert.match(html,/<dt>Prequalified up to<\/dt><dd>\$134,235,635<\/dd>/);
-  assert.match(html,/<dt>Open loans<\/dt><dd>1\/3<\/dd>/);
+  assert.match(html,/<dt>Loan slots used<\/dt><dd>1\/3<\/dd>/);
   assert.match(html,/<dt>Remaining slots<\/dt><dd>2<\/dd>/);
   assert.doesNotMatch(html,/No set limit/);
  }
@@ -73,7 +73,7 @@ test('VIP and VIP-PI profiles show ten slots in either program',()=>{
   const state=TB.newState(),id='9000001';
   Object.assign(TB.person(state,id),{memberProgram:lane,assignedTiers:{[lane]:tier},piRto,additionalActiveLoans:3});
   const html=renderProfile({state,id,name:'VIP member'});
-  assert.match(html,/<dt>Open loans<\/dt><dd>3\/10<\/dd>/);
+  assert.match(html,/<dt>Loan slots used<\/dt><dd>3\/10<\/dd>/);
   assert.match(html,/<dt>Remaining slots<\/dt><dd>7<\/dd>/);
  }
 });

@@ -40,19 +40,20 @@ test('activity archive preserves the action result and other activity and retain
  s=remove(s,'activity',id);assert.equal(s.audit.some(e=>e.id===id),false);assert.equal(s.audit.some(e=>e.event==='Bank service status'),true);assert.equal(JSON.stringify(s.borrowers),statuses);assert.equal(s.recordArchives[0].records.audit[0].id,id);
 });
 
-test('owner can archive a withdrawn unfunded loan while collateral and funding evidence remain protected',()=>{
+test('owner can archive a withdrawn unfunded application while collateral and funding evidence remain protected',()=>{
  const s=state();s.applications[0].status='withdrawn';
- s.loans=[{id:'withdrawn-loan',applicationId:'a',borrowerId:B,status:'withdrawn',payments:[],extensions:[],collateralConfirmed:false}];
- const archived=remove(s,'loan','withdrawn-loan');
+ s.fundingRequests=[{id:'withdrawn-loan',applicationId:'a',borrowerId:B,status:'withdrawn',payments:[],extensions:[],collateralConfirmed:false}];
+ const archived=remove(s,'application','a');
  assert.equal(archived.loans.length,0);
- assert.equal(archived.applications[0].status,'withdrawn');
- assert.equal(archived.recordArchives[0].records.loans[0].status,'withdrawn');
+ assert.equal(archived.fundingRequests.length,0);assert.equal(archived.applications.length,0);
+ assert.equal(archived.recordArchives[0].records.applications[0].status,'withdrawn');
+ assert.equal(archived.recordArchives[0].records.fundingRequests[0].status,'withdrawn');
  for(const evidence of ['payment','ledger','custody','confirmation']){
   const protectedState=TB.clone(s);
-  if(evidence==='payment')protectedState.loans[0].payments.push({id:'payment',reference:'payment-reference'});
+  if(evidence==='payment')protectedState.fundingRequests[0].payments.push({id:'payment',reference:'payment-reference'});
   if(evidence==='ledger')protectedState.ledger.push({id:'cash',loanId:'withdrawn-loan',type:'disbursement',amount:100});
   if(evidence==='custody')protectedState.collateral=[{id:'held',loanId:'withdrawn-loan',event:'received'}];
-  if(evidence==='confirmation')protectedState.loans[0].collateralConfirmed={reference:'collateral-proof'};
-  assert.throws(()=>remove(protectedState,'loan','withdrawn-loan'),/Funded real loans/);
+  if(evidence==='confirmation')protectedState.fundingRequests[0].collateralConfirmed={reference:'collateral-proof'};
+  assert.throws(()=>remove(protectedState,'application','a'),/received collateral|reconciliation/);
  }
 });

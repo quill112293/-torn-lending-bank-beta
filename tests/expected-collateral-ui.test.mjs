@@ -7,6 +7,7 @@ import {join} from 'node:path';
 import {pathToFileURL} from 'node:url';
 import TB from '../lib/engine.js';
 import {project} from '../lib/operations.js';
+import {fundingRecord} from './helpers/funding.mjs';
 
 const directory=await mkdtemp(join(tmpdir(),'bank-expected-collateral-ui-'));
 test.after(()=>rm(directory,{recursive:true,force:true}));
@@ -21,13 +22,13 @@ await build({stdin:{contents:`
 const {renderChecklist,renderDetails}=await import(pathToFileURL(outfile));
 const borrower='9000001',owner='3542697',other='9000002',staff='9000101';
 
-function setup({snapshot=true,loan:changes={},application:appChanges={}}={}){
+function setup({snapshot=true,legacy=false,loan:changes={},application:appChanges={}}={}){
  const state=TB.newState();
  const application={id:'APP-1',reference:'TLB-FIRST-LOAN',borrowerId:borrower,status:'approved',cashCollateral:20e6,piCollateral:5e6,
   items:[{itemId:206,name:'Xanax',qty:14,reference:838912},{itemId:283,name:'Donator Pack',qty:2,reference:24244000}],...appChanges};
  const loan={id:'LOAN-1',applicationId:application.id,borrowerId:borrower,reference:application.reference,status:'approved',principal:130e6,collateralRequired:65e6,borrowerConfirmed:{reference:application.reference},autoApproved:true,payments:[],...changes};
  if(snapshot)loan.expectedCollateral={version:1,applicationId:application.id,borrowerId:borrower,cashCollateral:application.cashCollateral,piCollateral:application.piCollateral,items:application.items.map(({itemId,name,qty})=>({itemId,name,qty}))};
- state.applications.push(application);state.loans.push(loan);
+ state.applications.push(application);(legacy||['active','repaid'].includes(loan.status)?state.loans:state.fundingRequests).push(loan);
  return {state,loan,userId:borrower};
 }
 function reportedTrade(loan,status){
@@ -43,7 +44,7 @@ test('borrower and staff see exact expected cash, every item quantity and separa
   assert.match(html,/<strong[^>]*>14 × Xanax<\/strong>/);assert.match(html,/<strong[^>]*>2 × Donator Pack<\/strong>/);
   assert.match(html,/Torn item ID: 206/);assert.match(html,/Torn item ID: 283/);
   assert.match(html,/PI payment collateral value/);assert.match(html,/<strong>\$5,000,000<\/strong>/);
-  assert.match(html,/Staff review and record PI payment collateral separately from the Torn trade/);
+  assert.match(html,/Staff review and record the accepted PI payment value within the Torn trade menu/);
   assert.match(html,/Required credited collateral/);assert.match(html,/\$65,000,000/);
   assert.match(html,/Staff must check what was actually received/);
   assert.doesNotMatch(html,/838,912|24,244,000/,'the checklist must not invent current accepted market values from proposal prices');
@@ -52,7 +53,7 @@ test('borrower and staff see exact expected cash, every item quantity and separa
 
 test('each loan uses its own saved quantities and reference even when another application differs',()=>{
  const first=setup(),second=setup({loan:{id:'LOAN-2'},application:{id:'APP-2',reference:'TLB-SECOND-LOAN',cashCollateral:3e6,piCollateral:0,items:[{itemId:67,name:'First Aid Kit',qty:7,reference:100000}]}});
- first.state.applications.push(second.state.applications[0]);first.state.loans.push(second.loan);
+ first.state.applications.push(second.state.applications[0]);first.state.fundingRequests.push(second.loan);
  const html=renderChecklist({...first,loan:second.loan,userId:owner,isStaff:true});
  assert.match(html,/TLB-SECOND-LOAN/);assert.match(html,/<strong[^>]*>7 × First Aid Kit<\/strong>/);assert.match(html,/\$3,000,000/);
  assert.doesNotMatch(html,/TLB-FIRST-LOAN|Xanax|Donator Pack|PI payment collateral value/);
@@ -62,11 +63,13 @@ test('each loan uses its own saved quantities and reference even when another ap
 
 test('legacy loans display the matching live or archived breakdown resolved by server projection',()=>{
  for(const archived of [false,true]){
-  const props=setup({snapshot:false});
+  const props=setup({snapshot:false,legacy:true});
   props.state.staff.push({id:staff,name:'Reviewer',role:'staff',parent:owner});
   if(archived){props.state.recordArchives=[{records:{applications:props.state.applications}}];props.state.applications=[];}
   for(const userId of [borrower,staff]){
-   const state=project(props.state,userId).state,loan=state.loans.find(record=>record.id===props.loan.id);
+   const state=project(props.state,userId).state,loan=fundingRecord(state,props.loan.id);
+   assert.equal(state.loans.length,0);
+   assert.equal(state.fundingRequests.length,1);
    assert.equal(state.recordArchives,undefined);
    assert.match(renderChecklist({state,loan,userId,isStaff:userId===staff}),/>14 × Xanax</);
   }
@@ -76,14 +79,14 @@ test('legacy loans display the matching live or archived breakdown resolved by s
 
 test('borrower and staff views cannot re-resolve an ambiguous legacy plan after private archives are removed',()=>{
  for(const conflict of ['reference','quantity','incomplete']){
-  const props=setup({snapshot:false}),archived=TB.clone(props.state.applications[0]);
+  const props=setup({snapshot:false,legacy:true}),archived=TB.clone(props.state.applications[0]);
   props.state.staff.push({id:staff,name:'Reviewer',role:'staff',parent:owner});
   if(conflict==='reference')archived.reference='TLB-CONFLICTING-ARCHIVED-LOAN';
   if(conflict==='quantity')archived.items[0].qty=99;
   if(conflict==='incomplete')delete archived.items;
   props.state.recordArchives=[{records:{applications:[archived]}}];
   for(const userId of [borrower,staff]){
-   const state=project(props.state,userId).state,loan=state.loans.find(record=>record.id===props.loan.id);
+   const state=project(props.state,userId).state,loan=fundingRecord(state,props.loan.id);
    assert.equal(state.recordArchives,undefined);
    assert.equal(state.applications[0].items[0].qty,14,'the surviving client application must not override the full-history ambiguity');
    assert.equal(loan.expectedCollateral,undefined);

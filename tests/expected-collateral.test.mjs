@@ -24,9 +24,10 @@ function expected(application){
  return {version:1,applicationId:application.id,borrowerId:application.borrowerId,cashCollateral:60e6,piCollateral:10e6,items:[{itemId:206,name:'Xanax',qty:14}]};
 }
 function archivedLegacy(){
- let state=approved();const applicationId=state.applications[0].id;
- state=applyAction(state,owner,'removeRecords',{kind:'application',id:applicationId,confirm:'REMOVE '+applicationId,reason:'Archive completed application review'});
- delete state.loans[0].expectedCollateral;
+ // Preserve a historical archive made before approval records moved out of loans.
+ const state=approved(),application=state.applications.shift();
+ state.recordArchives=[{id:'legacy-application-archive',records:{applications:[application]}}];
+ delete state.fundingRequests[0].expectedCollateral;
  return state;
 }
 
@@ -43,10 +44,10 @@ test('the approved collateral plan preserves exact assets without prices or appl
  assert.equal(application.items[0].qty,14);
 });
 
-test('automatic and staff approvals capture 14 Xanax, cash, and PI payment collateral on the loan',()=>{
+test('automatic and staff approvals capture 14 Xanax, cash, and PI payment collateral on the approved application request',()=>{
  for(const manual of [false,true]){
-  const state=approved(manual),application=state.applications[0],loan=state.loans[0];
-  assert.equal(application.status,'approved');
+  const state=approved(manual),application=state.applications[0],loan=state.fundingRequests[0];
+  assert.equal(application.status,'approved');assert.equal(state.loans.length,0);
   assert.equal(!!loan.autoApproved,!manual);
   assert.deepEqual(loan.expectedCollateral,expected(application));
   assert.equal(loan.reference,application.reference);
@@ -55,7 +56,7 @@ test('automatic and staff approvals capture 14 Xanax, cash, and PI payment colla
   assert.equal(state.ledger.filter(entry=>entry.type==='disbursement').length,0);
  }
  const pending=applyAction(base(),borrower,'apply',{...proposal(),acceptPreapproval:false},TB.today(),verified);
- assert.equal(pending.loans.length,0);
+ assert.equal(pending.fundingRequests.length,0);
  assert.equal(pending.applications[0].expectedCollateral,undefined);
 });
 
@@ -64,23 +65,23 @@ test('submitted plans and trade action payloads cannot override the approved col
  for(const manual of [false,true]){
   let state=applyAction(base(),borrower,'apply',{...proposal(),acceptPreapproval:!manual,expectedCollateral:forged},TB.today(),verified);
   if(manual)state=applyAction(state,owner,'approve',{id:state.applications[0].id,amount:100e6,reason:'Reviewed by staff',checks:true,expectedCollateral:forged});
-  const application=state.applications[0],loanId=state.loans[0].id,reference=state.loans[0].reference;
+  const application=state.applications[0],loanId=state.fundingRequests[0].id,reference=state.fundingRequests[0].reference;
   const before=TB.clone(state);
   state=applyAction(state,borrower,'prepareCollateralTrade',{loanId,recipientId:owner,expectedCollateral:forged});
-  const intentId=state.loans[0].collateralTrade.intentId;
+  const intentId=state.fundingRequests[0].collateralTrade.intentId;
   state=applyAction(state,borrower,'claimCollateralTrade',{loanId,intentId,expectedCollateral:forged});
   state=applyAction(state,borrower,'recordCollateralTrade',{loanId,intentId,reference,uiTradeId:'11687899',expectedCollateral:forged});
-  assert.equal(state.loans[0].collateralTrade.status,'created');
-  assert.equal(state.loans[0].collateralTrade.reference,reference);
-  assert.deepEqual(state.loans[0].expectedCollateral,expected(application));
+  assert.equal(state.fundingRequests[0].collateralTrade.status,'created');
+  assert.equal(state.fundingRequests[0].collateralTrade.reference,reference);
+  assert.deepEqual(state.fundingRequests[0].expectedCollateral,expected(application));
   assert.deepEqual(state.ledger,before.ledger);
-  assert.equal(state.loans[0].collateralConfirmed,false);
+  assert.equal(state.fundingRequests[0].collateralConfirmed,false);
   assert.equal(state.applications[0].expectedCollateral,undefined);
  }
 });
 
 test('saved plans remain stable when application history changes or is removed',()=>{
- const state=approved(),loan=state.loans[0],snapshot=loan.expectedCollateral,before=TB.clone(snapshot);
+ const state=approved(),loan=state.fundingRequests[0],snapshot=loan.expectedCollateral,before=TB.clone(snapshot);
  state.applications[0].items[0].qty=99;
  state.applications[0].cashCollateral=0;
  state.applications[0].piCollateral=0;
@@ -95,13 +96,13 @@ test('saved plans remain stable when application history changes or is removed',
 });
 
 test('legacy loan plans match application IDs and borrowers for every loan, including repeated borrowers',()=>{
- const state=approved(),firstApplication=state.applications[0],firstLoan=state.loans[0];
+ const state=approved(),firstApplication=state.applications[0],firstLoan=state.fundingRequests[0];
  delete firstLoan.expectedCollateral;
  const secondApplication={...TB.clone(firstApplication),id:'APP-second',reference:'TLB-SECOND',cashCollateral:9e6,piCollateral:0,items:[{name:'Energy Drink',qty:3,reference:2e6}]};
  const secondLoan={...TB.clone(firstLoan),id:'LOAN-second',applicationId:secondApplication.id,reference:secondApplication.reference};
  const thirdApplication={...TB.clone(firstApplication),id:'APP-third',borrowerId:other,reference:'TLB-THIRD',cashCollateral:42e6,piCollateral:0,items:[]};
  const thirdLoan={...TB.clone(firstLoan),id:'LOAN-third',applicationId:thirdApplication.id,borrowerId:other,reference:thirdApplication.reference};
- state.applications.push(secondApplication,thirdApplication);state.loans.push(secondLoan,thirdLoan);
+ state.applications.push(secondApplication,thirdApplication);state.fundingRequests.push(secondLoan,thirdLoan);
  const before=TB.clone(state);
  assert.deepEqual(expectedCollateralForLoan(state,firstLoan),expected(firstApplication));
  assert.deepEqual(expectedCollateralForLoan(state,secondLoan).items,[{name:'Energy Drink',qty:3}]);
@@ -118,17 +119,17 @@ test('legacy loan plans match application IDs and borrowers for every loan, incl
 
 test('legacy live and archived application plans are projected without mutation and saved on the next normal action',()=>{
  for(const archive of [false,true]){
-  const state=archive?archivedLegacy():approved();delete state.loans[0].expectedCollateral;
+  const state=archive?archivedLegacy():approved();delete state.fundingRequests[0].expectedCollateral;
   const application=archive?state.recordArchives[0].records.applications[0]:state.applications[0];
   delete application.piCollateral;
   application.status='withdrawn';
   const before=TB.clone(state),plan={...expected(application),piCollateral:0};
-  assert.deepEqual(expectedCollateralForLoan(state,state.loans[0]),plan);
+  assert.deepEqual(expectedCollateralForLoan(state,state.fundingRequests[0]),plan);
   const projected=project(state,borrower).state;
-  assert.deepEqual(projected.loans[0].expectedCollateral,plan);
+  assert.deepEqual(projected.fundingRequests[0].expectedCollateral,plan);
   assert.deepEqual(state,before);
   const updated=applyAction(state,owner,'bankStatus',{online:false});
-  assert.deepEqual(updated.loans[0].expectedCollateral,plan);
+  assert.deepEqual(updated.fundingRequests[0].expectedCollateral,plan);
   assert.deepEqual(updated.ledger,state.ledger);
   assert.deepEqual(state,before);
  }
@@ -138,40 +139,40 @@ test('staff can see plans from archives while borrower projection keeps other bo
  const state=archivedLegacy(),application=state.recordArchives[0].records.applications[0];
  state.staff.push({id:staff,name:'Reviewer',role:'staff',parent:owner});
  const hiddenApplication={...TB.clone(application),id:'APP-private-other',borrowerId:other,reference:'TLB-PRIVATE',items:[{name:'Private other borrower asset',qty:27,reference:1}],note:'Other borrower confidential note'};
- const hiddenLoan={...TB.clone(state.loans[0]),id:'LOAN-private-other',applicationId:hiddenApplication.id,borrowerId:other,reference:hiddenApplication.reference};
- state.recordArchives[0].records.applications.push(hiddenApplication);state.loans.push(hiddenLoan);
+ const hiddenLoan={...TB.clone(state.fundingRequests[0]),id:'LOAN-private-other',applicationId:hiddenApplication.id,borrowerId:other,reference:hiddenApplication.reference};
+ state.recordArchives[0].records.applications.push(hiddenApplication);state.fundingRequests.push(hiddenLoan);
  const before=TB.clone(state);
  for(const viewer of [owner,staff]){
   const projected=project(state,viewer).state;
-  assert.deepEqual(projected.loans[0].expectedCollateral,expected(application));
-  assert.deepEqual(projected.loans[1].expectedCollateral.items,[{name:'Private other borrower asset',qty:27}]);
+  assert.deepEqual(projected.fundingRequests[0].expectedCollateral,expected(application));
+  assert.deepEqual(projected.fundingRequests[1].expectedCollateral.items,[{name:'Private other borrower asset',qty:27}]);
   if(viewer===staff){assert.equal(projected.recordArchives,undefined);assert.ok(!JSON.stringify(projected).includes(hiddenApplication.note));}
  }
  const own=project(state,borrower).state;
- assert.equal(own.loans.length,1);
- assert.deepEqual(own.loans[0].expectedCollateral,expected(application));
+ assert.equal(own.fundingRequests.length,1);
+ assert.deepEqual(own.fundingRequests[0].expectedCollateral,expected(application));
  assert.equal(own.recordArchives,undefined);
  assert.ok(!JSON.stringify(own).includes('Private other borrower asset'));
  assert.ok(!JSON.stringify(own).includes('APP-private-other'));
- assert.deepEqual(project(state,'9000999').state.loans,[]);
+ assert.deepEqual(project(state,'9000999').state.fundingRequests,[]);
  assert.deepEqual(state,before);
 });
 
 test('archived legacy plans resolve before references are synthesized without accepting conflicting recorded references',()=>{
  const state=archivedLegacy(),application=state.recordArchives[0].records.applications[0];
- delete state.loans[0].reference;
+ delete state.fundingRequests[0].reference;
  const before=TB.clone(state);
- assert.deepEqual(project(state,borrower).state.loans[0].expectedCollateral,expected(application));
- assert.deepEqual(applyAction(state,owner,'bankStatus',{online:false}).loans[0].expectedCollateral,expected(application));
+ assert.deepEqual(project(state,borrower).state.fundingRequests[0].expectedCollateral,expected(application));
+ assert.deepEqual(applyAction(state,owner,'bankStatus',{online:false}).fundingRequests[0].expectedCollateral,expected(application));
  assert.deepEqual(state,before);
- state.loans[0].reference='TLB-DIFFERENT-RECORDED-REFERENCE';
- assert.equal(expectedCollateralForLoan(state,state.loans[0]),null);
- assert.equal(project(state,borrower).state.loans[0].expectedCollateral,undefined);
- assert.equal(applyAction(state,owner,'bankStatus',{online:false}).loans[0].expectedCollateral,undefined);
+ state.fundingRequests[0].reference='TLB-DIFFERENT-RECORDED-REFERENCE';
+ assert.equal(expectedCollateralForLoan(state,state.fundingRequests[0]),null);
+ assert.equal(project(state,borrower).state.fundingRequests[0].expectedCollateral,undefined);
+ assert.equal(applyAction(state,owner,'bankStatus',{online:false}).fundingRequests[0].expectedCollateral,undefined);
 });
 
 test('ambiguous legacy sources stay unavailable while identical duplicates preserve valid plans',()=>{
- const state=archivedLegacy(),application=state.recordArchives[0].records.applications[0],loan=state.loans[0];
+ const state=archivedLegacy(),application=state.recordArchives[0].records.applications[0],loan=state.fundingRequests[0];
  state.applications=[TB.clone(application)];
  assert.deepEqual(expectedCollateralForLoan(state,loan),expected(application));
  delete loan.reference;
@@ -179,12 +180,12 @@ test('ambiguous legacy sources stay unavailable while identical duplicates prese
  state.applications[0].reference='TLB-REUSED-APPLICATION-ID';
  assert.equal(expectedCollateralForLoan(state,loan),null,'Conflicting references cannot identify the original request.');
  const projected=project(state,borrower).state;
- assert.equal(projected.loans[0].expectedCollateral,undefined);
- assert.equal(expectedCollateralForLoan(null,projected.loans[0]),null,'Projected views must use the saved snapshot rather than resolve from a partial archive-free state.');
+ assert.equal(projected.fundingRequests[0].expectedCollateral,undefined);
+ assert.equal(expectedCollateralForLoan(null,projected.fundingRequests[0]),null,'Projected views must use the saved snapshot rather than resolve from a partial archive-free state.');
  const saved=applyAction(state,owner,'bankStatus',{online:false});
- assert.equal(saved.loans[0].expectedCollateral,undefined);
- assert.equal(expectedCollateralForLoan(saved,saved.loans[0]),null,'Synthesized references cannot resolve conflicting original requests.');
- assert.equal(applyAction(saved,owner,'bankStatus',{online:true}).loans[0].expectedCollateral,undefined);
+ assert.equal(saved.fundingRequests[0].expectedCollateral,undefined);
+ assert.equal(expectedCollateralForLoan(saved,saved.fundingRequests[0]),null,'Synthesized references cannot resolve conflicting original requests.');
+ assert.equal(applyAction(saved,owner,'bankStatus',{online:true}).fundingRequests[0].expectedCollateral,undefined);
  loan.reference=application.reference;
  assert.equal(expectedCollateralForLoan(state,loan),null,'A matching reference cannot hide a conflicting source with the same application identity.');
  state.applications[0].reference=application.reference;
@@ -206,14 +207,14 @@ test('unknown or incomplete proposals stay unavailable while explicit zero asset
   assert.equal(createExpectedCollateral(incomplete),null,key);
  }
  for(const change of [{cashCollateral:null},{cashCollateral:'0'},{cashCollateral:-1},{cashCollateral:.5},{items:null},{piCollateral:null},{piCollateral:-1}])assert.equal(createExpectedCollateral({...application,...change}),null);
- const state=approved(),loan=state.loans[0];delete loan.expectedCollateral;state.applications=[];
+ const state=approved(),loan=state.fundingRequests[0];delete loan.expectedCollateral;state.applications=[];
  assert.equal(expectedCollateralForLoan(state,loan),null);
  ensureExpectedCollateral(state);
  assert.equal(loan.expectedCollateral,undefined);
 });
 
 test('invalid or mismatched stored plans cannot override a matching complete application',()=>{
- const state=approved(),loan=state.loans[0],application=state.applications[0],plan=expected(application);
+ const state=approved(),loan=state.fundingRequests[0],application=state.applications[0],plan=expected(application);
  for(const corrupt of [{...plan,version:2},{...plan,borrowerId:other},{...plan,applicationId:'APP-wrong'},{...plan,items:[{name:'Xanax',qty:0}]},{...plan,cashCollateral:undefined}]){
   loan.expectedCollateral=corrupt;
   assert.deepEqual(expectedCollateralForLoan(state,loan),plan);
@@ -225,17 +226,17 @@ test('invalid or mismatched stored plans cannot override a matching complete app
 });
 
 test('unresolved invalid snapshots are removed from borrower projection and normal saves without exposing foreign assets',()=>{
- const state=approved(),loan=state.loans[0];
+ const state=approved(),loan=state.fundingRequests[0];
  state.applications=[];
  loan.expectedCollateral={...loan.expectedCollateral,borrowerId:other,items:[{name:'Foreign private collateral snapshot',qty:999}]};
  const before=TB.clone(state),projected=project(state,borrower).state;
- assert.equal(projected.loans[0].expectedCollateral,undefined);
+ assert.equal(projected.fundingRequests[0].expectedCollateral,undefined);
  assert.ok(!JSON.stringify(projected).includes('Foreign private collateral snapshot'));
  assert.deepEqual(state,before,'Projection must not alter stored records.');
  const saved=applyAction(state,owner,'bankStatus',{online:false});
- assert.equal(saved.loans[0].expectedCollateral,undefined);
+ assert.equal(saved.fundingRequests[0].expectedCollateral,undefined);
  assert.deepEqual(saved.ledger,state.ledger);
- assert.equal(saved.loans[0].collateralConfirmed,false);
+ assert.equal(saved.fundingRequests[0].collateralConfirmed,false);
  assert.deepEqual(state,before);
 });
 

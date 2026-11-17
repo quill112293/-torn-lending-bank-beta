@@ -5,6 +5,7 @@ import {createTradeLoanDetailsController,loanTradeActions,parseReviewAmount} fro
 const OWNER='3542697',BORROWER='1234567',OTHER='7654321',KEY='abcdefghijklmnop',REPLACEMENT='1234567890abcdef';
 const REFERENCE='TLB-TRADE-1',NATIVE='11687899',API='987654321',DATE='2026-11-16';
 const clone=value=>structuredClone(value);
+const record=(state,id='LOAN-1')=>[...(state.fundingRequests||[]),...(state.loans||[])].find(entry=>entry.id===id);
 const kinds={'collateral-placed':['',BORROWER,'collateral_placed','collateralPlaced'],'collateral-reviewed':['collateral_placed',OWNER,'collateral_reviewed','collateralReviewed'],'funds-added':['collateral_reviewed',OWNER,'funds_added','fundsAdded'],'funds-reviewed':['funds_added',BORROWER,'funds_reviewed','fundsReviewed'],complete:['funds_reviewed',OWNER,'completed','completion']};
 function data(stage='',actor=BORROWER){
  const records={collateralPlaced:{by:BORROWER},collateralReviewed:{by:OWNER},fundsAdded:{by:OWNER},fundsReviewed:{by:BORROWER}};
@@ -12,7 +13,7 @@ function data(stage='',actor=BORROWER){
  const count=order.indexOf(stage)+1;
  const flow=stage?{version:1,reference:REFERENCE,borrowerId:BORROWER,staffId:OWNER,apiTradeId:API,nativeTradeId:NATIVE,stage,...Object.fromEntries(Object.entries(records).slice(0,count)),...(count>=3?{reservedBy:OWNER}:{})}:undefined;
  const loan={id:'LOAN-1',applicationId:'APP-1',reference:REFERENCE,name:'Borrower',borrowerId:BORROWER,status:'approved',principal:130e6,collateralRequired:65e6,collateralConfirmed:false,borrowerConfirmed:{by:BORROWER},start:DATE,maturity:'2027-01-01',rate:.01,rules:{itemCredit:.9},collateralTrade:{recipientId:OWNER,uiTradeId:NATIVE},...(flow?{tradeFlow:flow}:{})};
- return {user:{id:actor},role:actor===OWNER?'owner':'borrower',state:{revision:0,testDate:DATE,bankOnline:true,staff:[{id:OWNER,role:'owner',disabled:false},{id:OTHER,role:'staff'}],borrowers:{[BORROWER]:{piRto:true,flags:[]}},loans:[loan,{...clone(loan),id:'LOAN-2',reference:'TLB-SECOND',borrowerId:OTHER,tradeFlow:undefined,collateralTrade:{recipientId:OWNER,uiTradeId:'11687900'}}],applications:[]}};
+ return {user:{id:actor},role:actor===OWNER?'owner':'borrower',state:{revision:0,testDate:DATE,bankOnline:true,staff:[{id:OWNER,role:'owner',disabled:false},{id:OTHER,role:'staff'}],borrowers:{[BORROWER]:{piRto:true,flags:[]}},loans:[],fundingRequests:[loan,{...clone(loan),id:'LOAN-2',reference:'TLB-SECOND',borrowerId:OTHER,tradeFlow:undefined,collateralTrade:{recipientId:OWNER,uiTradeId:'11687900'}}],applications:[]}};
 }
 function deferred(){let resolve,reject;const promise=new Promise((yes,no)=>{resolve=yes;reject=no;});return {promise,resolve,reject};}
 const tick=async()=>{for(let i=0;i<5;i++)await Promise.resolve();};
@@ -21,13 +22,13 @@ function scenario(action='collateral-placed'){
  const f={data:data(stage,actor),action,key:KEY,calls:[],models:[],consumedCreated:[],readCount:0,onRead:null,onWrite:null,nativeClicks:0,nativeReady:true};
  f.context={page:true,route:'https://www.torn.com/trade.php#step=view&ID='+NATIVE,accountId:actor,tradeId:NATIVE,reference:REFERENCE,ambiguous:false};
  f.result=(payload)=>{
-  const loan=f.data.state.loans.find(record=>record.id===payload.loanId);
+  const loan=record(f.data.state,payload.loanId);
   loan.tradeFlow??={version:1,reference:loan.reference,borrowerId:loan.borrowerId,staffId:OWNER,apiTradeId:API,nativeTradeId:NATIVE,stage:''};
   const flow=loan.tradeFlow;
   if(payload.action==='collateral-placed'&&payload.acceptTerms===true&&!loan.borrowerConfirmed)loan.borrowerConfirmed={by:loan.borrowerId,reference:loan.reference,source:'Accepted with collateral placement'};
   if(kinds[payload.action]){const next=kinds[payload.action];flow.stage=next[2];flow[next[3]]={by:f.data.user.id,at:'2026-11-16T10:00:00Z'};}
   if(payload.action==='funds-added')flow.reservedBy=OWNER;
-  if(payload.action==='complete'){loan.status='active';loan.issuer=OWNER;loan.collateralConfirmed={by:OWNER,amount:65e6,source:'Torn API completed loan trade'};loan.fundsReceived={by:OWNER,amount:130e6,source:'Torn API completed loan trade'};}
+  if(payload.action==='complete'){f.data.state.fundingRequests=f.data.state.fundingRequests.filter(entry=>entry.id!==loan.id);f.data.state.loans.push(loan);loan.status='active';loan.issuer=OWNER;loan.collateralConfirmed={by:OWNER,amount:65e6,source:'Torn API completed loan trade'};loan.fundsReceived={by:OWNER,amount:130e6,source:'Torn API completed loan trade'};}
   if(payload.action==='reset'){flow.stage='';for(const field of ['collateralPlaced','collateralReviewed','fundsAdded','fundsReviewed'])delete flow[field];flow.reservedBy=null;}
   return {...clone(f.data),tradeCheck:{stage:flow.stage,ready:payload.action==='accept-ready',apiTradeId:API,nativeTradeId:NATIVE}};
  };
@@ -44,13 +45,13 @@ function scenario(action='collateral-placed'){
 }
 
 function createdTrade(f){
- const loan=f.data.state.loans[0];
+ const loan=record(f.data.state);
  Object.assign(loan.collateralTrade,{intentId:'TRADE-1',loanId:loan.id,borrowerId:loan.borrowerId,reference:loan.reference,status:'created'});
  return {loanId:loan.id,intentId:'TRADE-1',nativeTradeId:NATIVE,borrowerId:loan.borrowerId};
 }
 
 test('the borrower can explicitly recover an unlinked open trade from collateral placement',async()=>{
- const f=scenario(),loan=f.data.state.loans[0];
+ const f=scenario(),loan=record(f.data.state);
  loan.collateralTrade={status:'claimed',intentId:'TRADE-1',recipientId:OWNER};
  f.context={...f.context,reference:'Trade between Borrower & Lender',referenceEvidence:'unclassified'};
  await f.controller.setOpen(true);
@@ -68,12 +69,12 @@ test('the borrower can explicitly recover an unlinked open trade from collateral
 });
 
 test('an observed newly created own trade opens its review once after a fresh read, without consent or writes',async()=>{
- const f=scenario(),detail=createdTrade(f);delete f.data.state.loans[0].borrowerConfirmed;
+ const f=scenario(),detail=createdTrade(f);delete record(f.data.state).borrowerConfirmed;
  const before=clone(f.data);f.context={...f.context,reference:'Trade',referenceEvidence:'unclassified'};
  assert.equal(await f.controller.openCreatedTrade(detail),true);
  const model=f.controller.getState();assert.equal(model.open,true);assert.equal(model.selectedLoanId,'LOAN-1');
  assert.deepEqual(model.review,{action:'collateral-placed',loanId:'LOAN-1'});assert.deepEqual(f.calls.map(call=>call.path),['bank']);
- assert.deepEqual(f.data,before);assert.equal(model.data.state.loans[0].borrowerConfirmed,undefined);assert.equal(f.posts().length,0);assert.equal(f.nativeClicks,0);
+ assert.deepEqual(f.data,before);assert.equal(record(model.data.state).borrowerConfirmed,undefined);assert.equal(f.posts().length,0);assert.equal(f.nativeClicks,0);
  assert.deepEqual(f.consumedCreated,[detail]);
  await f.controller.setOpen(false);await f.controller.setOpen(true);const reads=f.calls.length;
  assert.equal(f.controller.getState().review,null);assert.equal(await f.controller.openCreatedTrade(detail),false);assert.equal(f.calls.length,reads);
@@ -110,16 +111,16 @@ test('observed creation waits for its matching native detail without polling and
 
 test('created-trade events are bound to fresh saved intent, own borrower, native identity and the initial stage',async()=>{
  const mutations=[
-  f=>{f.data.state.loans[0].collateralTrade.status='prepared';},
-  f=>{f.data.state.loans[0].collateralTrade.intentId='TRADE-OTHER';},
-  f=>{f.data.state.loans[0].collateralTrade.loanId='LOAN-2';},
-  f=>{f.data.state.loans[0].collateralTrade.uiTradeId='11687900';},
-  f=>{f.data.state.loans[0].collateralTrade.borrowerId=OTHER;},
-  f=>{f.data.state.loans[0].collateralTrade.reference='TLB-OTHER';},
-  f=>{f.data.state.loans[0].collateralTrade.cancellationRequired=true;},
-  f=>{f.data.state.loans[0].status='withdrawn';},
-  f=>{f.data.state.loans[0].borrowerId=OTHER;},
-  f=>{f.data.state.loans[0].tradeFlow={stage:'collateral_placed'};},
+  f=>{record(f.data.state).collateralTrade.status='prepared';},
+  f=>{record(f.data.state).collateralTrade.intentId='TRADE-OTHER';},
+  f=>{record(f.data.state).collateralTrade.loanId='LOAN-2';},
+  f=>{record(f.data.state).collateralTrade.uiTradeId='11687900';},
+  f=>{record(f.data.state).collateralTrade.borrowerId=OTHER;},
+  f=>{record(f.data.state).collateralTrade.reference='TLB-OTHER';},
+  f=>{record(f.data.state).collateralTrade.cancellationRequired=true;},
+  f=>{record(f.data.state).status='withdrawn';},
+  f=>{record(f.data.state).borrowerId=OTHER;},
+  f=>{record(f.data.state).tradeFlow={stage:'collateral_placed'};},
   f=>{f.data.user.id=OTHER;},
   f=>{f.context.reference='TLB-OTHER';f.context.referenceEvidence='loan-reference';},
   f=>{f.context.reference='An unrelated item sale';f.context.referenceEvidence='description';},
@@ -148,7 +149,7 @@ test('duplicate created events and cancellation during the fresh read never reop
  }
  const busy=scenario(),detail=createdTrade(busy);await busy.open();busy.controller.beginReview(busy.action);
  assert.equal(await busy.controller.openCreatedTrade(detail),false);assert.equal(busy.calls.length,1);assert.ok(busy.controller.getState().review);
- const other=scenario(),event=createdTrade(other);other.data.role='owner';other.data.state.loans[1].borrowerId=BORROWER;await other.open();other.controller.select('LOAN-2');
+ const other=scenario(),event=createdTrade(other);other.data.role='owner';record(other.data.state,'LOAN-2').borrowerId=BORROWER;await other.open();other.controller.select('LOAN-2');
  assert.equal(await other.controller.openCreatedTrade(event),false);assert.equal(other.calls.length,1);assert.equal(other.controller.getState().selectedLoanId,'LOAN-2');assert.equal(other.controller.getState().review,null);
 });
 
@@ -156,7 +157,7 @@ test('both participants can open a non-Accept review from an unclassified headin
  for(const action of ['collateral-placed','collateral-reviewed']){
   const f=scenario(action);f.context={...f.context,reference:'Current trade',referenceEvidence:'unclassified'};
   await f.controller.setOpen(true);f.controller.select('LOAN-1');
-  assert.equal(loanTradeActions(f.data,f.data.state.loans[0])[action],true);
+  assert.equal(loanTradeActions(f.data,record(f.data.state))[action],true);
   assert.equal(f.controller.beginReview(action),true,action);
   assert.deepEqual(f.controller.getState().review,{action,loanId:'LOAN-1'});
   assert.deepEqual(f.calls.map(call=>call.path),['bank']);assert.equal(f.posts().length,0);
@@ -177,7 +178,7 @@ test('unclassified-heading fallback preserves real description, reference, ambig
   f=>{f.context.ambiguous=true;},
   f=>{f.context.tradeId='11687900';},
   f=>{f.context.tradeId=null;},
-  f=>{delete f.data.state.loans[0].collateralTrade.uiTradeId;if(f.data.state.loans[0].tradeFlow)delete f.data.state.loans[0].tradeFlow.nativeTradeId;},
+  f=>{delete record(f.data.state).collateralTrade.uiTradeId;if(record(f.data.state).tradeFlow)delete record(f.data.state).tradeFlow.nativeTradeId;},
   f=>{f.context.accountId=OTHER;},
   f=>{f.data.user.id=OTHER;f.context.accountId=OTHER;f.data.role='staff';}
  ];
@@ -203,42 +204,42 @@ test('Accept remains strict and changed heading evidence invalidates an in-fligh
 
 test('roles follow the same-trade stages and only the bound receiving staff can review or fund',()=>{
  for(const [action,[stage,actor]] of Object.entries(kinds)){
-  const d=data(stage,actor),loan=d.state.loans[0];assert.equal(loanTradeActions(d,loan)[action],true,action);
+  const d=data(stage,actor),loan=record(d.state);assert.equal(loanTradeActions(d,loan)[action],true,action);
   const outsider=clone(d);outsider.user.id=OTHER;outsider.role='staff';assert.equal(loanTradeActions(outsider,loan)[action],false,action);
  }
- const d=data('funds_reviewed',OWNER),loan=d.state.loans[0];
+ const d=data('funds_reviewed',OWNER),loan=record(d.state);
  assert.equal(!!loanTradeActions(d,loan)['accept-ready'],false);d.state.staff[0].disabled=true;assert.equal(!!loanTradeActions(d,loan)['accept-ready'],false);assert.equal(loanTradeActions(d,loan).complete,false);
- const borrower=data('funds_reviewed',BORROWER);assert.equal(!!loanTradeActions(borrower,borrower.state.loans[0])['accept-ready'],false);assert.equal(loanTradeActions(borrower,borrower.state.loans[0]).complete,false);
+ const borrower=data('funds_reviewed',BORROWER);assert.equal(!!loanTradeActions(borrower,record(borrower.state))['accept-ready'],false);assert.equal(loanTradeActions(borrower,record(borrower.state)).complete,false);
 });
 
 test('legacy accepted collateral, wrong date and lending holds prevent premature steps but completed-proof review stays available',()=>{
- for(const mutate of [d=>{d.state.loans[0].collateralConfirmed={amount:65e6};},d=>{d.state.loans[0].status='withdrawn';}]){
-  const d=data();mutate(d);assert.equal(loanTradeActions(d,d.state.loans[0])['collateral-placed'],false);
+ for(const mutate of [d=>{record(d.state).collateralConfirmed={amount:65e6};},d=>{record(d.state).status='withdrawn';}]){
+  const d=data();mutate(d);assert.equal(loanTradeActions(d,record(d.state))['collateral-placed'],false);
  }
- for(const mutate of [d=>{d.state.bankOnline=false;},d=>{d.state.borrowers[BORROWER].flags=[{reason:'Hold'}];},d=>{d.state.loans[0].start='2026-11-17';}]){
-  const d=data('collateral_reviewed',OWNER);mutate(d);assert.equal(loanTradeActions(d,d.state.loans[0])['funds-added'],false);assert.equal(loanTradeActions(d,d.state.loans[0]).refresh,true);
+ for(const mutate of [d=>{d.state.bankOnline=false;},d=>{d.state.borrowers[BORROWER].flags=[{reason:'Hold'}];},d=>{record(d.state).start='2026-11-17';}]){
+  const d=data('collateral_reviewed',OWNER);mutate(d);assert.equal(loanTradeActions(d,record(d.state))['funds-added'],false);assert.equal(loanTradeActions(d,record(d.state)).refresh,true);
  }
  const d=data('funds_reviewed',OWNER);d.state.bankOnline=false;d.state.borrowers[BORROWER].flags=[{reason:'Hold'}];
- assert.equal(!!loanTradeActions(d,d.state.loans[0])['accept-ready'],false);assert.equal(loanTradeActions(d,d.state.loans[0]).complete,true);
- delete d.state.loans[0].tradeFlow.nativeTradeId;assert.equal(!!loanTradeActions(d,d.state.loans[0])['accept-ready'],false);
+ assert.equal(!!loanTradeActions(d,record(d.state))['accept-ready'],false);assert.equal(loanTradeActions(d,record(d.state)).complete,true);
+ delete record(d.state).tradeFlow.nativeTradeId;assert.equal(!!loanTradeActions(d,record(d.state))['accept-ready'],false);
 });
 
 test('manually approved first placement requires independent explicit terms consent and saves it only with that action',async()=>{
- const f=scenario();delete f.data.state.loans[0].borrowerConfirmed;await f.open();
- assert.equal(loanTradeActions(f.data,f.data.state.loans[0])['collateral-placed'],true);assert.equal(f.controller.beginReview('collateral-placed'),true);
+ const f=scenario();delete record(f.data.state).borrowerConfirmed;await f.open();
+ assert.equal(loanTradeActions(f.data,record(f.data.state))['collateral-placed'],true);assert.equal(f.controller.beginReview('collateral-placed'),true);
  await f.controller.submitReview({checked:true});assert.equal(f.posts().length,0);assert.equal(f.readCount,1);assert.match(f.controller.getState().reviewError,/explicitly accept the approved loan terms/);
  await f.controller.submitReview({checked:true,acceptTerms:false});assert.equal(f.posts().length,0);
  f.onRead=n=>{if(n===2)f.data.state.revision=7;};
- await f.controller.submitReview({checked:true,acceptTerms:true,termsRevision:999});assert.equal(f.posts().length,1);assert.equal(f.posts()[0].payload.acceptTerms,true);assert.equal(f.posts()[0].payload.termsRevision,7);assert.equal(f.controller.getState().data.state.loans[0].borrowerConfirmed.by,BORROWER);assert.equal(f.controller.getState().data.state.loans[0].tradeFlow.stage,'collateral_placed');
- for(const [action,[stage,actor]] of Object.entries(kinds).filter(([action])=>action!=='collateral-placed')){const d=data(stage,actor);delete d.state.loans[0].borrowerConfirmed;assert.equal(loanTradeActions(d,d.state.loans[0])[action],false,action);}
+ await f.controller.submitReview({checked:true,acceptTerms:true,termsRevision:999});assert.equal(f.posts().length,1);assert.equal(f.posts()[0].payload.acceptTerms,true);assert.equal(f.posts()[0].payload.termsRevision,7);assert.equal(record(f.controller.getState().data.state).borrowerConfirmed.by,BORROWER);assert.equal(record(f.controller.getState().data.state).tradeFlow.stage,'collateral_placed');
+ for(const [action,[stage,actor]] of Object.entries(kinds).filter(([action])=>action!=='collateral-placed')){const d=data(stage,actor);delete record(d.state).borrowerConfirmed;assert.equal(loanTradeActions(d,record(d.state))[action],false,action);}
  const already=scenario();await already.open();already.controller.beginReview('collateral-placed');await already.controller.submitReview({checked:true,acceptTerms:true,termsRevision:999});assert.equal(Object.hasOwn(already.posts()[0].payload,'acceptTerms'),false);assert.equal(Object.hasOwn(already.posts()[0].payload,'termsRevision'),false);
  const staff=scenario('collateral-reviewed');await staff.open();staff.controller.beginReview(staff.action);await staff.controller.submitReview({...staff.input,acceptTerms:true});assert.equal(Object.hasOwn(staff.posts()[0].payload,'acceptTerms'),false);
- const incomplete=scenario();delete incomplete.data.state.loans[0].borrowerConfirmed;await incomplete.open();incomplete.controller.beginReview(incomplete.action);incomplete.onWrite=payload=>{const result=incomplete.result(payload);delete result.state.loans[0].borrowerConfirmed;return result;};await incomplete.controller.submitReview({checked:true,acceptTerms:true});assert.equal(incomplete.controller.getState().success,'');assert.match(incomplete.controller.getState().reviewError,/did not confirm acceptance/);
- const missingRevision=scenario();delete missingRevision.data.state.loans[0].borrowerConfirmed;delete missingRevision.data.state.revision;await missingRevision.open();missingRevision.controller.beginReview(missingRevision.action);await missingRevision.controller.submitReview({checked:true,acceptTerms:true});assert.equal(missingRevision.posts().length,0);assert.match(missingRevision.controller.getState().reviewError,/revision is unavailable/);
+ const incomplete=scenario();delete record(incomplete.data.state).borrowerConfirmed;await incomplete.open();incomplete.controller.beginReview(incomplete.action);incomplete.onWrite=payload=>{const result=incomplete.result(payload);delete record(result.state).borrowerConfirmed;return result;};await incomplete.controller.submitReview({checked:true,acceptTerms:true});assert.equal(incomplete.controller.getState().success,'');assert.match(incomplete.controller.getState().reviewError,/did not confirm acceptance/);
+ const missingRevision=scenario();delete record(missingRevision.data.state).borrowerConfirmed;delete missingRevision.data.state.revision;await missingRevision.open();missingRevision.controller.beginReview(missingRevision.action);await missingRevision.controller.submitReview({checked:true,acceptTerms:true});assert.equal(missingRevision.posts().length,0);assert.match(missingRevision.controller.getState().reviewError,/revision is unavailable/);
 });
 
 test('receiving staff can reset only an existing review or reservation; unbound staff can request API participation refresh',()=>{
- const d=data('collateral_placed',OWNER),loan=d.state.loans[0];assert.equal(loanTradeActions(d,loan).reset,true);
+ const d=data('collateral_placed',OWNER),loan=record(d.state);assert.equal(loanTradeActions(d,loan).reset,true);
  loan.tradeFlow.stage='';delete loan.tradeFlow.collateralPlaced;assert.equal(loanTradeActions(d,loan).reset,false);
  loan.tradeFlow.reservedBy=OWNER;assert.equal(loanTradeActions(d,loan).reset,true);
  delete loan.tradeFlow;delete loan.collateralTrade;assert.equal(loanTradeActions(d,loan).refresh,true);assert.equal(loanTradeActions(d,loan)['collateral-reviewed'],false);
@@ -253,7 +254,7 @@ test('every explicit confirmation uses fresh bank data and one whitelisted POST;
   assert.equal(Object.hasOwn(payload,'tradeId'),false);assert.equal(Object.hasOwn(payload,'amount'),false);
   if(action==='collateral-reviewed'){assert.equal(payload.itemReference,12e6);assert.equal(payload.piAmount,2e6);assert.match(payload.notes,/Reviewed exact/);}
   else assert.equal(Object.hasOwn(payload,'itemReference'),false);
-  assert.equal(f.controller.getState().data.state.loans[0].tradeFlow.stage,kinds[action][2]);assert.equal(f.controller.getState().review,null);assert.ok(f.controller.getState().success);
+  assert.equal(record(f.controller.getState().data.state).tradeFlow.stage,kinds[action][2]);assert.equal(f.controller.getState().review,null);assert.ok(f.controller.getState().success);
  }
 });
 
@@ -277,7 +278,7 @@ test('key, acknowledgement, API identity and value errors fail before preflight 
 
 test('a changed stage, approval terms, PI status, role or account at preflight prevents the write',async()=>{
  const mutations=[
-  f=>{f.data.role='borrower';},f=>{f.data.state.staff[0].disabled=true;},f=>{f.data.state.loans[0].principal++;},f=>{f.data.state.loans[0].reference='TLB-CHANGED';},f=>{f.data.state.loans[0].collateralRequired++;},f=>{f.data.state.loans[0].start='2026-11-17';},f=>{f.data.state.borrowers[BORROWER].piRto=false;},f=>{f.data.state.loans[0].tradeFlow.stage='funds_added';},f=>{f.data.user.id=OTHER;}
+  f=>{f.data.role='borrower';},f=>{f.data.state.staff[0].disabled=true;},f=>{record(f.data.state).principal++;},f=>{record(f.data.state).reference='TLB-CHANGED';},f=>{record(f.data.state).collateralRequired++;},f=>{record(f.data.state).start='2026-11-17';},f=>{f.data.state.borrowers[BORROWER].piRto=false;},f=>{record(f.data.state).tradeFlow.stage='funds_added';},f=>{f.data.user.id=OTHER;}
  ];
  for(const mutate of mutations){const f=scenario('collateral-reviewed');await f.open();f.controller.beginReview(f.action);f.onRead=n=>{if(n===2)mutate(f);};await f.controller.submitReview(f.input);assert.equal(f.posts().length,0);assert.equal(f.controller.getState().success,'');assert.equal(f.controller.getState().review,null);assert.ok(f.controller.getState().reviewError);}
 });
@@ -303,24 +304,24 @@ test('close/reopen preserves the pending-write guard and reconciles without stal
  const f=scenario('collateral-reviewed'),pending=deferred();await f.open();f.controller.beginReview(f.action);f.onWrite=()=>pending.promise;
  const submit=f.controller.submitReview(f.input);await tick();await f.controller.setOpen(false);await f.controller.setOpen(true);
  assert.equal(f.controller.getState().saving,true);assert.equal(f.controller.beginReview(f.action),false);await f.controller.submitReview(f.input);assert.equal(f.posts().length,1);
- pending.resolve(f.result(f.posts()[0].payload));await submit;assert.equal(f.controller.getState().saving,false);assert.equal(f.controller.getState().success,'');assert.equal(f.controller.getState().data.state.loans[0].tradeFlow.stage,'collateral_reviewed');assert.equal(f.posts().length,1);
+ pending.resolve(f.result(f.posts()[0].payload));await submit;assert.equal(f.controller.getState().saving,false);assert.equal(f.controller.getState().success,'');assert.equal(record(f.controller.getState().data.state).tradeFlow.stage,'collateral_reviewed');assert.equal(f.posts().length,1);
 });
 
 test('a lost write response reads back authoritative stage, redacts the key and never automatically replays',async()=>{
  const f=scenario('collateral-reviewed');await f.open();f.controller.beginReview(f.action);f.onWrite=payload=>{f.result(payload);throw Error('Network response lost for key '+KEY);};
  await f.controller.submitReview(f.input);assert.equal(f.posts().length,1);assert.deepEqual(f.calls.map(call=>call.path),['bank','bank','loan-trade','bank']);
- assert.equal(f.controller.getState().data.state.loans[0].tradeFlow.stage,'collateral_reviewed');assert.equal(f.controller.getState().success,'');assert.equal(f.controller.getState().review,null);assert.match(f.controller.getState().reviewError,/No automatic retry/);
+ assert.equal(record(f.controller.getState().data.state).tradeFlow.stage,'collateral_reviewed');assert.equal(f.controller.getState().success,'');assert.equal(f.controller.getState().review,null);assert.match(f.controller.getState().reviewError,/No automatic retry/);
  for(const captured of f.models)assert.equal(captured.includes(KEY),false);
 });
 
 test('a server refusal updates reset stage and reason without announcing the requested step succeeded',async()=>{
  const f=scenario('funds-reviewed');await f.open();f.controller.beginReview(f.action);
- f.onWrite=()=>{const flow=f.data.state.loans[0].tradeFlow;flow.stage='collateral_reviewed';delete flow.fundsAdded;return {...clone(f.data),tradeCheck:{stage:flow.stage,ready:false,reason:'The loan cash changed. Staff must check it again.',apiTradeId:API,nativeTradeId:NATIVE}};};
- await f.controller.submitReview(f.input);assert.equal(f.controller.getState().data.state.loans[0].tradeFlow.stage,'collateral_reviewed');assert.equal(f.controller.getState().success,'');assert.match(f.controller.getState().reviewError,/cash changed/);assert.equal(f.nativeClicks,0);
+ f.onWrite=()=>{const flow=record(f.data.state).tradeFlow;flow.stage='collateral_reviewed';delete flow.fundsAdded;return {...clone(f.data),tradeCheck:{stage:flow.stage,ready:false,reason:'The loan cash changed. Staff must check it again.',apiTradeId:API,nativeTradeId:NATIVE}};};
+ await f.controller.submitReview(f.input);assert.equal(record(f.controller.getState().data.state).tradeFlow.stage,'collateral_reviewed');assert.equal(f.controller.getState().success,'');assert.match(f.controller.getState().reviewError,/cash changed/);assert.equal(f.nativeClicks,0);
 });
 
 test('only exact authoritative stage records can produce a success message',async()=>{
- for(const change of [result=>{result.tradeCheck.stage='funds_reviewed';},result=>{result.state.loans[0].tradeFlow.collateralReviewed.by=OTHER;},result=>{result.state.loans[0].tradeFlow.apiTradeId='1';}]){
+ for(const change of [result=>{result.tradeCheck.stage='funds_reviewed';},result=>{record(result.state).tradeFlow.collateralReviewed.by=OTHER;},result=>{record(result.state).tradeFlow.apiTradeId='1';}]){
   const f=scenario('collateral-reviewed');await f.open();f.controller.beginReview(f.action);f.onWrite=payload=>{const result=f.result(payload);change(result);return result;};await f.controller.submitReview(f.input);assert.equal(f.controller.getState().success,'');assert.equal(f.posts().length,1);assert.ok(f.controller.getState().reviewError);
  }
 });
@@ -331,15 +332,38 @@ test('the bank never forwards native acceptance and final verification remains a
  f.controller.contextChanged();assert.equal(f.calls.length,1);
  assert.equal(f.controller.beginReview('complete'),true);await f.controller.submitReview(f.input);
  assert.equal(f.posts().length,1);assert.equal(f.posts()[0].payload.action,'complete');assert.equal(f.nativeClicks,0);
- assert.equal(f.controller.getState().data.state.loans[0].tradeFlow.stage,'completed');
+ assert.equal(record(f.controller.getState().data.state).tradeFlow.stage,'completed');assert.equal(f.controller.getState().data.state.loans.length,1);assert.equal(f.controller.getState().data.state.fundingRequests.some(entry=>entry.id==='LOAN-1'),false);
 });
 
 test('completed receipt identity can differ from the preserved open trade identity',async()=>{
  for(const invalid of [false,true]){
   const f=scenario('complete');await f.open();assert.equal(f.controller.beginReview('complete'),true);
-  f.onWrite=payload=>{const result=f.result(payload);result.state.loans[0].tradeFlow.completion.apiTradeId='6509836';result.tradeCheck.completedApiTradeId=invalid?'6509837':'6509836';return result;};
+  f.onWrite=payload=>{const result=f.result(payload);record(result.state).tradeFlow.completion.apiTradeId='6509836';result.tradeCheck.completedApiTradeId=invalid?'6509837':'6509836';return result;};
   await f.controller.submitReview(f.input);
   assert.equal(!!f.controller.getState().success,!invalid);assert.equal(f.nativeClicks,0);
-  if(!invalid){assert.equal(f.controller.getState().data.state.loans[0].tradeFlow.apiTradeId,API);assert.equal(f.controller.getState().data.state.loans[0].tradeFlow.nativeTradeId,NATIVE);}
+  if(!invalid){assert.equal(record(f.controller.getState().data.state).tradeFlow.apiTradeId,API);assert.equal(record(f.controller.getState().data.state).tradeFlow.nativeTradeId,NATIVE);}
+ }
+});
+
+test('reconciliation-marked funding records cannot expose or submit normal trade actions',async()=>{
+ for(const [action,[stage,actor]] of Object.entries(kinds)){
+  const d=data(stage,actor),loan=record(d.state);loan.fundingReconciliation={reason:'Conflicting saved transfer evidence'};
+  const actions=loanTradeActions(d,loan);
+  for(const name of [...Object.keys(kinds),'reset','replace-expired','reconcile-expired'])assert.equal(actions[name],false,action+' / '+name);
+ }
+ const f=scenario('complete');record(f.data.state).fundingReconciliation={reason:'Conflicting saved transfer evidence'};await f.open();
+ assert.equal(f.controller.beginReview('complete'),false);assert.equal(f.posts().length,0);assert.equal(f.controller.getState().success,'');
+});
+
+test('completed-transfer success requires movement to loans with no duplicate pending request',async()=>{
+ for(const inconsistent of ['still-pending','both-collections']){
+  const f=scenario('complete');await f.open();assert.equal(f.controller.beginReview('complete'),true);
+  f.onWrite=payload=>{
+   const result=f.result(payload),loan=result.state.loans[0];
+   result.state.fundingRequests.push(clone(loan));if(inconsistent==='still-pending')result.state.loans=[];
+   return result;
+  };
+  await f.controller.submitReview(f.input);
+  assert.equal(f.controller.getState().success,'');assert.match(f.controller.getState().reviewError,/did not confirm the completed loan transfer/);assert.equal(f.nativeClicks,0);
  }
 });

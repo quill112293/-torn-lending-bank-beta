@@ -7,16 +7,17 @@ import {runTradeHandoff,resumeTradeObservation,createTornTradePage,tradeHandoffF
 
 const borrower='9000001',recipient='3542697',clock=1900000000000;
 const clone=value=>structuredClone(value);
+const record=state=>[...(state.fundingRequests||[]),...(state.loans||[])].find(entry=>entry.id==='LOAN-1');
 
 function scenario(reference='TLB-0BE1AA730D7B',options={}){
  let state=TB.newState();state.actorId=borrower;state.revision=4;
  state.applications=[{id:'APP-1',reference,borrowerId:borrower,status:'approved'}];
- state.loans=[{id:'LOAN-1',applicationId:'APP-1',borrowerId:borrower,reference,status:'approved',principal:1e6,collateralRequired:5e5,collateralConfirmed:false,issuer:null,payments:[]}];
+ state.fundingRequests=[{id:'LOAN-1',applicationId:'APP-1',borrowerId:borrower,reference,status:'approved',principal:1e6,collateralRequired:5e5,collateralConfirmed:false,issuer:null,payments:[]}];
  prepareCollateralTrade(state,borrower,{loanId:'LOAN-1',recipientId:recipient},clock);
- const intent=state.loans[0].collateralTrade,handoff={loanId:'LOAN-1',intentId:intent.intentId,recipientId:recipient};
+ const intent=record(state).collateralTrade,handoff={loanId:'LOAN-1',intentId:intent.intentId,recipientId:recipient};
  const writes=[],steps=[],statuses=[],user={id:borrower};let submits=0,manual=false,assertions=0,sequence=0;
  const response=()=>({state:clone(state),user:clone(user),role:'borrower'});
- const fixture={get state(){return state;},set state(value){state=value;},user,handoff,writes,steps,statuses,get submits(){return submits;},set manual(value){manual=value;},intent:()=>state.loans[0].collateralTrade,observation:()=>({uiTradeId:'11687899',reference,recipientId:recipient})};
+ const fixture={get state(){return state;},set state(value){state=value;},user,handoff,writes,steps,statuses,get submits(){return submits;},set manual(value){manual=value;},intent:()=>record(state).collateralTrade,observation:()=>({uiTradeId:'11687899',reference,recipientId:recipient})};
  fixture.transport={ready:Promise.resolve(),getSavedKey:()=> 'abcdefghijklmnop',async request(path,body){
   assert.equal(path,'bank');
   if(!body)return response();
@@ -55,7 +56,7 @@ test('each approved loan uses its own reference, claims once, submits once and r
   assert.equal(f.writes[1].payload.reference,reference);assert.equal(f.writes[1].revision,f.writes[0].revision+1);
   assert.deepEqual(f.statuses.map(update=>update.status),['checking','claiming','claimed','submitting','submitted','observed','recorded']);
   assert.deepEqual(f.steps,['wait for form','fill '+reference,'wait for enabled','assert ready','watch native initiation','assert ready','initiate','observe']);
-  assert.deepEqual(f.state.ledger,before.ledger);assert.deepEqual(f.state.receipts,before.receipts);assert.equal(f.state.loans[0].status,'approved');assert.equal(f.state.loans[0].collateralConfirmed,false);assert.equal(f.state.loans[0].issuer,null);
+  assert.deepEqual(f.state.ledger,before.ledger);assert.deepEqual(f.state.receipts,before.receipts);assert.equal(record(f.state).status,'approved');assert.equal(f.state.loans.length,0);assert.equal(record(f.state).collateralConfirmed,false);assert.equal(record(f.state).issuer,null);
   await f.run();assert.equal(f.submits,1);assert.equal(f.writes.length,2);
  }
 });
@@ -73,7 +74,7 @@ test('ownership, matching setup, references, expiry and approved status are chec
   f=>{f.intent().reference='TLB-FORGED';},
   f=>{f.intent().expiresAt=clock;},
   f=>{f.state.applications[0].status='pending';},
-  f=>{f.state.loans[0].status='active';},
+  f=>{record(f.state).status='active';},
   f=>{withdrawApplication(f.state,borrower,'APP-1');}
  ];
  for(const change of changes){
@@ -150,19 +151,19 @@ test('a failed report leaves the existing native trade available for observation
 test('withdrawal winning before the claim prevents native initiation',async()=>{
  const f=scenario(undefined,{beforeWrite(body,f){if(body.action==='claimCollateralTrade'){withdrawApplication(f.state,borrower,'APP-1');f.state.revision++;}}});
  await assert.rejects(f.run(),/State changed/);
- assert.equal(f.submits,0);assert.equal(f.state.loans[0].status,'withdrawn');assert.equal(f.intent().status,'cancelled');
+ assert.equal(f.submits,0);assert.equal(record(f.state).status,'withdrawn');assert.equal(f.intent().status,'cancelled');
 });
 
 test('a native result arriving after withdrawal saves only its cancellation link',async()=>{
  const f=scenario(undefined,{beforeResult(f){withdrawApplication(f.state,borrower,'APP-1');f.state.revision++;}});
  const before=clone(f.state.ledger);await f.run();
- assert.equal(f.submits,1);assert.equal(f.state.loans[0].status,'withdrawn');assert.equal(f.state.applications[0].status,'withdrawn');
+ assert.equal(f.submits,1);assert.equal(record(f.state).status,'withdrawn');assert.equal(f.state.applications[0].status,'withdrawn');
  assert.equal(f.intent().status,'cancelled');assert.equal(f.intent().cancellationRequired,true);assert.equal(f.intent().uiTradeId,'11687899');assert.deepEqual(f.state.ledger,before);
 });
 
 test('a claim reported after recorded funding only adds the observed link and never starts a new trade',async()=>{
- const f=scenario(undefined,{beforeResult(f){f.state.loans[0].status='active';f.state.ledger.push({type:'disbursement',loanId:'LOAN-1',to:'borrower:'+borrower,amount:1e6});f.state.revision++;}});
- await f.run();assert.equal(f.submits,1);assert.equal(f.state.loans[0].status,'active');assert.equal(f.intent().reportedAfterFunding,true);assert.equal(f.state.ledger.length,1);
+ const f=scenario(undefined,{beforeResult(f){const funded=record(f.state);funded.status='active';f.state.fundingRequests=[];f.state.loans.push(funded);f.state.ledger.push({type:'disbursement',loanId:'LOAN-1',to:'borrower:'+borrower,amount:1e6});f.state.revision++;}});
+ await f.run();assert.equal(f.submits,1);assert.equal(record(f.state).status,'active');assert.equal(f.intent().reportedAfterFunding,true);assert.equal(f.state.ledger.length,1);
  await f.resume();assert.equal(f.submits,1);assert.equal(f.state.ledger.length,1);
 });
 
@@ -173,7 +174,7 @@ test('a remembered prepared intent can never initiate or report from observation
 
 test('replacement handoffs carry retired native IDs from every previous attempt into native observation',async()=>{
  const f=scenario('TLB-FUTURE-LOAN');
- f.state.loans[0].collateralTradeHistory=[
+ record(f.state).collateralTradeHistory=[
   {intent:{intentId:'TRADE-old-1',uiTradeId:'101'},flow:{nativeTradeId:'101',apiTradeId:'9001'}},
   {intent:{intentId:'TRADE-old-2',uiTradeId:'102'},flow:{nativeTradeId:'103',apiTradeId:'9002'}}
  ];
@@ -185,12 +186,12 @@ test('replacement handoffs carry retired native IDs from every previous attempt 
  assert.deepEqual(seen,[['101','102','103'],['101','102','103']]);
  assert.equal(f.intent().uiTradeId,'11687899');assert.equal(f.submits,1);
  assert.equal(f.intent().excludedNativeTradeIds,undefined,'retired IDs are observation context and not written into the new intent');
- assert.equal(f.state.loans[0].collateralTradeHistory.length,2);
+ assert.equal(record(f.state).collateralTradeHistory.length,2);
 });
 
 test('an earlier observed trade cannot be recorded as the replacement even if a page adapter returns it',async()=>{
  const f=scenario(undefined,{existing:true});
- f.state.loans[0].collateralTradeHistory=[{intent:{uiTradeId:'11687899'}}];
+ record(f.state).collateralTradeHistory=[{intent:{uiTradeId:'11687899'}}];
  await assert.rejects(f.run(),/earlier attempt/);
  assert.equal(f.submits,0);assert.deepEqual(f.writes.map(write=>write.action),['claimCollateralTrade']);
  assert.equal(f.intent().uiTradeId,undefined);
@@ -206,7 +207,7 @@ test('old handoff links and saved observation resumes cannot act after the loan 
 
 test('a late native result from a retired attempt cannot overwrite or reopen the replacement',async()=>{
  const f=scenario(undefined,{beforeResult(f){
-  const loan=f.state.loans[0];loan.collateralTradeHistory=[{intent:clone(loan.collateralTrade)}];
+  const loan=record(f.state);loan.collateralTradeHistory=[{intent:clone(loan.collateralTrade)}];
   loan.collateralTrade={...loan.collateralTrade,intentId:'TRADE-new',status:'prepared'};delete loan.collateralTrade.claimedAt;
   f.state.revision++;
  }});

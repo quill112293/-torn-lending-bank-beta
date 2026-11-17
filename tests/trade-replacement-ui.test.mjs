@@ -29,43 +29,41 @@ function setup({ref=reference,attempt=1,status='created',flow,...changes}={}){
  const state=TB.newState(),application={id:'APP-1',reference:ref,borrowerId:borrower,status:'approved'};
  const intent={intentId:'TRADE-'+attempt,loanId:'LOAN-1',borrowerId:borrower,recipientId:owner,reference:ref,status,requestedAt:new Date(now-300000).toISOString(),claimedAt:new Date(now-290000).toISOString(),expiresAt:now-180000,...(status==='created'?{uiTradeId:String(1000+attempt)}:{})};
  const loan={id:'LOAN-1',applicationId:application.id,borrowerId:borrower,reference:ref,status:'approved',principal:100e6,collateralRequired:65e6,borrowerConfirmed:{reference:ref},payments:[],collateralTrade:intent,collateralTradeHistory:Array.from({length:attempt-1},(_,i)=>({intent:{...intent,intentId:'TRADE-'+(i+1),uiTradeId:String(1000+i+1)}})),...(flow?{tradeFlow:{version:1,reference:ref,borrowerId:borrower,staffId:owner,apiTradeId:'50001',nativeTradeId:intent.uiTradeId,stage:'funds_added',reservedBy:owner,fundsAdded:{by:owner},...flow}}:{}),...changes};
- state.applications.push(application);state.loans.push(loan);state.staff.push({id:otherStaff,name:'Other staff',role:'staff'});
+ state.applications.push(application);state.fundingRequests.push(loan);state.staff.push({id:otherStaff,name:'Other staff',role:'staff'});
  return {state,loan,userId:borrower};
 }
-function nextIntent(loan,changes={}){return {...loan.collateralTrade,status:'prepared',intentId:loan.collateralTrade.intentId+'-NEXT',expiresAt:now+120000,...changes};}
-function popup(log){return {closed:false,opener:{},close(){this.closed=true;log.push('close');},location:{replace(url){log.push(['navigate',url]);}}};}
 
-test('every existing or future loan keeps a replacement action after successive expired attempts',()=>{
+test('every existing attempt directs replacement verification to its Torn trade menu',()=>{
  for(const ref of [reference,'TLB-ANOTHER-LOAN','TLB-FUTURE-LOAN'])for(const attempt of [1,2,5])for(const status of ['claimed','created']){
   const props=setup({ref,attempt,status}),html=renderAction(props);
-  assert.ok(button(html,'Replace expired trade'),ref+' attempt '+attempt+' '+status);
-  assert.match(html,new RegExp(ref));assert.match(html,/same loan reference/);
-  if(status==='created')assert.match(html,/>Open trade<\/a>/);
-  assert.doesNotMatch(html,/<form|>Create replacement trade<\/button>/,'opening the loan never creates a trade');
+  assert.match(html,/>Open trade menu<\/a>/,ref+' attempt '+attempt+' '+status);
+  assert.match(html,new RegExp(ref));assert.match(html,/open Loan details on the Torn trade page/);assert.match(html,/same reference/);
+  const target=status==='created'?'https://www.torn.com/trade.php#step=view&amp;ID='+String(1000+attempt):'https://www.torn.com/trade.php';
+  assert.ok(html.includes('href="'+target+'"'));
+  assert.doesNotMatch(html,/<form|name="key"|name="checked"|>Replace expired trade<\/button>|>Create replacement trade<\/button>/);
  }
 });
 
-test('funded and withdrawn loans hide replacement, while accepted collateral shows the reconciliation requirement',()=>{
+test('funded and withdrawn records hide replacement while accepted collateral retains its evidence warning',()=>{
  for(const status of ['withdrawn','active','repaid']){
   const props=setup({status:'created'});props.loan.status=status;
   if(status==='withdrawn')props.state.applications[0].status='withdrawn';
-  assert.equal(button(renderAction(props),'Replace expired trade'),undefined);
+  assert.doesNotMatch(renderAction(props),/>Open trade menu<|>Replace expired trade</);
  }
  const accepted=setup({collateralConfirmed:{amount:65e6}});
  assert.match(renderAction(accepted),/accepted collateral or funding records/);
- assert.equal(button(renderAction(accepted),'Create replacement trade'),undefined);
+ assert.doesNotMatch(renderAction(accepted),/<form|>Create replacement trade<\/button>/);
  assert.equal(renderAction({...setup(),userId:otherStaff}),'');
- assert.equal(button(renderAction({...setup(),userId:otherStaff,isStaff:true}),'Replace expired trade'),undefined);
+ assert.doesNotMatch(renderAction({...setup(),userId:otherStaff,isStaff:true}),/>Open trade menu<|>Replace expired trade</);
 });
 
-test('reserved funds show the borrower the required staff step and offer reconciliation only to the receiving staff',()=>{
+test('reserved funds route both participants to the native menu without standalone return confirmation',()=>{
  const props=setup({flow:{}}),borrowerHtml=renderAction(props);
- assert.ok(button(borrowerHtml,'Replace expired trade'));assert.match(borrowerHtml,/receiving staff member must confirm the loan funds were returned/);
- assert.equal(button(borrowerHtml,'Confirm returned loan funds'),undefined);
- const staffHtml=renderAction({...props,userId:owner,isStaff:true});
- assert.ok(button(staffHtml,'Confirm returned loan funds'));assert.equal(button(staffHtml,'Replace expired trade'),undefined);
- const otherHtml=renderAction({...props,userId:otherStaff,isStaff:true});
- assert.equal(button(otherHtml,'Confirm returned loan funds'),undefined);
+ assert.match(borrowerHtml,/>Open trade menu<\/a>/);assert.match(borrowerHtml,/receiving staff member must confirm the loan funds were returned/);
+ const staffHtml=renderAction({...props,userId:owner,isStaff:true,savedKeyAvailable:true});
+ assert.match(staffHtml,/>Open trade menu<\/a>/);assert.match(staffHtml,/verify returned funds/);
+ for(const html of [borrowerHtml,staffHtml])assert.doesNotMatch(html,/<form|name="returnedAmount"|name="checked"|>Confirm returned loan funds<\/button>|>Replace expired trade<\/button>/);
+ const otherHtml=renderAction({...props,userId:otherStaff,isStaff:true});assert.doesNotMatch(otherHtml,/>Open trade menu<|>Confirm returned loan funds</);
 });
 
 test('replacement form uses the current loan reference, explicit returned-assets confirmation and an ephemeral key',()=>{
@@ -102,34 +100,16 @@ test('saving and an unresolved staff return block form submission with visible g
   assert.match(button(html,extra.saving?'Checking previous trade…':'Create replacement trade'),/disabled=""/);
   if(extra.blockedReason)assert.match(html,/<p class="notice amber" role="status">The receiving staff member/);
  }
- const demo=renderAction({...props,demo:true});assert.match(button(demo,'Replace expired trade'),/disabled=""/);assert.doesNotMatch(demo,/<a\b/);
+ const demo=renderAction({...props,demo:true});assert.match(button(demo,'Open trade menu'),/disabled=""/);assert.doesNotMatch(demo,/<a\b/);
 });
 
-test('replacement navigation sends exactly the bound previous attempt then opens only the fresh saved setup',async()=>{
- const {loan}=setup(),log=[],target=popup(log);
- const result=await beginTradeReplacementNavigation({loan,recipientId:owner,checked:true,key:'0123456789abcdef',now:()=>now,
-  openWindow:()=>{log.push('open');return target;},replace:async input=>{log.push(['replace',input]);return nextIntent(loan);}
- });
- assert.equal(target.opener,null);assert.deepEqual(log[0],'open');
- assert.deepEqual(log[1],['replace',{loanId:'LOAN-1',intentId:'TRADE-1',recipientId:owner,key:'0123456789abcdef',checked:true}]);
- assert.equal(log.length,3);assert.match(result.url,/tlbIntent=TRADE-1-NEXT/);assert.match(log[2][1],/tlbLoan=LOAN-1/);
- assert.equal(result.opened,true);
- const nativeLog=[];await beginTradeReplacementNavigation({loan,recipientId:owner,checked:true,native:true,now:()=>now,replace:async()=>nextIntent(loan),openWindow:()=>assert.fail('native must not open a popup'),navigate:url=>nativeLog.push(url)});
- assert.equal(nativeLog.length,1);assert.match(nativeLog[0],/TRADE-1-NEXT/);
-});
-
-test('a repeated attempt never reuses the old handoff and invalid outcomes do not navigate',async()=>{
- const {loan}=setup({attempt:4});
- for(const changes of [{intentId:loan.collateralTrade.intentId},{reference:'TLB-DIFFERENT'},{borrowerId:otherStaff},{loanId:'OTHER-LOAN'},{recipientId:otherStaff},{status:'claimed'},{expiresAt:now}]){
-  const log=[],target=popup(log);
-  await assert.rejects(beginTradeReplacementNavigation({loan,recipientId:owner,checked:true,now:()=>now,openWindow:()=>target,replace:async()=>nextIntent(loan,changes)}));
-  assert.deepEqual(log,['close']);
+test('retired standalone replacement navigation rejects before reading keys, saving or navigating',async()=>{
+ for(const native of [false,true])for(const attempt of [1,4]){
+  const {loan}=setup({attempt});let calls=0;
+  const unexpected=()=>{calls++;throw Error('The standalone action must not execute');};
+  await assert.rejects(beginTradeReplacementNavigation({loan,recipientId:owner,checked:true,key:'0123456789abcdef',native,now:()=>now,openWindow:unexpected,navigate:unexpected,replace:unexpected}),/Open Loan details on the Torn trade page/);
+  assert.equal(calls,0);
  }
- let calls=0;const unexpected=()=>{calls++;throw Error('Unexpected effect');};
- await assert.rejects(beginTradeReplacementNavigation({loan,recipientId:owner,replace:unexpected,openWindow:unexpected}),/Confirm that the expired trade/);
- assert.equal(calls,0);
- const result=await beginTradeReplacementNavigation({loan,recipientId:owner,checked:true,now:()=>now,openWindow:()=>null,replace:async()=>nextIntent(loan)});
- assert.equal(result.opened,false);assert.match(result.url,/TRADE-4-NEXT/);
 });
 
 test('native menu offers replacement for a selected expired loan without requiring a current native description',()=>{
@@ -138,4 +118,14 @@ test('native menu offers replacement for a selected expired loan without requiri
  const form=renderDetails({...model,review:{action:'replace-expired',loanId:props.loan.id}});assert.match(form,/<form[^>]*aria-label="Replace expired trade"/);assert.doesNotMatch(form,/<form[^>]*aria-label="Confirm collateral placed"/);
  const link=renderDetails({...model,preparedTradeUrl:'https://www.torn.com/trade.php#step=start&userID=3542697&tlbLoan=LOAN-1&tlbIntent=TRADE-1-NEXT'});
  assert.match(link,/href="https:\/\/www.torn.com\/trade.php#step=start&amp;userID=3542697&amp;tlbLoan=LOAN-1&amp;tlbIntent=TRADE-1-NEXT">Continue in Torn/);
+});
+
+test('only the receiving staff native menu mounts the explicit expired-funds reconciliation form',()=>{
+ const props=setup({flow:{}}),base={open:true,loading:false,saving:false,selectedLoanId:props.loan.id,review:null,reviewError:'',savedKeyAvailable:true,context:{page:true,route:'https://www.torn.com/trade.php#step=view&ID=1001',accountId:owner,tradeId:'1001',reference:null,ambiguous:false},data:{role:'owner',user:{id:owner},state:props.state}};
+ assert.ok(button(renderDetails(base),'Confirm returned loan funds'));
+ const staffForm=renderDetails({...base,review:{action:'reconcile-expired',loanId:props.loan.id}});
+ assert.match(staffForm,/<form[^>]*aria-label="Confirm returned loan funds"/);assert.match(inputTag(staffForm,'returnedAmount'),/required=""/);assert.match(inputTag(staffForm,'checked'),/required=""/);
+ const borrowerModel={...base,context:{...base.context,accountId:borrower},data:{...base.data,role:'borrower',user:{id:borrower}}};
+ assert.equal(button(renderDetails(borrowerModel),'Confirm returned loan funds'),undefined);
+ assert.doesNotMatch(renderDetails({...borrowerModel,review:{action:'reconcile-expired',loanId:props.loan.id}}),/<form[^>]*aria-label="Confirm returned loan funds"/);
 });

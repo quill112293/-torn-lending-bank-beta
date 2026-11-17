@@ -27,7 +27,7 @@ export default function ExpectedCollateral({state,loan,userId,isStaff=false,comp
     </div>:<p className='muted'>No items were listed.</p>}
     {plan.piCollateral>0&&<div aria-label='PI payment collateral proposal'>
      <dl className='breakdown'><div><dt>PI payment collateral value</dt><dd><strong>{money(plan.piCollateral)}</strong></dd></div></dl>
-     <p className='micro'>Staff review and record PI payment collateral separately from the Torn trade.</p>
+     <p className='micro'>Staff review and record the accepted PI payment value within the Torn trade menu.</p>
     </div>}
    </>}
   </>:<p className='notice amber'>Original collateral breakdown unavailable. Use the original application and recorded collateral evidence when reviewing this loan.</p>}

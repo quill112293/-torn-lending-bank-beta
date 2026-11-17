@@ -1,3 +1,4 @@
+import {allLoanRecords} from '../lib/funding-lifecycle.js';
 import {currentTornAccount} from './trade-handoff.js';
 
 const hosts=new Set(['torn.com','www.torn.com']);
@@ -28,7 +29,7 @@ export function parseTradeCash(value){
 export function loanCashPolicy(data,route){
  if(!route||String(data?.user?.id)!==route.accountId||!staffRoles.has(data?.role))return null;
  if(!data.state?.staff?.some(person=>String(person.id)===route.accountId&&!person.disabled&&person.role===data.role))return null;
- const matches=(data.state?.loans||[]).filter(loan=>String(loan.borrowerId)!==route.accountId&&[
+ const matches=allLoanRecords(data.state).filter(loan=>String(loan.borrowerId)!==route.accountId&&[
   loan.collateralTrade?.uiTradeId,loan.tradeFlow?.nativeTradeId,
   ...(loan.collateralTradeHistory||[]).map(entry=>entry.intent?.uiTradeId)
  ].some(value=>validId(value)&&String(value)===route.tradeId));
@@ -38,7 +39,7 @@ export function loanCashPolicy(data,route){
  const loan=matches[0],intent=loan.collateralTrade,flow=loan.tradeFlow;
  const staffId=String(flow?.staffId??intent?.recipientId??loan.issuer??'');
  if(staffId!==route.accountId)return blocked('Only the receiving lender recorded on this loan may add loan funds.');
- if(loan.status!=='approved'||loan.collateralConfirmed||loan.fundsReceived||flow?.stage==='completed')return blocked('This loan is not awaiting a new trade transfer. You can remove offered money by entering 0.');
+ if(loan.fundingReconciliation||loan.status!=='approved'||loan.collateralConfirmed||loan.fundsReceived||flow?.stage==='completed')return blocked('This loan is not awaiting a new trade transfer. You can remove offered money by entering 0.');
  if(intent?.cancellationRequired||intent?.fundsReturnReconciled||intent?.status==='cancelled')return blocked('This loan trade was cancelled or replaced. You can remove offered money by entering 0.');
  const ids=[intent?.uiTradeId,flow?.nativeTradeId].filter(value=>validId(value)).map(String);
  if(!ids.length||ids.some(value=>value!==route.tradeId))return blocked('This is an old or mismatched loan trade. Open the current trade before adding money.');

@@ -260,3 +260,23 @@ Update both scripts to **1.1.0-beta.78** and reload Torn. No database migration 
 ## Beta.79 completed-loan level synchronization
 
 Staff-entered completed-loan counts now synchronize faction trust progression. Existing saved counts also inform faction eligibility on refresh, fixing profiles that showed one completed loan but Level 1. Non-faction eligibility continues to use its own completed-loan thresholds; regression checks cover Levels 1–3, VIP, VIP-PI and owner overrides. Profiles, prequalification and new applications share the resulting eligibility. Existing loan terms and explicit owner-assigned levels remain unchanged. Faction promotion retains the existing per-level completion thresholds. Update scripts to **1.1.0-beta.79** and refresh the bank; counts already saved do not need to be entered again.
+
+
+## Beta.80 Apply navigation tab
+
+Removes the standalone **Apply** tab from the navigation bar. The application form remains accessible from the existing Overview and Applications actions, including standard and exception requests. Saved tab orders drop the removed entry while retaining the order of other tabs. Loan rules, application handling, records and staff permissions are unchanged. Update the installed userscript to **1.1.0-beta.80** and reload Torn.
+
+
+## Beta.81 applications become loans only after the verified trade
+
+Automatic and manual approval keep the request in Applications as an approved application awaiting its trade. Approved terms, the collateral proposal, the trade reference and review progress are stored in `fundingRequests`, without creating a funded loan, outstanding debt, repayments or interest. Approved applications still reserve a lending slot, and existing staff cash reservations remain in force.
+
+All loan-setup verification uses the Loan details menu on the Torn trade page: borrower confirms collateral placed and accepts any revised terms; receiving staff reviews collateral (including any accepted PI payment value); staff adds and confirms the exact principal; borrower verifies those funds; both parties complete Torn acceptance; receiving staff verifies the completed transfer. Only that final server-checked completion moves the application funding record into Loans, records the disbursement and collateral evidence, and releases its reservation. The ID and reference remain the same. Completion retries cannot create another loan or duplicate the transfer.
+
+Separate collateral verification, PI-collateral confirmation, terms confirmation and manual disbursement actions are disabled on the server and removed from the application interface. Older scripts cannot use those shortcuts. Borrowers can still create the initial trade from the approved application; review and expired-trade reconciliation continue through the trade-page menu. Existing repayment, bank-reserve, staff-funds and collateral-return accounting remain available.
+
+Existing unfunded approvals and withdrawals are normalized into application funding records without losing trade IDs, reservations, custody or replacement history. Already funded loans retain their saved terms. Conflicting legacy records or an unfunded status with existing transfer/repayment evidence are retained with a reconciliation notice, never silently funded or offered a second transfer. Collateral already received through the earlier separate process must be reconciled without collecting it again.
+
+New loans use the verified transfer completion date as their start. If completion crossed into a later day, the agreed term length is preserved and the originally approved dates are retained. No interest accrues before the actual transfer. The separate Apply navigation tab remains removed; Applications → New still opens the application form.
+
+Update the lender and borrower userscripts to **1.1.0-beta.81** and reload Torn. Both sides need the updated script to work with application funding records. The state transition is saved with the existing revision-checked bank write; no new SQL migration or bank reset is required.

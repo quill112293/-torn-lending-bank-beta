@@ -34,10 +34,11 @@ export default function MemberProfile({state,id,name,verified,busy,onSave,onAdju
   ['Verified net worth',evidence?.networth>0?money(evidence.networth):'Unavailable'],
   ['Net worth checked',evidence?.checkedAt?.slice(0,10)||'Unavailable'],
   ['Prequalified up to',qualification?money(qualification.maximum):'Unavailable'],
-  ['Open loans',slots?(slots.limit===null?String(slots.open):slots.open+'/'+slots.limit):'Unavailable'],
+  ['Loan slots used',slots?(slots.limit===null?String(slots.open):slots.open+'/'+slots.limit):'Unavailable'],
   ['Remaining slots',slots?(slots.remaining??'No set limit'):'Unavailable'],
   ['Completed loans',onAdjust?countDraft.completed:completed],
   ['Active loans',onAdjust?countDraft.active:counts.active],
+  ['Approved applications awaiting transfer',counts.awaitingFunding],
   ['Account standing',TB.grade({...state,borrowers:{...state.borrowers}},id).label],
  ];
  return <section className='card'>
@@ -52,7 +53,7 @@ export default function MemberProfile({state,id,name,verified,busy,onSave,onAdju
    void onAdjust({id,completed:Number(values.get('completed')),active:Number(values.get('active')),reason:values.get('reason')}).then(saved=>{if(saved)form.elements.reason.value='';});
   }}>
    <h3>Adjust loan counts</h3>
-   <p className='muted'>Active loans recorded in the bank count automatically. Add any active loans tracked outside the bank. Approved loans awaiting funding also use a loan slot.</p>
+   <p className='muted'>Active loans recorded in the bank count automatically. Add any active loans tracked outside the bank. Approved applications reserve a loan slot until funded or withdrawn; they are not active loans.</p>
    <label className='field'><span>Completed loans</span><input required name='completed' type='number' min={0} step={1} value={countDraft.completed} onChange={event=>setCountDraft({...countDraft,completed:event.target.value})}/></label>
    <label className='field'><span>Total active loans</span><input required name='active' type='number' min={counts.recordedActive} step={1} value={countDraft.active} onChange={event=>setCountDraft({...countDraft,active:event.target.value})}/></label>
    {isTest&&<p className='muted'>Active count adjustments apply to this member’s test loans.</p>}

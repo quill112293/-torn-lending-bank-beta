@@ -14,7 +14,7 @@ function fixture(t,{href=route,disabled=false}={}){
  window.HTMLElement.prototype.getClientRects=function(){return this.isConnected&&!this.hidden&&this.type!=='hidden'&&window.getComputedStyle(this).display!=='none'?[{}]:[];};
  window.HTMLElement.prototype.scrollIntoView=function(){};
  const f={window,document,offset:0,calls:[],clicks:0,submits:0,fail:false,onRead:null};
- f.data={user:{id:OWNER},role:'owner',state:{staff:[{id:OWNER,role:'owner'}],loans:[{id:'L1',reference:'TLB-TEST',borrowerId:BORROWER,status:'approved',principal:200e6,collateralTrade:{status:'created',uiTradeId:ID,recipientId:OWNER}}]}};
+ f.data={user:{id:OWNER},role:'owner',state:{staff:[{id:OWNER,role:'owner'}],loans:[],fundingRequests:[{id:'L1',reference:'TLB-TEST',borrowerId:BORROWER,status:'approved',principal:200e6,collateralTrade:{status:'created',uiTradeId:ID,recipientId:OWNER}}]}};
  f.field=()=>document.querySelector('input[type=text]');f.hidden=()=>document.querySelector('input[type=hidden]');f.button=()=>document.querySelector('.torn-btn');f.banner=()=>document.getElementById('tlb-beta-cash-guard');
  document.getElementById('native').addEventListener('submit',e=>{e.preventDefault();f.submits++;});
  f.wire=()=>{f.field().addEventListener('input',e=>{f.hidden().value=e.target.value;});f.button().addEventListener('click',()=>f.clicks++);};
@@ -46,7 +46,7 @@ test('capture blocks native handlers and submit events even if another script en
 
 test('amount changes are re-read before a stale click and failed refresh retains protection on a known loan',async t=>{
  const f=fixture(t);await until(()=>f.banner()?.textContent.includes('You entered'));
- await f.fill('200000000');f.offset=60000;f.data.state.loans[0].principal=130e6;
+ await f.fill('200000000');f.offset=60000;f.data.state.fundingRequests[0].principal=130e6;
  f.button().click();assert.equal(f.submits,0);
  await until(()=>f.banner()?.textContent.includes('$130,000,000'));assert.equal(f.button().disabled,true);
  await f.fill('130000000');f.button().click();assert.equal(f.submits,1);

@@ -3,13 +3,15 @@ import React,{useState,useEffect} from 'react';
 import MemberProfile from './MemberProfile';
 import HistoryLog from './HistoryLog';
 import {eligibility} from '../lib/eligibility.js';
+import {allLoanRecords} from '../lib/funding-lifecycle.js';
 export default function UserPanel({state:s,busy,onAction,onLoadMembers,onClearHistory,isOwner=false}){
  const [members,setMembers]=useState([]),[memberError,setMemberError]=useState('');
  async function loadMembers(){try{const v=await onLoadMembers();setMembers(v.members||[]);setMemberError('');}catch(e){setMemberError(e.message);}}
  useEffect(()=>{loadMembers();},[]);
  const [search,setSearch]=useState(''),[selected,setSelected]=useState(''),[form,setForm]=useState(null),[membership,setMembership]=useState(null);
- const ids=[...new Set([...members.map(m=>m.torn_id),...Object.keys(s.borrowers),...s.applications.map(a=>a.borrowerId),...s.loans.map(l=>l.borrowerId)])];
- const name=id=>members.find(m=>m.torn_id===id)?.name||s.applications.find(a=>a.borrowerId===id)?.name||s.loans.find(l=>l.borrowerId===id)?.name||s.staff.find(p=>p.id===id)?.name||(members.some(m=>m.torn_id===id)?'Invited user — awaiting verification':'Torn user');
+ const records=allLoanRecords(s);
+ const ids=[...new Set([...members.map(m=>m.torn_id),...Object.keys(s.borrowers),...s.applications.map(a=>a.borrowerId),...records.map(l=>l.borrowerId)])];
+ const name=id=>members.find(m=>m.torn_id===id)?.name||s.applications.find(a=>a.borrowerId===id)?.name||records.find(l=>l.borrowerId===id)?.name||s.staff.find(p=>p.id===id)?.name||(members.some(m=>m.torn_id===id)?'Invited user — awaiting verification':'Torn user');
  function open(id){const p=s.borrowers[id]||{};setSelected(id);setMembership({lane:memberProgram(s,id)||'',reason:''});setForm({piRto:!!p.piRto,oilEligible:!!p.oilEligible,testParticipant:!!p.testParticipant,assignedTiers:{faction:p.assignedTiers?.faction??'',external:p.assignedTiers?.external??''},reason:''});}
  return <div className='stack'><section className='card'><div className='section-title'><h1>Users</h1><button className='secondary' onClick={loadMembers}>Refresh beta members</button></div>{memberError&&<p role='alert' className='notice red'>{memberError}</p>}<p>Select a member to view their profile and manage their bank settings. The borrower’s next application detects your saved settings. Existing loan terms stay unchanged.</p><input className='search' placeholder='Find Sillyslaya, Torn ID or another user' value={search} onChange={e=>setSearch(e.target.value)}/>{/^\d{1,10}$/.test(search)&&!ids.includes(search)&&<button className='secondary' onClick={()=>open(search)}>Manage Torn ID {search}</button>}{ids.filter(id=>(name(id)+' '+id).toLowerCase().includes(search.toLowerCase())).map(id=><button className='record' key={id} onClick={()=>open(id)}><span className='record-main'><strong>{name(id)} [{id}]</strong><span>{"BETA member"} · {programLabel(memberProgram(s,id))}{memberProgram(s,id)&&' · '+s.rules[memberProgram(s,id)][eligibility(s,id,memberProgram(s,id)).assignedTier]?.name}{s.borrowers[id]?.piRto?' · Private Island':''}{s.borrowers[id]?.oilEligible?' · Oil Rig':''}</span></span><span>View profile →</span></button>)}</section>
  {selected&&<MemberProfile key={selected} state={s} id={selected} busy={busy} onAdjust={details=>onAction('adjustLoanCounts',details,'Loan counts saved')} name={name(selected)} verified={members.find(m=>m.torn_id===selected)}/>}

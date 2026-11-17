@@ -9,7 +9,7 @@ import {readCreatedTradeReview,clearCreatedTradeReview} from './trade-handoff.js
 import {createTradeLoanDetailsController,readTradeLoanContext,tradeDetailLoans,tradeLoanSelectionNotice,loanTradeActions} from './trade-loan-match.js';
 
 const money=value=>Number.isSafeInteger(value)&&value>=0?'$'+value.toLocaleString('en-US'):'Unavailable';
-const status=loan=>loan.status==='approved'?'Approved · awaiting funding':loan.status==='withdrawn'?'Withdrawn':String(loan.status||'Unknown').replace(/^./,letter=>letter.toUpperCase());
+const status=loan=>loan.fundingReconciliation?'Funding evidence needs reconciliation':loan.status==='approved'?'Approved application · awaiting transfer':loan.status==='withdrawn'?'Withdrawn':String(loan.status||'Unknown').replace(/^./,letter=>letter.toUpperCase());
 const bankUrl='https://www.torn.com/bank.php';
 const date=value=>Number.isFinite(Date.parse(value))?new Date(value).toLocaleString('en-GB',{timeZone:'UTC'})+' UTC':'Unavailable';
 const order=['collateral_placed','collateral_reviewed','funds_added','funds_reviewed','completed'];
@@ -32,7 +32,7 @@ function TradeProgress({data,loan}){
    const record=marker&&flow?.[marker],done=completed||index<4&&rank>=index,current=!completed&&(index<4?rank===index-1:index===4&&rank===3);
    return <li className='record static' key={label} aria-current={current?'step':undefined}><span className='badge'>{index+1}</span><div className='record-main'><strong>{label}</strong><span>{done?['Placed','Checked','Added','Checked','Verified'][index]:current?'Current step':'Waiting'}</span>{record?.by&&<span>{actor(data,loan,record.by)} · {date(record.at)}</span>}</div></li>;
   })}</ol>
-  {flow?.reservedBy&&!completed&&<p className='notice'>Reserved for this trade: <strong>{money(loan.principal)}</strong> with lender {actor(data,loan,flow.reservedBy)}. The loan awaits completed-transfer verification.</p>}
+  {flow?.reservedBy&&!completed&&<p className='notice'>Reserved for this trade: <strong>{money(loan.principal)}</strong> with lender {actor(data,loan,flow.reservedBy)}. The approved application becomes a loan after staff verifies the completed transfer.</p>}
   {flow?.collateralReviewed&&<dl className='breakdown'>
    <div><dt>Reviewed cash in trade</dt><dd>{money(flow.collateralReviewed.cash)}</dd></div>
    <div><dt>Reviewed item market value</dt><dd>{money(flow.collateralReviewed.itemReference)}</dd></div>
@@ -56,47 +56,56 @@ export function TradeLoanDetails({model,onOpen=()=>{},onRefresh=()=>{},onSelect=
  const linkedTradeId=String(flow?.nativeTradeId??loan?.collateralTrade?.uiTradeId??'');
  const linkedTradeUrl=/^[1-9]\d{0,15}$/.test(linkedTradeId)?tradeViewUrl(linkedTradeId):'';
  const invalidReason=flow?.invalidReason||model.tradeCheck?.reason;
- const completion=flow?.stage==='completed'?flow.completion:null;
+ const needsReconciliation=!!loan?.fundingReconciliation;
+ const completion=flow?.stage==='completed'||needsReconciliation?flow?.completion:null;
  return <details className='trade-loan-details' open={model.open} onToggle={event=>onOpen(event.currentTarget.open)}>
   <summary><strong>Loan details</strong><span>Torn Lending Bank</span></summary>
   <div className='trade-loan-content'>
    <div className='actions'><button className='secondary' type='button' disabled={model.loading||model.saving} onClick={onRefresh}>Refresh loan details</button><a className='secondary' href={bankUrl}>Open bank</a></div>
-   {model.loading&&<p role='status'>Loading your bank loans…</p>}
+   {model.loading&&<p role='status'>Loading your approved applications and loans…</p>}
    {model.error&&<p role='alert' className='notice amber'>{model.error}</p>}
    {model.success&&<p role='status' className='notice'>{model.success}</p>}
    {model.preparedTradeUrl&&<p className='notice'><a className='primary' href={model.preparedTradeUrl}>Continue in Torn</a> to create the replacement trade.</p>}
    {model.data&&<>
-    <label className='field'>Select loan<select value={model.selectedLoanId} disabled={model.saving} onChange={event=>onSelect(event.target.value)}>
-     <option value=''>Choose a loan</option>
+    <label className='field'>Select application or loan<select value={model.selectedLoanId} disabled={model.saving} onChange={event=>onSelect(event.target.value)}>
+     <option value=''>Choose an application or loan</option>
      {loans.map(record=><option key={record.id} value={record.id}>{record.reference||record.id} · {record.name||'Borrower'} [{record.borrowerId}] · {status(record)}</option>)}
     </select></label>
-    {!loans.length?<p>No loans are available for this bank account.</p>:<p className={'notice '+notice.tone}>{notice.text}</p>}
+    {!loans.length?<p>No approved applications or loans are available for this bank account.</p>:<p className={'notice '+notice.tone}>{notice.text}</p>}
     {loan&&<>
      {linkedTradeUrl&&notice.tone==='amber'&&<a className='secondary left' href={linkedTradeUrl}>Open linked Torn trade</a>}
      <dl className='breakdown'>
       <div><dt>Loan / trade reference</dt><dd><strong>{loan.reference||'Unavailable'}</strong></dd></div>
       <div><dt>Borrower</dt><dd>{loan.name||'Borrower'} [{loan.borrowerId}]</dd></div>
-      <div><dt>Loan status</dt><dd>{status(loan)}</dd></div>
+      <div><dt>{loan.status==='approved'?'Application status':'Loan status'}</dt><dd>{status(loan)}</dd></div>
       <div><dt>Approved amount</dt><dd>{money(loan.principal)}</dd></div>
       <div><dt>{historical?'Credited collateral required at approval':'Required credited collateral'}</dt><dd>{money(loan.collateralRequired)}</dd></div>
       <div><dt>Recorded collateral review</dt><dd>{loan.collateralConfirmed?'Collateral acceptance recorded in the bank':'No collateral acceptance recorded'}</dd></div>
       <div><dt>Borrower terms</dt><dd>{loan.borrowerConfirmed?'Loan terms accepted':'Terms acceptance not recorded'}</dd></div>
       {flow?.staffId&&<div><dt>Trade lender</dt><dd>{actor(model.data,loan,flow.staffId)}</dd></div>}
      </dl>
+     {needsReconciliation&&<div className='notice amber' role='status'>
+      <p>Existing funding evidence needs staff reconciliation before further trade checks. {loan.fundingReconciliation.reason}</p>
+      {loan.fundsReceived&&<dl className='breakdown'>
+       <div><dt>Saved funds receipt reference</dt><dd>{loan.fundsReceived.reference||'Unavailable'}</dd></div>
+       <div><dt>Saved funds receipt amount</dt><dd>{money(loan.fundsReceived.amount)}</dd></div>
+       <div><dt>Saved funds receipt source</dt><dd>{loan.fundsReceived.source||'Unavailable'}</dd></div>
+      </dl>}
+     </div>}
      {loan.status==='withdrawn'&&<p className='notice amber'>This request was withdrawn. Review any existing trade or collateral return with the bank before continuing.</p>}
      <ExpectedCollateral state={model.data.state} loan={loan} userId={String(model.data.user.id)} isStaff={isStaff} compact/>
-     {replacement.available&&<section aria-label='Expired loan trade' className='stack tight'>
+     {!needsReconciliation&&replacement.available&&<section aria-label='Expired loan trade' className='stack tight'>
       <p>If this trade expired or was cancelled, you can create a replacement with the same loan reference after its cash and items have been returned.</p>
       {replacement.reason&&<p className='notice amber'>{replacement.reason}</p>}
       {!review&&<div className='actions'>{['replace-expired','reconcile-expired'].filter(action=>eligible[action]).map(action=><button type='button' key={action} className='secondary' disabled={model.saving} onClick={()=>onBeginReview(action)}>{tradeReplacementLabels[action]}</button>)}</div>}
      </section>}
-     {loan.collateralConfirmed&&!flow&&<p className='notice'>Collateral was already recorded for this loan. Continue its existing workflow in the bank; do not place the same collateral again.</p>}
-     {loan.status==='approved'&&!loan.borrowerConfirmed&&<p className='notice amber'>{!flow?.stage?'The borrower reviews and accepts the approved loan terms in the first collateral placement step.':'The current approved loan terms need the borrower’s confirmation in the bank before this trade can continue.'}</p>}
-     {(flow||loan.status==='approved'&&!loan.collateralConfirmed)&&<TradeProgress data={model.data} loan={loan}/>}
+     {loan.collateralConfirmed&&!flow&&<p className='notice'>Collateral was already recorded for this request. Staff must reconcile that collateral before a new trade can proceed. Do not place the same collateral again.</p>}
+     {!needsReconciliation&&loan.status==='approved'&&!loan.borrowerConfirmed&&<p className='notice amber'>{!flow?.stage?'The borrower reviews and accepts the approved loan terms in the first collateral placement step.':'Return to collateral placement in this menu so the borrower can review and accept the current terms.'}</p>}
+     {!needsReconciliation&&(flow||loan.status==='approved'&&!loan.collateralConfirmed)&&<TradeProgress data={model.data} loan={loan}/>}
      {invalidReason&&<p role='status' className='notice amber'>{invalidReason}</p>}
      {(flow?.manualItemReviewRequired||flow?.collateralReviewed?.manualItemReviewRequired)&&<p className='notice amber'>Some collateral items require manual identification. Match their Torn item names and IDs with the expected checklist and record the mapping and values in the review notes.</p>}
-     {completion&&<section aria-label='Completed loan trade'><h3>Completed transfer verified</h3><dl className='breakdown'>
-      <div><dt>Loan funds transferred</dt><dd><strong>{money(completion.amount)}</strong></dd></div>
+     {completion&&<section aria-label={needsReconciliation?'Saved completed-transfer evidence':'Completed loan trade'}><h3>{needsReconciliation?'Saved completed-transfer evidence':'Completed transfer verified'}</h3><p>{needsReconciliation?'The saved transfer evidence and application status do not agree. Funding remains unresolved until staff reconciles the records.':'This application is now a funded loan.'}</p><dl className='breakdown'>
+      <div><dt>{needsReconciliation?'Saved transfer amount':'Loan funds transferred'}</dt><dd><strong>{money(completion.amount)}</strong></dd></div>
       <div><dt>Collateral received and credited</dt><dd>{money(loan.collateralConfirmed?.amount)}</dd></div>
       <div><dt>Verified by</dt><dd>{actor(model.data,loan,completion.by)}</dd></div>
       <div><dt>Trade completed at</dt><dd>{date(completion.completedAt)}</dd></div>

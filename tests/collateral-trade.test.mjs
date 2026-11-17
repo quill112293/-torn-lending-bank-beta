@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import TB from '../lib/engine.js';
+import {fundingRecord,seedHistoricalFundedLoan} from './helpers/funding.mjs';
 import {applyAction,project} from '../lib/operations.js';
 import {COLLATERAL_TRADE_TTL,tradeRecipients,tradeCreationAllowed,tradeStartUrl,tradeViewUrl,prepareCollateralTrade,claimCollateralTrade,recordCollateralTrade} from '../lib/collateral-trade.js';
 
@@ -14,55 +15,55 @@ function approved(manual=false){
  const application={...TB.sampleApp({borrowerId:borrower,tier:0,requested:100e6,cashCollateral:100e6,items:[]}),acceptPreapproval:!manual};
  state=applyAction(state,borrower,'apply',application,TB.today(),verified);
  if(manual)state=applyAction(state,owner,'approve',{id:state.applications[0].id,amount:100e6,reason:'Approved by staff',checks:true});
- state.applications[0].reference=reference;state.loans[0].reference=reference;
+ state.applications[0].reference=reference;fundingRecord(state).reference=reference;
  state.staff.push({id:vault,role:'vault',name:'Available vault',available:true});
  return state;
 }
-function prepare(state=approved(),recipientId=owner){return applyAction(state,borrower,'prepareCollateralTrade',{loanId:state.loans[0].id,recipientId});}
+function prepare(state=approved(),recipientId=owner){return applyAction(state,borrower,'prepareCollateralTrade',{loanId:fundingRecord(state).id,recipientId});}
 function claim(state=prepare()){
- const loan=state.loans[0];
+ const loan=fundingRecord(state);
  return applyAction(state,borrower,'claimCollateralTrade',{loanId:loan.id,intentId:loan.collateralTrade.intentId});
 }
 function report(state=claim(),uiTradeId='11687899',overrides={}){
- const loan=state.loans[0];
+ const loan=fundingRecord(state);
  return applyAction(state,borrower,'recordCollateralTrade',{loanId:loan.id,intentId:loan.collateralTrade.intentId,reference:loan.reference,uiTradeId,...overrides});
 }
 function withdraw(state){return applyAction(state,borrower,'withdrawApplication',{id:state.applications[0].id});}
 
 test('auto and staff approvals prepare the exact loan reference without changing their financial or acceptance state',()=>{
  for(const manual of [false,true]){
-  const initial=approved(manual),loan=initial.loans[0],issuer=loan.issuer,terms=TB.clone(loan.borrowerConfirmed??null),spendable=TB.spendable(initial,owner);
+  const initial=approved(manual),loan=fundingRecord(initial),issuer=loan.issuer,terms=TB.clone(loan.borrowerConfirmed??null),spendable=TB.spendable(initial,owner);
   assert.equal(tradeCreationAllowed(initial,loan,borrower),true);
-  const state=prepare(initial,vault),intent=state.loans[0].collateralTrade;
+  const state=prepare(initial,vault),intent=fundingRecord(state).collateralTrade;
   assert.equal(intent.reference,reference);assert.equal(intent.loanId,loan.id);assert.equal(intent.borrowerId,borrower);assert.equal(intent.recipientId,vault);assert.equal(intent.status,'prepared');
   assert.equal(intent.expiresAt-Date.parse(intent.requestedAt),COLLATERAL_TRADE_TTL);
   assert.equal(COLLATERAL_TRADE_TTL,120000);
-  assert.equal(state.loans[0].issuer,issuer);assert.equal(TB.spendable(state,owner),spendable);
-  assert.deepEqual(state.loans[0].borrowerConfirmed??null,terms);assert.equal(state.loans[0].collateralConfirmed,false);
+  assert.equal(fundingRecord(state).issuer,issuer);assert.equal(TB.spendable(state,owner),spendable);
+  assert.deepEqual(fundingRecord(state).borrowerConfirmed??null,terms);assert.equal(fundingRecord(state).collateralConfirmed,false);
   assert.deepEqual(state.ledger,initial.ledger);assert.deepEqual(state.borrowers,initial.borrowers);
-  assert.equal(state.applications[0].status,'approved');assert.equal(state.loans[0].status,'approved');
-  assert.equal(project(state,borrower).state.loans[0].collateralTrade.reference,reference);
-  assert.equal(initial.loans[0].collateralTrade,undefined);
+  assert.equal(state.applications[0].status,'approved');assert.equal(fundingRecord(state).status,'approved');assert.equal(state.loans.length,0);
+  assert.equal(fundingRecord(project(state,borrower).state).collateralTrade.reference,reference);
+  assert.equal(fundingRecord(initial).collateralTrade,undefined);
  }
 });
 
 test('recipient selection excludes disabled accounts, unsupported roles and the borrower without using availability as permission',()=>{
- const state=approved(),loan=state.loans[0];
+ const state=approved(),loan=fundingRecord(state);
  state.staff.push({id:borrower,role:'staff',available:true},{id:other,role:'staff',disabled:true},{id:'9000200',role:'borrower'},{id:'bad',role:'staff'});
  assert.deepEqual(tradeRecipients(state,loan).map(staff=>staff.id),[owner,vault]);
  assert.equal(state.staff.find(staff=>staff.id===owner).available,false);
- assert.equal(prepare(state,owner).loans[0].collateralTrade.recipientId,owner);
+ assert.equal(fundingRecord(prepare(state,owner)).collateralTrade.recipientId,owner);
  for(const recipientId of [borrower,other,'9000200','bad','9999999'])assert.throws(()=>prepare(state,recipientId),/receiving staff|numeric Torn ID/);
  assert.deepEqual(tradeRecipients(state,null),[]);
 });
 
 test('only the loan borrower can prepare, claim or report a trade',()=>{
- const state=approved(),loan=state.loans[0];
+ const state=approved(),loan=fundingRecord(state);
  for(const actor of [other,owner]){
   assert.equal(tradeCreationAllowed(state,loan,actor),false);
   assert.throws(()=>applyAction(state,actor,'prepareCollateralTrade',{loanId:loan.id,recipientId:vault}),/Only the borrower/);
  }
- const prepared=prepare(state),intent=prepared.loans[0].collateralTrade;
+ const prepared=prepare(state),intent=fundingRecord(prepared).collateralTrade;
  assert.throws(()=>applyAction(prepared,other,'claimCollateralTrade',{loanId:loan.id,intentId:intent.intentId}),/Only the borrower/);
  const claimed=claim(prepared);
  assert.throws(()=>applyAction(claimed,owner,'recordCollateralTrade',{loanId:loan.id,intentId:intent.intentId,reference,uiTradeId:'123'}),/Only the borrower/);
@@ -70,36 +71,36 @@ test('only the loan borrower can prepare, claim or report a trade',()=>{
 });
 
 test('preparation ignores forged references and derives both the reference and borrower from stored records',()=>{
- const state=approved(),loan=state.loans[0];
+ const state=approved(),loan=fundingRecord(state);
  const prepared=applyAction(state,borrower,'prepareCollateralTrade',{loanId:loan.id,recipientId:owner,reference:'TLB-FORGED',borrowerId:other,status:'created',uiTradeId:'123'});
- const intent=prepared.loans[0].collateralTrade;
+ const intent=fundingRecord(prepared).collateralTrade;
  assert.equal(intent.reference,reference);assert.equal(intent.borrowerId,borrower);assert.equal(intent.status,'prepared');assert.equal(intent.uiTradeId,undefined);
- for(const mutate of [s=>{s.applications[0].reference='TLB-OTHER';},s=>{s.loans[0].reference='not-a-bank-reference';}]){
+ for(const mutate of [s=>{s.applications[0].reference='TLB-OTHER';},s=>{fundingRecord(s).reference='not-a-bank-reference';}]){
   const mismatch=TB.clone(state);mutate(mismatch);
-  assert.equal(tradeCreationAllowed(mismatch,mismatch.loans[0],borrower),false);
+  assert.equal(tradeCreationAllowed(mismatch,fundingRecord(mismatch),borrower),false);
   assert.throws(()=>prepare(mismatch),/references need staff review/);
  }
 });
 
 test('repeated preparation reuses an unexpired intent and only unclaimed preparations can be replaced',()=>{
- let state=prepare(),intent=TB.clone(state.loans[0].collateralTrade),count=state.audit.length;
- const retry=prepare(state);assert.deepEqual(retry.loans[0].collateralTrade,intent);assert.equal(retry.audit.length,count);
- state=prepare(state,vault);assert.notEqual(state.loans[0].collateralTrade.intentId,intent.intentId);assert.equal(state.loans[0].collateralTrade.recipientId,vault);
- intent=TB.clone(state.loans[0].collateralTrade);state.loans[0].collateralTrade.expiresAt=Date.now()-1;
- state=prepare(state,vault);assert.notEqual(state.loans[0].collateralTrade.intentId,intent.intentId);
- const claimed=claim(state);assert.equal(tradeCreationAllowed(claimed,claimed.loans[0],borrower),false);
+ let state=prepare(),intent=TB.clone(fundingRecord(state).collateralTrade),count=state.audit.length;
+ const retry=prepare(state);assert.deepEqual(fundingRecord(retry).collateralTrade,intent);assert.equal(retry.audit.length,count);
+ state=prepare(state,vault);assert.notEqual(fundingRecord(state).collateralTrade.intentId,intent.intentId);assert.equal(fundingRecord(state).collateralTrade.recipientId,vault);
+ intent=TB.clone(fundingRecord(state).collateralTrade);fundingRecord(state).collateralTrade.expiresAt=Date.now()-1;
+ state=prepare(state,vault);assert.notEqual(fundingRecord(state).collateralTrade.intentId,intent.intentId);
+ const claimed=claim(state);assert.equal(tradeCreationAllowed(claimed,fundingRecord(claimed),borrower),false);
  assert.throws(()=>prepare(claimed,owner),/already been attempted/);
- const created=report(claimed);assert.equal(tradeCreationAllowed(created,created.loans[0],borrower),false);
+ const created=report(claimed);assert.equal(tradeCreationAllowed(created,fundingRecord(created),borrower),false);
  assert.throws(()=>prepare(created,vault),/already been attempted/);
 });
 
 test('claim is single-use, expires after two minutes, and rechecks the receiving staff',()=>{
- const initial=approved(),loan=initial.loans[0],now=Date.now();
+ const initial=approved(),loan=fundingRecord(initial),now=Date.now();
  prepareCollateralTrade(initial,borrower,{loanId:loan.id,recipientId:owner},now);
  const intentId=loan.collateralTrade.intentId;
  const expired=TB.clone(initial);
  assert.throws(()=>claimCollateralTrade(expired,borrower,{loanId:loan.id,intentId},now+COLLATERAL_TRADE_TTL),/expired/);
- assert.equal(expired.loans[0].collateralTrade.status,'prepared');
+ assert.equal(fundingRecord(expired).collateralTrade.status,'prepared');
  const disabled=TB.clone(initial);disabled.staff.find(staff=>staff.id===owner).disabled=true;
  assert.throws(()=>claimCollateralTrade(disabled,borrower,{loanId:loan.id,intentId},now+1),/enabled receiving staff/);
  assert.throws(()=>claimCollateralTrade(initial,borrower,{loanId:loan.id,intentId:'wrong'},now+1),/does not match/);
@@ -112,51 +113,53 @@ test('pending, withdrawn, funded and archived funded requests cannot prepare or 
  const mutations=[
   s=>{s.applications[0].status='pending';},
   s=>{s.applications[0].status='denied';},
-  s=>{s.loans[0].status='active';},
-  s=>{s.loans[0].status='repaid';},
-  s=>{s.ledger.push({loanId:s.loans[0].id,type:'disbursement',amount:100e6});},
-  s=>{s.recordArchives=[{records:{loans:[{...TB.clone(s.loans[0]),id:'archived-funded',status:'active'}]}}];}
+  s=>{fundingRecord(s).status='active';},
+  s=>{fundingRecord(s).status='repaid';},
+  s=>{s.ledger.push({loanId:fundingRecord(s).id,type:'disbursement',amount:100e6});},
+  s=>{s.recordArchives=[{records:{loans:[{...TB.clone(fundingRecord(s)),id:'archived-funded',status:'active'}]}}];}
  ];
  for(const mutate of mutations){
-  const state=prepare();mutate(state);const loan=state.loans[0],intent=loan.collateralTrade;
+  const state=prepare();mutate(state);const loan=fundingRecord(state),intent=loan.collateralTrade;
   assert.equal(tradeCreationAllowed(state,loan,borrower),false);
   assert.throws(()=>prepare(state));
   assert.throws(()=>applyAction(state,borrower,'claimCollateralTrade',{loanId:loan.id,intentId:intent.intentId}));
  }
- const withdrawn=withdraw(prepare());assert.equal(tradeCreationAllowed(withdrawn,withdrawn.loans[0],borrower),false);assert.throws(()=>prepare(withdrawn));
+ const withdrawn=withdraw(prepare());assert.equal(tradeCreationAllowed(withdrawn,fundingRecord(withdrawn),borrower),false);assert.throws(()=>prepare(withdrawn));
 });
 
-test('every owned approved unfunded request may create a trade with zero or already accepted cash or PI collateral',()=>{
+test('zero-collateral requests may create a trade while legacy received cash or PI collateral requires reconciliation',()=>{
  for(const kind of ['zero','cash','pi']){
-  const initial=approved(),loan=initial.loans[0];
+  const initial=approved(),loan=fundingRecord(initial);
   if(kind==='zero')loan.collateralRequired=0;
   else{
    loan.collateralConfirmed={amount:loan.collateralRequired,by:owner,reference:kind==='cash'?'torn-api-trade:777':'pi-payment:existing',source:kind==='cash'?'Torn API completed trade':'PI payment value — lender reviewed'};
    initial.collateral=[{id:'existing-custody',loanId:loan.id,event:'received',holder:owner,amount:loan.collateralRequired,reference:loan.collateralConfirmed.reference}];
   }
   const before=TB.clone(initial);
-  assert.equal(tradeCreationAllowed(initial,loan,borrower),true);
-  const prepared=prepare(initial),claimed=claim(prepared),state=report(claimed);
-  assert.equal(state.loans[0].collateralTrade.status,'created');
-  assert.equal(state.loans[0].status,'approved');assert.equal(state.applications[0].status,'approved');
-  assert.equal(state.loans[0].collateralRequired,before.loans[0].collateralRequired);
-  assert.deepEqual(state.loans[0].collateralConfirmed,before.loans[0].collateralConfirmed);
-  assert.deepEqual(state.loans[0].borrowerConfirmed,before.loans[0].borrowerConfirmed);
-  assert.equal(state.loans[0].issuer,before.loans[0].issuer);
-  assert.deepEqual(state.ledger,before.ledger);assert.deepEqual(state.collateral,before.collateral);assert.deepEqual(state.receipts,before.receipts);
-  const fundedWithoutTrade=applyAction(before,owner,'fund',{id:loan.id,reference:'Existing prerequisites allow ordinary funding'});
-  assert.equal(fundedWithoutTrade.loans[0].status,'active');assert.equal(fundedWithoutTrade.loans[0].collateralTrade,undefined);
+  assert.equal(tradeCreationAllowed(initial,loan,borrower),kind==='zero');
+  if(kind==='zero'){
+   const state=report(claim(prepare(initial))),record=fundingRecord(state);
+   assert.equal(record.collateralTrade.status,'created');assert.equal(record.status,'approved');
+   assert.equal(state.applications[0].status,'approved');assert.equal(state.loans.length,0);
+   assert.equal(record.collateralRequired,0);assert.deepEqual(record.collateralConfirmed,loan.collateralConfirmed);
+   assert.deepEqual(record.borrowerConfirmed,loan.borrowerConfirmed);assert.equal(record.issuer,loan.issuer);
+   for(const key of ['ledger','collateral','receipts'])assert.deepEqual(state[key],before[key]);
+  }else{
+   assert.throws(()=>prepare(initial),/reconcile collateral/);
+   assert.deepEqual(initial,before);
+  }
+  assert.throws(()=>applyAction(before,owner,'fund',{id:loan.id,reference:'Old standalone funding'}),/trade-page menu/);
  }
 });
 
 test('a successfully reported creation remains only an observation and never verifies collateral or funds the loan',()=>{
- const initial=claim(),before=TB.clone(initial),loan=initial.loans[0];
- const state=report(initial),intent=state.loans[0].collateralTrade;
+ const initial=claim(),before=TB.clone(initial),loan=fundingRecord(initial);
+ const state=report(initial),intent=fundingRecord(state).collateralTrade;
  assert.equal(intent.status,'created');assert.equal(intent.uiTradeId,'11687899');assert.equal(intent.source,'Borrower browser observation');assert.ok(Number.isFinite(Date.parse(intent.reportedAt)));
- assert.equal(state.applications[0].status,'approved');assert.equal(state.loans[0].status,'approved');
- assert.equal(state.loans[0].collateralConfirmed,false);assert.deepEqual(state.ledger,before.ledger);assert.deepEqual(state.collateral,before.collateral);assert.deepEqual(state.receipts,before.receipts);
- assert.deepEqual(state.loans[0].borrowerConfirmed,loan.borrowerConfirmed);assert.equal(state.loans[0].issuer,loan.issuer);
- assert.throws(()=>applyAction(state,owner,'fund',{id:loan.id,reference:'Trade creation is not collateral proof'}),/collateral/);
+ assert.equal(state.applications[0].status,'approved');assert.equal(fundingRecord(state).status,'approved');assert.equal(state.loans.length,0);
+ assert.equal(fundingRecord(state).collateralConfirmed,false);assert.deepEqual(state.ledger,before.ledger);assert.deepEqual(state.collateral,before.collateral);assert.deepEqual(state.receipts,before.receipts);
+ assert.deepEqual(fundingRecord(state).borrowerConfirmed,loan.borrowerConfirmed);assert.equal(fundingRecord(state).issuer,loan.issuer);
+ assert.throws(()=>applyAction(state,owner,'fund',{id:loan.id,reference:'Trade creation is not collateral proof'}),/trade-page menu/);
  assert.deepEqual(report(state),state);
  assert.equal(state.audit.filter(event=>event.event==='Collateral trade creation reported').length,1);
 });
@@ -167,14 +170,14 @@ test('reporting requires the exact reference, a prior claim and a strict numeric
  for(const id of ['','0','001','1.5','1&step=start','123 ','1e3','99999999999999999',NaN,1.5,Number.MAX_SAFE_INTEGER+1,{}])assert.throws(()=>report(state,id),/numeric Torn trade ID/);
  assert.throws(()=>report(state,'123',{reference:'TLB-FORGED'}),/exact loan reference/);
  assert.throws(()=>report(state,'123',{intentId:'another-attempt'}),/does not match/);
- assert.equal(report(state,123).loans[0].collateralTrade.uiTradeId,'123');
+ assert.equal(fundingRecord(report(state,123)).collateralTrade.uiTradeId,'123');
  const created=report(state,'123');assert.throws(()=>report(created,'124'),/different Torn trade/);
  const duplicate=TB.clone(state);duplicate.recordArchives=[{records:{loans:[{id:'other-loan',collateralTrade:{uiTradeId:'123'}}]}}];
  assert.throws(()=>report(duplicate,'123'),/different loan/);
 });
 
 test('a timely claim can report its delayed result after expiry without allowing another creation',()=>{
- const state=approved(),loan=state.loans[0],now=Date.now();
+ const state=approved(),loan=fundingRecord(state),now=Date.now();
  prepareCollateralTrade(state,borrower,{loanId:loan.id,recipientId:owner},now);
  claimCollateralTrade(state,borrower,{loanId:loan.id,intentId:loan.collateralTrade.intentId},now+1000);
  recordCollateralTrade(state,borrower,{loanId:loan.id,intentId:loan.collateralTrade.intentId,reference,uiTradeId:'123'},now+COLLATERAL_TRADE_TTL+5000);
@@ -184,20 +187,19 @@ test('a timely claim can report its delayed result after expiry without allowing
 
 test('a claimed trade can preserve its observed link after actual funding or repayment without changing loan finances',()=>{
  for(const status of ['active','repaid']){
-  let state=approved();
-  const loanId=state.loans[0].id;
-  state.loans[0].collateralConfirmed={by:owner,holder:owner,amount:state.loans[0].collateralRequired,reference:'torn-api-trade:already-received',source:'Torn API completed trade'};
+  let state=claim(prepare(approved()));
+  const loanId=fundingRecord(state).id;
+  fundingRecord(state).collateralConfirmed={by:owner,holder:owner,amount:fundingRecord(state).collateralRequired,reference:'torn-api-trade:already-received',source:'Torn API completed trade'};
   state.collateral=[{id:'funding-race-custody',loanId,event:'received',holder:owner,reference:'torn-api-trade:already-received'}];
-  state=claim(prepare(state));
-  state=applyAction(state,owner,'fund',{id:loanId,reference:'Funding completed during the trade handoff'});
+  seedHistoricalFundedLoan(state,loanId,{staffId:owner,reference:'Historical funding completed during the trade handoff'});
   if(status==='repaid'){
-   state=applyAction(state,owner,'payment',{id:loanId,cash:state.loans[0].principal,recipient:owner,reference:'Repayment completed before delayed trade observation',date:TB.today()});
+   state=applyAction(state,owner,'payment',{id:loanId,cash:fundingRecord(state).principal,recipient:owner,reference:'Repayment completed before delayed trade observation',date:TB.today()});
    state=applyAction(state,owner,'acceptPayment',{id:state.pendingPayments[0].id});
   }
-  const before=TB.clone(state),result=report(state),loan=result.loans[0],intent=loan.collateralTrade;
+  const before=TB.clone(state),result=report(state),loan=fundingRecord(result),intent=loan.collateralTrade;
   assert.equal(loan.status,status);assert.equal(result.applications[0].status,'approved');
   assert.equal(intent.status,'created');assert.equal(intent.reportedAfterFunding,true);assert.equal(intent.uiTradeId,'11687899');assert.equal(intent.source,'Borrower browser observation');
-  assert.equal(intent.claimedAt,before.loans[0].collateralTrade.claimedAt);
+  assert.equal(intent.claimedAt,fundingRecord(before).collateralTrade.claimedAt);
   assert.deepEqual({...loan,collateralTrade:undefined},{...before.loans[0],collateralTrade:undefined});
   for(const key of ['applications','ledger','pendingPayments','collateral','receipts','borrowers'])assert.deepEqual(result[key],before[key],key+' remains unchanged');
   assert.equal(result.audit.at(-1).event,'Collateral trade reported after funding');
@@ -208,28 +210,28 @@ test('a claimed trade can preserve its observed link after actual funding or rep
 });
 
 test('funded follow-up reporting still requires an actual matching disbursement, approved original application and valid prior claim',()=>{
- const approvedState=approved();approvedState.loans[0].collateralRequired=0;
+ const approvedState=approved();fundingRecord(approvedState).collateralRequired=0;
  const claimed=claim(prepare(approvedState));
- const funded=applyAction(claimed,owner,'fund',{id:claimed.loans[0].id,reference:'Real funding during the handoff'});
+ const funded=seedHistoricalFundedLoan(claimed,fundingRecord(claimed).id,{staffId:owner,reference:'Historical funding during the handoff'});
  for(const mutate of [
   state=>{state.ledger=state.ledger.filter(entry=>entry.type!=='disbursement');},
   state=>{state.ledger.find(entry=>entry.type==='disbursement').loanId='unrelated-loan';},
   state=>{state.ledger.find(entry=>entry.type==='disbursement').to='borrower:'+other;},
   state=>{state.applications[0].status='withdrawn';},
-  state=>{state.loans[0].status='denied';}
+  state=>{fundingRecord(state).status='denied';}
  ]){
   const invalid=TB.clone(funded);mutate(invalid);const before=TB.clone(invalid);
   assert.throws(()=>report(invalid),/no longer approved and unfunded/);assert.deepEqual(invalid,before);
  }
- const notClaimed=applyAction(prepare(approvedState),owner,'fund',{id:approvedState.loans[0].id,reference:'Funding without a creation claim'});
+ const notClaimed=seedHistoricalFundedLoan(prepare(approvedState),fundingRecord(approvedState).id,{staffId:owner,reference:'Historical funding without a creation claim'});
  assert.throws(()=>report(notClaimed),/valid trade creation attempt/);
  const archived=TB.clone(funded),disbursement=archived.ledger.find(entry=>entry.type==='disbursement');
  archived.ledger=archived.ledger.filter(entry=>entry!==disbursement);archived.recordArchives=[{records:{ledger:[disbursement]}}];
- assert.equal(report(archived).loans[0].collateralTrade.reportedAfterFunding,true);
+ assert.equal(fundingRecord(report(archived)).collateralTrade.reportedAfterFunding,true);
 });
 
 test('withdrawal cancels an unclaimed setup and prevents a stale creation or invented result',()=>{
- const prepared=prepare(),state=withdraw(prepared),loan=state.loans[0],intent=loan.collateralTrade;
+ const prepared=prepare(),state=withdraw(prepared),loan=fundingRecord(state),intent=loan.collateralTrade;
  assert.equal(intent.status,'cancelled');assert.equal(intent.cancelledFrom,'prepared');assert.equal(intent.cancellationRequired,false);assert.ok(intent.cancelledAt);
  assert.throws(()=>claim(state),/approved, unfunded/);assert.throws(()=>report(state),/valid trade creation attempt/);
  assert.equal(loan.status,'withdrawn');assert.equal(state.applications[0].status,'withdrawn');
@@ -237,20 +239,20 @@ test('withdrawal cancels an unclaimed setup and prevents a stale creation or inv
 });
 
 test('creation already in flight after withdrawal keeps its link as a cancelled follow-up without reviving the loan',()=>{
- const claimed=claim(),withdrawn=withdraw(claimed),before=TB.clone(withdrawn),intent=withdrawn.loans[0].collateralTrade;
+ const claimed=claim(),withdrawn=withdraw(claimed),before=TB.clone(withdrawn),intent=fundingRecord(withdrawn).collateralTrade;
  assert.equal(intent.status,'cancelled');assert.equal(intent.cancelledFrom,'claimed');assert.equal(intent.cancellationRequired,true);
- const state=report(withdrawn),result=state.loans[0].collateralTrade;
+ const state=report(withdrawn),result=fundingRecord(state).collateralTrade;
  assert.equal(result.status,'cancelled');assert.equal(result.cancelledFrom,'claimed');assert.equal(result.cancellationRequired,true);assert.equal(result.uiTradeId,'11687899');
  assert.equal(result.claimedAt,intent.claimedAt);assert.equal(result.cancelledAt,intent.cancelledAt);
- assert.equal(state.loans[0].status,'withdrawn');assert.equal(state.applications[0].status,'withdrawn');
- assert.equal(state.loans[0].collateralConfirmed,false);assert.deepEqual(state.ledger,before.ledger);assert.deepEqual(state.collateral,before.collateral);
+ assert.equal(fundingRecord(state).status,'withdrawn');assert.equal(state.applications[0].status,'withdrawn');
+ assert.equal(fundingRecord(state).collateralConfirmed,false);assert.deepEqual(state.ledger,before.ledger);assert.deepEqual(state.collateral,before.collateral);
  assert.equal(state.audit.at(-1).event,'Collateral trade reported after withdrawal');
  assert.deepEqual(report(state),state);
  assert.throws(()=>prepare(state));
 });
 
 test('withdrawing an already reported trade preserves its reference and link for cancellation',()=>{
- const created=report(),state=withdraw(created),intent=state.loans[0].collateralTrade;
+ const created=report(),state=withdraw(created),intent=fundingRecord(state).collateralTrade;
  assert.equal(intent.status,'cancelled');assert.equal(intent.cancelledFrom,'created');assert.equal(intent.cancellationRequired,true);
  assert.equal(intent.uiTradeId,'11687899');assert.equal(intent.reference,reference);assert.equal(intent.source,'Borrower browser observation');
  assert.equal(tradeViewUrl(intent.uiTradeId),'https://www.torn.com/trade.php#step=view&ID=11687899');
@@ -258,7 +260,7 @@ test('withdrawing an already reported trade preserves its reference and link for
 });
 
 test('trade URLs contain only validated handoff handles and separate UI IDs from the bank reference',()=>{
- const state=prepare(),intent=state.loans[0].collateralTrade;
+ const state=prepare(),intent=fundingRecord(state).collateralTrade;
  const url=new URL(tradeStartUrl(intent)),hash=new URLSearchParams(url.hash.slice(1));
  assert.equal(url.origin,'https://www.torn.com');assert.equal(url.pathname,'/trade.php');assert.equal(url.search,'');
  assert.deepEqual([...hash.keys()],['step','userID','tlbLoan','tlbIntent']);

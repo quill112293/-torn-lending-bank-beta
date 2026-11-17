@@ -23,7 +23,7 @@ const context=(changes={})=>({page:true,route:page+'#step=view&ID=11687899',acco
 function data(role='owner',userId=OWNER){
  const first={id:'LOAN-1',applicationId:'APP-1',reference:REFERENCE,borrowerId:BORROWER,name:'Xanax borrower',status:'approved',principal:130e6,collateralRequired:65e6,collateralConfirmed:false,collateralTrade:{uiTradeId:'11687899'},expectedCollateral:{version:1,applicationId:'APP-1',borrowerId:BORROWER,cashCollateral:55e6,piCollateral:2e6,items:[{itemId:206,name:'Xanax',qty:14}]}};
  const second={id:'LOAN-2',applicationId:'APP-2',reference:'TLB-SECOND-LOAN',borrowerId:OTHER,name:'Other borrower',status:'active',principal:20e6,collateralRequired:10e6,collateralConfirmed:{amount:10e6},collateralTrade:{uiTradeId:'11687900'},expectedCollateral:{version:1,applicationId:'APP-2',borrowerId:OTHER,cashCollateral:10e6,piCollateral:0,items:[{itemId:186,name:'Ecstasy',qty:3}]}};
- return {role,user:{id:userId,name:'Reviewer'},state:{loans:[first,second],applications:[]}};
+ return {role,user:{id:userId,name:'Reviewer'},state:{fundingRequests:[first],loans:[second],applications:[]}};
 }
 function model(changes={}){return {open:true,loading:false,error:'',data:data(),selectedLoanId:'LOAN-1',manual:false,context:context(),...changes};}
 function deferred(){let resolve,reject;const promise=new Promise((done,fail)=>{resolve=done;reject=fail;});return {promise,resolve,reject};}
@@ -32,8 +32,8 @@ test('native loan panel starts collapsed and contains an accessible loan selecto
  const html=render({model:model({open:false})});
  assert.match(html,/<details class="trade-loan-details">/);
  assert.match(html,/<summary><strong>Loan details<\/strong>/);
- assert.match(html,/<label class="field">Select loan<select/);
- assert.match(html,/TLB-0BE1AA730D7B · Xanax borrower \[1234567\] · Approved · awaiting funding/);
+ assert.match(html,/<label class="field">Select application or loan<select/);
+ assert.match(html,/TLB-0BE1AA730D7B · Xanax borrower \[1234567\] · Approved application · awaiting transfer/);
  assert.match(html,/TLB-SECOND-LOAN · Other borrower \[7654321\] · Active/);
  assert.match(html,/<option value="LOAN-1" selected=""/);
  assert.match(html,/Open bank/);
@@ -45,7 +45,7 @@ test('selected loan shows its exact saved collateral quantities, cash, PI and se
  assert.match(html,/14 × Xanax/);assert.match(html,/\$55,000,000/);assert.match(html,/\$2,000,000/);
  assert.match(html,/Required credited collateral<\/dt><dd>\$65,000,000/);
  assert.match(html,/Approved amount<\/dt><dd>\$130,000,000/);
- assert.match(html,/PI payment collateral/);assert.match(html,/separately from the Torn trade/);
+ assert.match(html,/PI payment collateral/);assert.match(html,/within the Torn trade menu/);
  assert.match(html,/Selecting a loan does not accept a trade or verify receipt/);
  assert.doesNotMatch(html,/3 × Ecstasy/);
  const other=render({model:model({selectedLoanId:'LOAN-2',manual:true})});
@@ -55,7 +55,7 @@ test('selected loan shows its exact saved collateral quantities, cash, PI and se
 });
 
 test('withdrawn and unavailable proposals remain visible without implying outstanding collateral or receipt',()=>{
- const m=model();m.data.state.loans[0].status='withdrawn';delete m.data.state.loans[0].expectedCollateral;
+ const m=model();m.data.state.fundingRequests[0].status='withdrawn';delete m.data.state.fundingRequests[0].expectedCollateral;
  const html=render({model:m});
  assert.match(html,/This request was withdrawn/);assert.match(html,/Original collateral breakdown unavailable/);
  assert.match(html,/No collateral acceptance recorded/);assert.doesNotMatch(html,/No cash, items or PI payment value were listed/);
@@ -80,11 +80,11 @@ test('automatic selection requires a unique exact reference or saved native trad
  assert.deepEqual(matchTradeLoan(loans,context({reference:'Trade',referenceEvidence:'unclassified'})),{loanId:'LOAN-1',reason:'trade'});
  assert.equal(matchTradeLoan(loans,context({reference:'An unrelated item sale'})).reason,'conflict');
  assert.equal(matchTradeLoan(loans,context({tradeId:'999'})).reason,'conflict');
- assert.equal(matchTradeLoan([...loans,{...loans[1],id:'DUPLICATE'}],context()).reason,'ambiguous');
+ assert.equal(matchTradeLoan([...loans,{...loans.find(record=>record.id==='LOAN-1'),id:'DUPLICATE'}],context()).reason,'ambiguous');
  assert.equal(matchTradeLoan(loans,context({ambiguous:true})).reason,'ambiguous');
  assert.equal(matchTradeLoan(loans,context({page:false})).loanId,'');
- assert.match(tradeLoanSelectionNotice(loans[0],loans,context()).text,/not a confirmed match/);
- assert.match(tradeLoanSelectionNotice(loans[1],loans,context({reference:null,tradeId:null})).text,/Manually selected loan/);
+ assert.match(tradeLoanSelectionNotice(loans.find(record=>record.id==='LOAN-2'),loans,context()).text,/not a confirmed match/);
+ assert.match(tradeLoanSelectionNotice(loans.find(record=>record.id==='LOAN-1'),loans,context({reference:null,tradeId:null})).text,/Manually selected loan/);
 });
 
 function nativeDocument({account=OWNER,reference=REFERENCE,headingText,hidden=false,extraHeading=false}={}){
@@ -186,4 +186,13 @@ test('a failed or superseded refresh cannot leave previously shown loan details 
  await controller.refresh();assert.equal(controller.getState().error,'Session ended.');
  old.resolve(data());await older;assert.equal(controller.getState().data,null);assert.equal(controller.getState().error,'Session ended.');
  controller.dispose();await controller.setOpen(false);assert.equal(calls,3);
+});
+
+test('native details preserve a reconciliation-marked application and explain the conflicting evidence',()=>{
+ const m=model(),loan=m.data.state.fundingRequests[0];loan.fundingReconciliation={reason:'Existing completed-transfer evidence conflicts with the saved application.'};
+ loan.fundsReceived={reference:'torn-api-trade:9987',amount:130e6,source:'Earlier saved proof'};loan.tradeFlow={stage:'completed',completion:{apiTradeId:'9987',amount:130e6,source:'Earlier saved proof',by:OWNER}};
+ const html=render({model:m});assert.match(html,/Funding evidence needs reconciliation/);assert.match(html,/Existing completed-transfer evidence conflicts with the saved application/);
+ assert.match(html,/TLB-0BE1AA730D7B/);assert.match(html,/Saved completed-transfer evidence/);assert.match(html,/Saved funds receipt reference/);assert.match(html,/torn-api-trade:9987/);assert.match(html,/Earlier saved proof/);
+ assert.match(html,/Funding remains unresolved/);assert.doesNotMatch(html,/now a funded loan|>Completed transfer verified<|aria-label="Trade progress"|>Confirm collateral placed<|>Verify completed transfer<|>Confirm returned loan funds<|>Create replacement trade</);
+ assert.match(html,/>Refresh loan details<\/button>/);
 });

@@ -4,6 +4,7 @@ import {collectFinishedTrades} from '../lib/torn-trade-history.js';
 import {TRADE_REPLACEMENT_ACTIONS,inspectTradeReplacement,collectTradeReplacementEvidence,applyTradeReplacement} from '../lib/trade-replacement.js';
 import {recordCollateralTrade} from '../lib/collateral-trade.js';
 import TB from '../lib/engine.js';
+import {findLoanRecord} from '../lib/funding-lifecycle.js';
 
 export function route(env){
  const srv=createServer(env);
@@ -59,7 +60,7 @@ export function route(env){
    TB.need(trade&&String(trade.id)===tradeId,'Torn returned a different API trade; check the selected API trade ID.');
    const currentUser=await srv.identity(req),current=await srv.loadState();
    TB.need(currentUser.torn_id===user.torn_id,'The connected Torn account changed. Refresh before continuing.');
-   TB.need(current.loans.find(loan=>loan.id===input.loanId)?.collateralTrade?.intentId===intentId,'The loan trade attempt changed during the check. Refresh before continuing.');
+   TB.need(findLoanRecord(current,input.loanId)?.collateralTrade?.intentId===intentId,'The loan trade attempt changed during the check. Refresh before continuing.');
    if(recover)verifyClaimedTradeDescription(current,currentUser.torn_id,input,trades);
    const result=await applyLoanTrade(withLink(current,currentUser.torn_id),currentUser.torn_id,input.action,{...input,tradeId},trade,Date.now(),finishedTrades);
    if(recover)TB.need(result.tradeCheck.stage==='collateral_placed'&&!result.tradeCheck.reason,'Torn did not confirm the collateral offer. Check the contents and retry.');

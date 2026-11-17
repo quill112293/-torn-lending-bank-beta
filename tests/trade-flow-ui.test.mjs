@@ -34,14 +34,14 @@ function model({stage,role='owner',userId=OWNER,loan:changes={},reviewAction,...
  const tradeFlow=flow(stage),completed=stage==='completed';
  const loan={id:'LOAN-1',applicationId:'APP-1',reference:REF,borrowerId:BORROWER,name:'Collateral borrower',status:completed?'active':'approved',principal:100e6,collateralRequired:50e6,collateralConfirmed:completed?{amount:51e6}:false,borrowerConfirmed:{reference:REF},issuer:OWNER,start:'2026-11-16',rules:{itemCredit:.75},collateralTrade:{uiTradeId:PAGE_ID,recipientId:OWNER,status:'created'},expectedCollateral:{version:1,applicationId:'APP-1',borrowerId:BORROWER,cashCollateral:40e6,piCollateral:2e6,items:[{itemId:206,name:'Xanax',qty:14}]},...(tradeFlow?{tradeFlow}:{}),...changes};
  return {open:true,loading:false,error:'',review:reviewAction?{action:reviewAction,loanId:'LOAN-1'}:null,saving:false,reviewError:'',success:'',savedKeyAvailable:true,nativeAcceptAvailable:true,nativeAcceptReason:'',tradeCheck:null,
-  data:{role,user:{id:userId,name:'Current user'},state:{bankOnline:true,testDate:'2026-11-16',staff:[{id:OWNER,role:'owner',name:'Lender fixture'},{id:OTHER,role:'staff',name:'Other staff'}],borrowers:{[BORROWER]:{piRto:true,flags:[]}},loans:[loan],applications:[]}},
+  data:{role,user:{id:userId,name:'Current user'},state:{bankOnline:true,testDate:'2026-11-16',staff:[{id:OWNER,role:'owner',name:'Lender fixture'},{id:OTHER,role:'staff',name:'Other staff'}],borrowers:{[BORROWER]:{piRto:true,flags:[]}},loans:completed?[loan]:[],fundingRequests:completed?[]:[loan],applications:[]}},
   selectedLoanId:loan.id,manual:false,context:{page:true,route:'https://www.torn.com/trade.php#step=view&ID='+PAGE_ID,accountId:userId,tradeId:PAGE_ID,reference:REF,ambiguous:false},...extra};
 }
 
 test('both roles keep the loan selector and exact collateral checklist through all five progress steps',()=>{
  for(const stage of [undefined,...stages])for(const [role,userId] of [['owner',OWNER],['borrower',BORROWER]]){
   const html=render(model({stage,role,userId}));
-  assert.match(html,/Select loan<select/);assert.match(html,/14 × Xanax/);assert.match(html,/\$40,000,000/);assert.match(html,/PI payment collateral value/);
+  assert.match(html,/Select application or loan<select/);assert.match(html,/14 × Xanax/);assert.match(html,/\$40,000,000/);assert.match(html,/PI payment collateral value/);
   assert.match(html,/aria-label="Trade progress"/);assert.equal((html.match(/<li class="record static"/g)||[]).length,5);
   for(const label of ['Collateral placed','Collateral checked','Loan funds added','Loan funds checked','Completed transfer verified'])assert.match(html,new RegExp(label));
  }
@@ -135,19 +135,19 @@ test('only completed server proof shows received collateral and transferred prin
 
 test('staff reset explains API zero-cash release, while borrower has no reset action',()=>{
  const m=model({stage:'funds_added',reviewAction:'reset'}),html=render(m);
- assert.match(html,/<form[^>]*aria-label="Reset trade review"/);assert.match(html,/Remove the lender’s loan funds from the open Torn trade before resetting or cancelling/);assert.match(html,/cash offer is zero/);assert.match(html,/Reserved for this trade/);assert.match(html,/loan awaits completed-transfer verification/);
+ assert.match(html,/<form[^>]*aria-label="Reset trade review"/);assert.match(html,/Remove the lender’s loan funds from the open Torn trade before resetting or cancelling/);assert.match(html,/cash offer is zero/);assert.match(html,/Reserved for this trade/);assert.match(html,/approved application becomes a loan after staff verifies the completed transfer/);
  assert.equal(button(render(model({stage:'funds_added',role:'borrower',userId:BORROWER})),'Reset trade review'),undefined);
- const empty=model();empty.data.state.loans[0].tradeFlow={version:1,reference:REF,borrowerId:BORROWER,staffId:OWNER,apiTradeId:API_ID,nativeTradeId:PAGE_ID,stage:''};
+ const empty=model();empty.data.state.fundingRequests[0].tradeFlow={version:1,reference:REF,borrowerId:BORROWER,staffId:OWNER,apiTradeId:API_ID,nativeTradeId:PAGE_ID,stage:''};
  assert.equal(button(render(empty),'Reset trade review'),undefined,'an already-reset trade has no reservation or review to reset');
 });
 
 test('invalidated offers and manual item mapping remain explicit without retaining a later checked stage',()=>{
- const m=model({stage:'collateral_placed'});m.data.state.loans[0].tradeFlow.invalidReason='The offered items changed. Review the collateral again.';m.data.state.loans[0].tradeFlow.manualItemReviewRequired=true;
+ const m=model({stage:'collateral_placed'});m.data.state.fundingRequests[0].tradeFlow.invalidReason='The offered items changed. Review the collateral again.';m.data.state.fundingRequests[0].tradeFlow.manualItemReviewRequired=true;
  const html=render(m);assert.match(html,/The offered items changed/);assert.match(html,/manual identification/);assert.match(html,/mapping and values in the review notes/);assert.ok(button(html,'Verify collateral'));assert.equal(button(html,'Accept trade in Torn'),undefined);assert.doesNotMatch(html,/Loan funds transferred<\/dt>/);
 });
 
-test('accepted legacy collateral follows the bank workflow and zero collateral still permits an empty placement check',()=>{
- const legacy=render(model({loan:{collateralConfirmed:{amount:50e6}}}));assert.match(legacy,/do not place the same collateral again/);assert.doesNotMatch(legacy,/aria-label="Trade progress"/);for(const name of names)assert.equal(button(legacy,name),undefined);
+test('accepted legacy collateral requires reconciliation and zero collateral still permits an empty placement check',()=>{
+ const legacy=render(model({loan:{collateralConfirmed:{amount:50e6}}}));assert.match(legacy,/Do not place the same collateral again/);assert.doesNotMatch(legacy,/aria-label="Trade progress"/);for(const name of names)assert.equal(button(legacy,name),undefined);
  const zero=model({role:'borrower',userId:BORROWER,loan:{collateralRequired:0,expectedCollateral:{version:1,applicationId:'APP-1',borrowerId:BORROWER,cashCollateral:0,piCollateral:0,items:[]}}});
  const html=render(zero);assert.match(html,/No cash, items or PI payment value were listed/);assert.ok(button(html,'Confirm collateral placed'));
 });

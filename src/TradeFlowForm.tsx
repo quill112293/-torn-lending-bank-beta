@@ -27,7 +27,7 @@ export default function TradeFlowForm({linkOnPlacement=false,action,loan,keyRole
   'collateral-reviewed':'Compare the expected collateral above with the open trade. Review every item quantity and its accepted value. Cash and item quantities are checked with Torn.',
   'funds-added':'Add the exact loan principal to this same Torn trade, then check the offer below.',
   'funds-reviewed':'Check that the recorded lender has added the exact loan principal to this same Torn trade.',
-  complete:'Finish both sides of Torn’s acceptance first. This check verifies the completed two-way transfer before recording collateral received and loan funds transferred.',
+  complete:'Finish both sides of Torn’s acceptance first. This check verifies the completed two-way transfer before recording collateral received and converting the approved application into a funded loan.',
   refresh:'Check the latest trade offer in Torn. Changed cash or items can clear earlier review stages so they can be checked again.',
   reset:'Remove the lender’s loan funds from the open Torn trade before resetting or cancelling. The bank releases the reservation only after Torn confirms the lender’s cash offer is zero.'
  };
@@ -63,7 +63,7 @@ export default function TradeFlowForm({linkOnPlacement=false,action,loan,keyRole
   <p>{descriptions[action]}</p>
   <dl className='breakdown'>
    <div><dt>Exact trade description</dt><dd><strong>{loan.reference}</strong></dd></div>
-   <div><dt>Loan principal</dt><dd><strong>{money(loan.principal)}</strong></dd></div>
+   <div><dt>Approved principal</dt><dd><strong>{money(loan.principal)}</strong></dd></div>
    <div><dt>Lender</dt><dd>{staffId?'['+staffId+']':'Not assigned'}</dd></div>
    <div><dt>Borrower</dt><dd>{loan.name||'Borrower'} [{loan.borrowerId}]</dd></div>
   </dl>

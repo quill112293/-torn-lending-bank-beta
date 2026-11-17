@@ -6,7 +6,7 @@ const OWNER='3542697',BORROWER='1234567',ID='11687899';
 const url='https://www.torn.com/trade.php#step=addmoney&ID='+ID;
 function fixture(){
  const loan={id:'LOAN-1',reference:'TLB-TEST',borrowerId:BORROWER,status:'approved',principal:200e6,collateralTrade:{status:'created',uiTradeId:ID,recipientId:OWNER}};
- const data={user:{id:OWNER},role:'owner',state:{staff:[{id:OWNER,role:'owner'}],loans:[loan]}};
+ const data={user:{id:OWNER},role:'owner',state:{staff:[{id:OWNER,role:'owner'}],loans:[],fundingRequests:[loan]}};
  const route=cashTradeRoute(url,OWNER);
  return {loan,data,route,policy:()=>loanCashPolicy(data,route)};
 }
@@ -56,13 +56,14 @@ test('foreign bank sessions and disabled staff never provide loan amounts for th
 test('conflicting IDs, duplicate loans, changed receivers and invalid principals block positive funding',()=>{
  for(const change of [
   f=>{f.loan.tradeFlow={nativeTradeId:'999',staffId:OWNER};},
-  f=>{f.data.state.loans.push(structuredClone(f.loan));},
+  f=>{f.data.state.fundingRequests.push(structuredClone(f.loan));},
   f=>{f.loan.collateralTrade.recipientId='7654321';},
   f=>{f.loan.principal=NaN;},f=>{f.loan.principal=0;},
   f=>{f.loan.collateralTrade.cancellationRequired=true;},
   f=>{f.loan.collateralTrade.fundsReturnReconciled={by:OWNER};},
   f=>{f.loan.collateralConfirmed={amount:100e6};},
-  f=>{f.loan.fundsReceived={amount:200e6};}
+  f=>{f.loan.fundsReceived={amount:200e6};},
+  f=>{f.loan.fundingReconciliation={reason:'Saved transfer proof conflicts with application state'};}
  ]){const f=fixture();change(f);assert.ok(f.policy());assert.equal(checkLoanCash(f.policy(),['200000000']).allowed,false);assert.equal(checkLoanCash(f.policy(),['0']).allowed,true);}
 });
 

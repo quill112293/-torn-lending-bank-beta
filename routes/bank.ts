@@ -1,3 +1,4 @@
+import {findLoanRecord} from '../lib/funding-lifecycle.js';
 import {createServer} from '../server/context.js';
 import {applyAction,role} from '../lib/operations.js';
 import {marketQuote} from './market.ts';
@@ -36,7 +37,7 @@ async function POST(req:Request){try{const u=await identity(req),a=await body(re
  }
  }
  const next=applyAction(s,u.torn_id,a.action,a.payload,TB.today(),verified);
- if(verifiedTradeId)next.loans.find(loan=>loan.id===a.payload.loanId).collateralTrade.verifiedApiTradeId=verifiedTradeId;
+ if(verifiedTradeId)findLoanRecord(next,a.payload.loanId).collateralTrade.verifiedApiTradeId=verifiedTradeId;
  next.processedRequests??=[];next.processedRequests.push(u.torn_id+':'+a.requestId);await saveState(next,s.revision);return response(view(next,u));}catch(e:any){return response({error:TB.text(e.message,500)},e.status||400);}}
 return { GET, POST };
 }

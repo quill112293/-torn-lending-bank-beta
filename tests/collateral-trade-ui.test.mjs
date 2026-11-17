@@ -27,7 +27,7 @@ function setup(changes={}){
  const application={id:'APP-1',reference,borrowerId:borrower,status:'approved'};
  const loan={id:'LOAN-1',applicationId:application.id,borrowerId:borrower,reference,status:'approved',principal:130e6,collateralRequired:65e6,borrowerConfirmed:{reference},autoApproved:true,payments:[],...changes};
  application.reference=loan.reference;
- state.applications.push(application);state.loans.push(loan);
+ state.applications.push(application);state.fundingRequests.push(loan);
  return {state,loan,userId:borrower};
 }
 function intent(changes={}){
@@ -93,17 +93,16 @@ test('disabled and nonstaff accounts are excluded while unavailable staff remain
  assert.match(renderAction(props),/<button[^>]*disabled=""[^>]*>Create a trade<\/button>/);
 });
 
-test('collateral-free and accepted cash or PI collateral loans keep an optional trade action without blocking funding readiness',()=>{
- for(const changes of [
-  {collateralRequired:0},
-  {collateralConfirmed:{amount:65e6,source:'Torn trade'}},
-  {collateralConfirmed:{amount:65e6,source:'PI payment'}}
- ]){
-  const props=setup(changes),html=renderAction(props);
-  assert.match(html,/<button[^>]*>Create a trade<\/button>/);
-  assert.match(html,/You can create a trade with this loan reference if needed/);
-  assert.doesNotMatch(html,/then add your required collateral/);
-  assert.equal(approvalStatus(props.loan),'Auto-approved · Awaiting funding');
+test('collateral-free approval still requires the native transfer and earlier accepted collateral cannot be recollected',()=>{
+ const props=setup({collateralRequired:0}),html=renderAction(props);
+ assert.match(html,/<button[^>]*>Create a trade<\/button>/);
+ assert.match(html,/no collateral requirement/);assert.match(html,/Complete the funds transfer and its verification through the Torn trade menu/);
+ assert.doesNotMatch(html,/if needed|then add your required collateral/);
+ assert.equal(approvalStatus(props.loan),'Auto-approved · Awaiting trade');
+ for(const source of ['Torn trade','PI payment']){
+  const accepted=setup({collateralConfirmed:{amount:65e6,source}});
+  assert.equal(renderAction(accepted),'');
+  assert.match(renderProgress({loan:accepted.loan,state:accepted.state,isStaff:false}),/Torn trade/);
  }
 });
 
@@ -126,12 +125,12 @@ test('prepared, claimed, and created trade states are distinguished without a se
  props.loan.collateralTrade=intent();
  assert.match(renderAction(props),/>Create a trade<\/button>/);
  assert.doesNotMatch(renderAction(props),/Trade created in Torn|Open trade/);
- assert.equal(approvalStatus(props.loan),'Auto-approved · Awaiting collateral trade');
+ assert.equal(approvalStatus(props.loan),'Auto-approved · Awaiting trade');
  props.loan.collateralTrade.status='claimed';
  let html=renderAction(props);
  assert.match(html,/creation has not been confirmed/);
  assert.match(html,/href="https:\/\/www.torn.com\/trade.php"[^>]*>Check trades in Torn<\/a>/);
- assert.doesNotMatch(html,/Create a trade|Trade created in Torn|Open trade/);
+ assert.doesNotMatch(html,/Create a trade|Trade created in Torn|>Open trade<\/a>/);
  assert.equal(approvalStatus(props.loan),'Auto-approved · Check trade in Torn');
  assert.doesNotMatch(renderProgress({loan:props.loan}),/Create a trade/);
  Object.assign(props.loan.collateralTrade,{status:'created',uiTradeId:'123456'});
@@ -141,7 +140,7 @@ test('prepared, claimed, and created trade states are distinguished without a se
  assert.match(html,/href="https:\/\/www.torn.com\/trade.php#step=view&amp;ID=123456" target="_blank"/);
  assert.match(html,/The trade link does not verify receipt of collateral/);
  assert.doesNotMatch(html,/Create a trade/);
- assert.equal(approvalStatus(props.loan),'Auto-approved · Awaiting collateral verification');
+ assert.equal(approvalStatus(props.loan),'Auto-approved · Awaiting trade review');
  assert.match(renderAction({...props,native:true}),/target="_self"/);
  assert.match(renderAction({...props,userId:owner,isStaff:true}),/Borrower reported trade creation/);
  assert.equal(renderAction({...props,userId:staff}),'');

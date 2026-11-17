@@ -1,3 +1,4 @@
+import {findLoanRecord} from '../lib/funding-lifecycle.js';
 import {validTornKey} from './api-key.js';
 import {tradeLoanEligible,tradeViewUrl} from '../lib/collateral-trade.js';
 
@@ -345,7 +346,7 @@ export function createTornTradePage(document,window){
 }
 
 function matchedIntent(data,handoff){
- const loan=data?.state?.loans?.find(record=>record.id===handoff.loanId),intent=loan?.collateralTrade;
+ const loan=findLoanRecord(data?.state,handoff.loanId),intent=loan?.collateralTrade;
  need(loan&&String(data.user?.id)===String(loan.borrowerId),'Sign in to the beta bank in Torn as the borrower, then reopen Create a trade.');
  if(!intent||intent.intentId!==handoff.intentId||intent.loanId!==loan.id||String(intent.borrowerId)!==String(loan.borrowerId)||String(intent.recipientId)!==handoff.recipientId)throw Object.assign(Error('This trade setup was replaced or changed. Open the current trade from Loan details or the bank.'),{code:'trade_setup_changed'});
  need(intent.reference===loan.reference&&/^TLB-[A-Za-z0-9_-]+$/.test(intent.reference),'The loan reference could not be confirmed.');
@@ -418,7 +419,7 @@ export function installTradeHandoff({document,window,transport}){
  const box=document.createElement('aside');box.id='tlb-beta-trade-handoff';box.setAttribute('role','status');
  box.style.cssText='position:relative;z-index:9999;margin:12px;padding:14px;border:1px solid #b49533;border-radius:8px;background:#173b2b;color:#fff;font:14px/1.5 system-ui,sans-serif';
  const title=document.createElement('strong'),reference=document.createElement('p'),message=document.createElement('p'),actions=document.createElement('div');
- title.textContent='Torn Lending Bank · Create a trade';message.textContent='Checking the approved loan and receiving lender…';
+ title.textContent='Torn Lending Bank · Create a trade';message.textContent='Checking the approved application and receiving lender…';
  box.append(title,reference,message,actions);document.body.prepend(box);
  let intent=null,observed=null,checking=false,attemptPending=!!remembered,reviewAnnounced=false;
  const page=createTornTradePage(document,window);
@@ -459,7 +460,7 @@ export function installTradeHandoff({document,window,transport}){
   else if(update.status==='claimed')message.textContent='Checking this trade attempt. A repeated creation will not be sent.';
   else if(update.status==='submitting')message.textContent='Initiating one empty trade with your loan reference…';
   else if(update.status==='submitted')message.textContent='Trade setup was submitted once. Waiting for Torn to show its reference and link; you can also open Check trades in Torn.';
-  else if(update.status==='observed')message.textContent='Torn is showing the trade. Saving its link to your loan…';
+  else if(update.status==='observed')message.textContent='Torn is showing the trade. Saving its link to your approved application…';
   else if(update.status==='recorded'){
    page.dispose();attemptPending=false;clearTradeResume(storage,handoff);
    message.textContent=intent.cancellationRequired||intent.status==='cancelled'?'This loan request was withdrawn. Open the Torn trade and cancel it; the bank request remains withdrawn.':intent.reportedAfterFunding?'The trade link is saved. Loan funding is already recorded; review any open trade with the receiving lender.':'Your loan trade is created with the reference shown above. Its collateral review opens in Loan details. Add the required collateral in this trade, then confirm it in the review form.';

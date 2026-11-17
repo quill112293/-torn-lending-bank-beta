@@ -1,3 +1,4 @@
+import {allLoanRecords,normalizeFundingState} from '../lib/funding-lifecycle.js';
 import {assignMemberProgram,memberProgram} from '../lib/member-program.js';
 import TB from '../lib/engine.js';
 import {notificationRoute,drainPush} from './push.js';
@@ -21,7 +22,7 @@ export async function handle(request,env,ctx){
  let result;const srv=createServer(env);const {database,response,body,identity,rateLimit,loadState,saveState,allowed,torn,flagConfirmedProfile}=srv;
  try{
   if(request.method==='OPTIONS')result=new Response(null,{status:204});
-  else if(path==='/api/health'&&request.method==='GET'){let notificationsReady=false;try{await database().prepare('SELECT id FROM push_devices LIMIT 1').first();notificationsReady=true;}catch{}result=response({ok:true,version:'1.1.0-beta.79',notificationsReady});}
+  else if(path==='/api/health'&&request.method==='GET'){let notificationsReady=false;try{await database().prepare('SELECT id FROM push_devices LIMIT 1').first();notificationsReady=true;}catch{}result=response({ok:true,version:'1.1.0-beta.81',notificationsReady});}
   else if(path==='/api/health/market'&&request.method==='GET'){
    // Fixed public item and a shared rate limit keep this check independent of bank accounts.
    await rateLimit('public-market-health',3);
@@ -73,7 +74,7 @@ export async function handle(request,env,ctx){
   }else if(path==='/api/import'&&request.method==='POST'){
    const u=await identity(request);if(u.torn_id!==OWNER_ID)fail('Only the owner can import records.',403);
    await rateLimit(u.platformId+':import',2);const a=await body(request);if(a.confirm!=='IMPORT')fail('Confirm the migration import.');
-   const current=await loadState();if(current.loans.length||current.applications.length||current.ledger.length||current.staff.length>1||current.pendingPayments.length||current.transfers.length||current.audit.length)fail('Import is allowed only into a new empty bank.');
+   const current=await loadState();if(allLoanRecords(current).length||current.applications.length||current.ledger.length||current.staff.length>1||current.pendingPayments.length||current.transfers.length||current.audit.length)fail('Import is allowed only into a new empty bank.');
    if(a.export?.role!=='owner'||String(a.export?.user?.id)!==OWNER_ID)fail('Use an owner export from the existing bank.');
    const next=a.export.state;validateImport(next);next.processedRequests=[];next.actorId=OWNER_ID;next.testDate=TB.today();TB.log(next,'Imported previous bank','Owner migration export');await saveState(next,current.revision);result=response({ok:true});
   }else{
@@ -92,7 +93,7 @@ export function validateImport(s){
  const owners=s.staff.filter(p=>p.role==='owner');if(owners.length!==1||owners[0].id!==OWNER_ID||owners[0].disabled)fail('The export owner does not match Aaron112293.');
  if(s.staff.some(p=>!/^\d{1,10}$/.test(p.id)||!['owner','vault','staff'].includes(p.role)))fail('Invalid staff records.');
  if(new Set(s.staff.map(p=>p.id)).size!==s.staff.length)fail('Duplicate staff records.');
- TB.validateRules(s.rules);for(const loan of s.loans){TB.balance(loan,TB.today());if(!loan.id||!/^\d{1,10}$/.test(loan.borrowerId))fail('Invalid loan record.');}
+ normalizeFundingState(s);TB.validateRules(s.rules);for(const loan of allLoanRecords(s)){TB.balance(loan,TB.today());if(!loan.id||!/^\d{1,10}$/.test(loan.borrowerId))fail('Invalid loan record.');}
 }
 export default {fetch:handle,async scheduled(_event,env){await env.DB.batch([env.DB.prepare('DELETE FROM sessions WHERE expires_at>0 AND expires_at<=?').bind(Date.now()),env.DB.prepare('DELETE FROM api_limits WHERE bucket<?').bind(Math.floor(Date.now()/60000)-2),env.DB.prepare('DELETE FROM push_events WHERE created_at<?').bind(Date.now()-7*86400000)]);await drainPush(env);}};
 

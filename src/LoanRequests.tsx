@@ -1,10 +1,12 @@
 import React from 'react';
+import {isFundedLoan} from '../lib/funding-lifecycle.js';
 const money=value=>'$'+Math.round(Number(value)||0).toLocaleString('en-US');
 const statusLabel=status=>({pending:'Awaiting lender review',review:'Payment under review',received:'Payment received',accepted:'Payment accepted',approved:'Extension approved',denied:'Extension denied',rejected:'Payment rejected'}[status]||status);
 export default function LoanRequests({state,loanId,isStaff,staffName,onRecord,onReviewPayment,onReviewExtension}){
- const matches=row=>!loanId||row.loanId===loanId;
+ const fundedLoans=(state.loans||[]).filter(isFundedLoan),fundedIds=new Set(fundedLoans.map(loan=>loan.id));
+ const matches=row=>fundedIds.has(row.loanId)&&(!loanId||row.loanId===loanId);
  const intents=(state.paymentIntents||[]).filter(matches),payments=(state.pendingPayments||[]).filter(matches),extensions=(state.extensionRequests||[]).filter(matches);
- const loanName=row=>state.loans.find(l=>l.id===row.loanId)?.name||'Loan';
+ const loanName=row=>fundedLoans.find(l=>l.id===row.loanId)?.name||'Loan';
  return <>
   <section className='card'><h2>Borrower payment requests</h2><p className='muted'>A request tells the lender to expect a payment. The balance changes only after receipt is verified and accepted.</p>
    {!intents.length&&<p className='muted'>No payment requests recorded.</p>}
