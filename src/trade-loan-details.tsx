@@ -5,6 +5,7 @@ import TradeFlowForm,{tradeFlowLabels} from './TradeFlowForm';
 import TradeReplacementForm,{tradeReplacementLabels} from './TradeReplacementForm';
 import {tradeViewUrl} from '../lib/collateral-trade.js';
 import {tradeReplacementEligibility} from '../lib/trade-replacement.js';
+import {hasAcceptedLoanTerms} from '../lib/loan-terms.js';
 import {readCreatedTradeReview,clearCreatedTradeReview} from './trade-handoff.js';
 import {createTradeLoanDetailsController,readTradeLoanContext,tradeDetailLoans,tradeLoanSelectionNotice,loanTradeActions} from './trade-loan-match.js';
 
@@ -12,34 +13,41 @@ const money=value=>Number.isSafeInteger(value)&&value>=0?'$'+value.toLocaleStrin
 const status=loan=>loan.fundingReconciliation?'Funding evidence needs reconciliation':loan.status==='approved'?'Approved application · awaiting transfer':loan.status==='withdrawn'?'Withdrawn':String(loan.status||'Unknown').replace(/^./,letter=>letter.toUpperCase());
 const bankUrl='https://www.torn.com/bank.php';
 const date=value=>Number.isFinite(Date.parse(value))?new Date(value).toLocaleString('en-GB',{timeZone:'UTC'})+' UTC':'Unavailable';
-const order=['collateral_placed','collateral_reviewed','funds_added','funds_reviewed','completed'];
-const steps=[['Collateral placed','collateralPlaced'],['Collateral checked','collateralReviewed'],['Loan funds added','fundsAdded'],['Loan funds checked','fundsReviewed'],['Completed transfer verified','completion']];
-const primaryActions=['collateral-placed','collateral-reviewed','funds-added','funds-reviewed','complete'];
+const primaryActions=['collateral-placed','funds-added','complete'];
 
 function actor(data,loan,id){const name=String(id)===String(loan.borrowerId)?loan.name:data.state?.staff?.find(person=>String(person.id)===String(id))?.name;return (name?name+' ':'')+'['+id+']';}
-function TradeProgress({data,loan}){
- const flow=loan.tradeFlow,rank=order.indexOf(flow?.stage),completed=flow?.stage==='completed';
+function TradeProgress({data,loan,tradeCheck,requiresTermsAcceptance=false}){
+ const flow=loan.tradeFlow,completed=flow?.stage==='completed',manual=flow?.verificationMode==='manual',termsAccepted=hasAcceptedLoanTerms(loan)&&!requiresTermsAcceptance,reviewed=manual&&(flow.fundsAdded||flow.collateralReviewed);
+ const collateralDone=completed||manual&&termsAccepted&&!!flow?.collateralPlaced;
+ const fundsDone=completed||manual&&termsAccepted&&flow?.stage==='funds_added'&&!!flow?.fundsAdded;
+ const borrower=data.state?.borrowers?.[loan.borrowerId];
+ const acceptanceBlockedReason=!completed&&fundsDone&&(tradeCheck?.acceptanceBlockedReason||(data.state?.bankOnline!==true?'The bank is offline. Staff must reopen lending before this trade can be accepted.':(borrower?.flags||[]).some(flag=>!flag.lifted)?'A lending restriction is active for this borrower. Staff must review it before this trade can be accepted.':reviewed?.piAmount>0&&borrower?.piRto!==true?'The accepted PI collateral eligibility needs staff review before this trade can be accepted.':''));
+ const current=collateralDone?(fundsDone?2:1):0;
+ const steps=[
+  ['Borrower confirms collateral','collateralPlaced',collateralDone],
+  ['Staff confirms loan funds','fundsAdded',fundsDone],
+  ['Staff confirms full transfer','completion',completed]
+ ];
  const guidance=[
-  'The borrower places the listed collateral in this same Torn trade, then confirms it for a check.',
-  'The trade lender checks the borrower’s collateral and reviews its value next.',
-  'The trade lender adds '+money(loan.principal)+' to this same Torn trade next.',
-  'The borrower checks that '+money(loan.principal)+' has been added by the trade lender next.',
-  'Both participants accept their own side in Torn. Staff then verifies the completed transfer.'
+  flow?.collateralPlaced&&!termsAccepted?'The borrower reviews the current terms and reconfirms the collateral already offered in this Torn trade.':'The borrower adds the listed collateral to this Torn trade and confirms it below.',
+  'Waiting for staff. The receiving lender checks the collateral, adds the approved loan funds and confirms them.',
+  acceptanceBlockedReason?'Funds confirmed; awaiting staff review. '+acceptanceBlockedReason:'Funds confirmed. Finish acceptance in Torn when its Accept control is available, then staff confirms the full transfer.'
  ];
  return <section aria-label='Trade progress'><h3>Trade progress</h3>
-  {!completed&&<p className='muted'>{guidance[Math.max(0,rank+1)]}</p>}
-  <ol style={{listStyle:'none',padding:0,margin:0}}>{steps.map(([label,marker],index)=>{
-   const record=marker&&flow?.[marker],done=completed||index<4&&rank>=index,current=!completed&&(index<4?rank===index-1:index===4&&rank===3);
-   return <li className='record static' key={label} aria-current={current?'step':undefined}><span className='badge'>{index+1}</span><div className='record-main'><strong>{label}</strong><span>{done?['Placed','Checked','Added','Checked','Verified'][index]:current?'Current step':'Waiting'}</span>{record?.by&&<span>{actor(data,loan,record.by)} · {date(record.at)}</span>}</div></li>;
+  {!completed&&<p className={acceptanceBlockedReason?'notice amber':fundsDone?'notice':'muted'}>{guidance[current]}</p>}
+  {!!flow&&!manual&&!completed&&<p className='notice'>This trade has earlier verification records. The borrower confirms the collateral again to start the manual flow for the same linked trade.</p>}
+  <ol style={{listStyle:'none',padding:0,margin:0}}>{steps.map(([label,marker,done],index)=>{
+   const record=(manual||completed)&&flow?.[marker];
+   return <li className='record static' key={label} aria-current={!completed&&current===index?'step':undefined}><span className='badge'>{index+1}</span><div className='record-main'><strong>{label}</strong><span>{done?'Confirmed':!completed&&current===index?'Current step':'Waiting'}</span>{record?.by&&<span>{actor(data,loan,record.by)} · {date(record.at)}</span>}{record?.source&&<span>{record.source}</span>}</div></li>;
   })}</ol>
-  {flow?.reservedBy&&!completed&&<p className='notice'>Reserved for this trade: <strong>{money(loan.principal)}</strong> with lender {actor(data,loan,flow.reservedBy)}. The approved application becomes a loan after staff verifies the completed transfer.</p>}
-  {flow?.collateralReviewed&&<dl className='breakdown'>
-   <div><dt>Reviewed cash in trade</dt><dd>{money(flow.collateralReviewed.cash)}</dd></div>
-   <div><dt>Reviewed item market value</dt><dd>{money(flow.collateralReviewed.itemReference)}</dd></div>
-   {flow.collateralReviewed.piAmount>0&&<div><dt>Reviewed PI payment value</dt><dd>{money(flow.collateralReviewed.piAmount)}</dd></div>}
-   <div><dt>Reviewed collateral credit</dt><dd>{money(flow.collateralReviewed.credited)}</dd></div>
+  {flow?.reservedBy&&!completed&&<p className='notice'>Reserved for this trade: <strong>{money(loan.principal)}</strong> with lender {actor(data,loan,flow.reservedBy)}. The approved application becomes a loan after staff confirms the completed transfer.</p>}
+  {reviewed&&<dl className='breakdown'>
+   <div><dt>Reviewed cash in trade</dt><dd>{money(reviewed.cash)}</dd></div>
+   <div><dt>Reviewed item market value</dt><dd>{money(reviewed.itemReference)}</dd></div>
+   {reviewed.piAmount>0&&<div><dt>Reviewed PI payment value</dt><dd>{money(reviewed.piAmount)}</dd></div>}
+   <div><dt>Reviewed collateral credit</dt><dd>{money(reviewed.credited)}</dd></div>
   </dl>}
-  {!completed&&<p className='micro'>The first four steps check the open trade. Collateral receipt and the loan transfer are recorded after staff verifies the completed trade.</p>}
+  {!completed&&<p className='micro'>Each step records the person’s manual confirmation. The trade ticket stays open until staff confirms the full transfer.</p>}
  </section>;
 }
 
@@ -53,11 +61,15 @@ export function TradeLoanDetails({model,onOpen=()=>{},onRefresh=()=>{},onSelect=
  const eligible=loanTradeActions(model.data,loan),flow=loan?.tradeFlow;
  const replacement=loan?tradeReplacementEligibility(model.data.state,loan,String(model.data.user.id)):{available:false,canReplace:false,canReconcile:false,reason:''};
  const review=model.review&&model.review.loanId===loan?.id&&eligible[model.review.action]?model.review:null;
+ const matchingCheck=model.tradeCheck?.verificationMode==='manual'&&model.tradeCheck?.reference===loan?.reference&&model.tradeCheck?.intentId===loan?.collateralTrade?.intentId&&model.tradeCheck?.stage===(flow?.verificationMode==='manual'?flow.stage||'':'')&&String(model.tradeCheck?.nativeTradeId)===String(flow?.nativeTradeId??loan?.collateralTrade?.uiTradeId)?model.tradeCheck:null;
+ const requiresTermsAcceptance=!!review?.requiresTermsAcceptance||!!matchingCheck?.requiresTermsAcceptance,termsAccepted=hasAcceptedLoanTerms(loan)&&!requiresTermsAcceptance;
  const linkedTradeId=String(flow?.nativeTradeId??loan?.collateralTrade?.uiTradeId??'');
  const linkedTradeUrl=/^[1-9]\d{0,15}$/.test(linkedTradeId)?tradeViewUrl(linkedTradeId):'';
  const invalidReason=flow?.invalidReason||model.tradeCheck?.reason;
  const needsReconciliation=!!loan?.fundingReconciliation;
  const completion=flow?.stage==='completed'||needsReconciliation?flow?.completion:null;
+ const application=loan&&(model.data?.state?.applications||[]).find(record=>record.id===loan.applicationId&&record.borrowerId===loan.borrowerId);
+ const manualCompletion=flow?.verificationMode==='manual'||completion?.source==='Manual staff confirmation';
  return <details className='trade-loan-details' open={model.open} onToggle={event=>onOpen(event.currentTarget.open)}>
   <summary><strong>Loan details</strong><span>Torn Lending Bank</span></summary>
   <div className='trade-loan-content'>
@@ -80,8 +92,8 @@ export function TradeLoanDetails({model,onOpen=()=>{},onRefresh=()=>{},onSelect=
       <div><dt>{loan.status==='approved'?'Application status':'Loan status'}</dt><dd>{status(loan)}</dd></div>
       <div><dt>Approved amount</dt><dd>{money(loan.principal)}</dd></div>
       <div><dt>{historical?'Credited collateral required at approval':'Required credited collateral'}</dt><dd>{money(loan.collateralRequired)}</dd></div>
-      <div><dt>Recorded collateral review</dt><dd>{loan.collateralConfirmed?'Collateral acceptance recorded in the bank':'No collateral acceptance recorded'}</dd></div>
-      <div><dt>Borrower terms</dt><dd>{loan.borrowerConfirmed?'Loan terms accepted':'Terms acceptance not recorded'}</dd></div>
+      <div><dt>Recorded collateral review</dt><dd>{loan.collateralConfirmed?'Collateral receipt recorded in the bank':flow?.verificationMode==='manual'&&(flow.fundsAdded||flow.collateralReviewed)?'Staff confirmed the offered collateral; receipt awaits completed transfer':'No collateral acceptance recorded'}</dd></div>
+      <div><dt>Borrower terms</dt><dd>{termsAccepted?'Loan terms accepted':'Terms acceptance not recorded'}</dd></div>
       {flow?.staffId&&<div><dt>Trade lender</dt><dd>{actor(model.data,loan,flow.staffId)}</dd></div>}
      </dl>
      {needsReconciliation&&<div className='notice amber' role='status'>
@@ -100,23 +112,23 @@ export function TradeLoanDetails({model,onOpen=()=>{},onRefresh=()=>{},onSelect=
       {!review&&<div className='actions'>{['replace-expired','reconcile-expired'].filter(action=>eligible[action]).map(action=><button type='button' key={action} className='secondary' disabled={model.saving} onClick={()=>onBeginReview(action)}>{tradeReplacementLabels[action]}</button>)}</div>}
      </section>}
      {loan.collateralConfirmed&&!flow&&<p className='notice'>Collateral was already recorded for this request. Staff must reconcile that collateral before a new trade can proceed. Do not place the same collateral again.</p>}
-     {!needsReconciliation&&loan.status==='approved'&&!loan.borrowerConfirmed&&<p className='notice amber'>{!flow?.stage?'The borrower reviews and accepts the approved loan terms in the first collateral placement step.':'Return to collateral placement in this menu so the borrower can review and accept the current terms.'}</p>}
-     {!needsReconciliation&&(flow||loan.status==='approved'&&!loan.collateralConfirmed)&&<TradeProgress data={model.data} loan={loan}/>}
+     {!needsReconciliation&&loan.status==='approved'&&!termsAccepted&&<p className='notice amber'>{!flow?.stage?'The borrower reviews and accepts the approved loan terms in the first collateral placement step.':'Return to collateral placement in this menu so the borrower can review and accept the current terms.'}</p>}
+     {!needsReconciliation&&(flow||loan.status==='approved'&&!loan.collateralConfirmed)&&<TradeProgress data={model.data} loan={loan} tradeCheck={matchingCheck} requiresTermsAcceptance={requiresTermsAcceptance}/>}
      {invalidReason&&<p role='status' className='notice amber'>{invalidReason}</p>}
      {(flow?.manualItemReviewRequired||flow?.collateralReviewed?.manualItemReviewRequired)&&<p className='notice amber'>Some collateral items require manual identification. Match their Torn item names and IDs with the expected checklist and record the mapping and values in the review notes.</p>}
-     {completion&&<section aria-label={needsReconciliation?'Saved completed-transfer evidence':'Completed loan trade'}><h3>{needsReconciliation?'Saved completed-transfer evidence':'Completed transfer verified'}</h3><p>{needsReconciliation?'The saved transfer evidence and application status do not agree. Funding remains unresolved until staff reconciles the records.':'This application is now a funded loan.'}</p><dl className='breakdown'>
+     {completion&&<section aria-label={needsReconciliation?'Saved completed-transfer evidence':'Completed loan trade'}><h3>{needsReconciliation?'Saved completed-transfer evidence':manualCompletion?'Trade ticket completed':'Completed transfer verified'}</h3><p>{needsReconciliation?'The saved transfer evidence and application status do not agree. Funding remains unresolved until staff reconciles the records.':manualCompletion?'The application’s trade ticket is closed. The loan is active for repayments.':'This application is now a funded loan.'}</p><dl className='breakdown'>
       <div><dt>{needsReconciliation?'Saved transfer amount':'Loan funds transferred'}</dt><dd><strong>{money(completion.amount)}</strong></dd></div>
       <div><dt>Collateral received and credited</dt><dd>{money(loan.collateralConfirmed?.amount)}</dd></div>
-      <div><dt>Verified by</dt><dd>{actor(model.data,loan,completion.by)}</dd></div>
-      <div><dt>Trade completed at</dt><dd>{date(completion.completedAt)}</dd></div>
-      <div><dt>Verified at</dt><dd>{date(completion.at)}</dd></div>
+      <div><dt>{manualCompletion?'Manually confirmed by':'Verified by'}</dt><dd>{actor(model.data,loan,completion.by)}</dd></div>
+      <div><dt>{manualCompletion?'Transfer recorded at':'Trade completed at'}</dt><dd>{date(completion.completedAt)}</dd></div>
+      <div><dt>{manualCompletion?'Confirmed at':'Verified at'}</dt><dd>{date(completion.at)}</dd></div>
       <div><dt>Evidence source</dt><dd>{completion.source||'Unavailable'}</dd></div>
-      <div><dt>Torn API trade ID</dt><dd>{completion.apiTradeId||'Unavailable'}</dd></div>
+      {manualCompletion?<div><dt>Linked Torn trade</dt><dd>{completion.nativeTradeId||linkedTradeId||'Unavailable'}</dd></div>:<div><dt>Torn API trade ID</dt><dd>{completion.apiTradeId||'Unavailable'}</dd></div>}
      </dl></section>}
      {!review&&<div className='actions'>{primaryActions.filter(action=>eligible[action]).map(action=><button type='button' key={action} className='primary' disabled={model.saving} onClick={()=>onBeginReview(action)}>{tradeFlowLabels[action]}</button>)}</div>}
-     {eligible.complete&&!completion&&<p className='micro'>Finish both sides of Torn’s acceptance, then staff can verify the completed transfer.</p>}
+     {eligible.complete&&!completion&&<p className='micro'>After both sides complete the trade in Torn, staff selects Confirm full transfer to close the ticket and activate the loan.</p>}
      {!review&&<div className='actions'>{['refresh','reset'].filter(action=>eligible[action]).map(action=><button type='button' key={action} className='secondary' disabled={model.saving} onClick={()=>onBeginReview(action)}>{tradeFlowLabels[action]}</button>)}</div>}
-     {review&&(tradeReplacementLabels[review.action]?<TradeReplacementForm key={loan.id+':'+loan.collateralTrade?.intentId+':'+review.action} action={review.action} state={model.data.state} loan={loan} keyRole={String(loan.borrowerId)===String(model.data.user.id)?'Borrower':'Lender'} savedKeyAvailable={!!model.savedKeyAvailable} saving={!!model.saving} blockedReason={review.action==='replace-expired'&&!replacement.canReplace?replacement.reason:''} onSubmit={onSubmitReview} onCancel={onCancelReview}/>:<TradeFlowForm linkOnPlacement={!!review.linkOnPlacement} key={loan.id+':'+review.action} action={review.action} loan={loan} keyRole={String(loan.borrowerId)===String(model.data.user.id)?'Borrower':'Lender'} piAllowed={eligible.piAllowed} savedKeyAvailable={!!model.savedKeyAvailable} saving={!!model.saving} onSubmit={onSubmitReview} onCancel={onCancelReview}/>)}
+     {review&&(tradeReplacementLabels[review.action]?<TradeReplacementForm key={loan.id+':'+loan.collateralTrade?.intentId+':'+review.action} action={review.action} state={model.data.state} loan={loan} keyRole={String(loan.borrowerId)===String(model.data.user.id)?'Borrower':'Lender'} savedKeyAvailable={!!model.savedKeyAvailable} saving={!!model.saving} blockedReason={review.action==='replace-expired'&&!replacement.canReplace?replacement.reason:''} onSubmit={onSubmitReview} onCancel={onCancelReview}/>:<TradeFlowForm linkOnPlacement={!!review.linkOnPlacement} requiresTermsAcceptance={!!review.requiresTermsAcceptance} key={loan.id+':'+review.action} action={review.action} loan={loan} application={application} piAllowed={eligible.piAllowed} saving={!!model.saving} onSubmit={onSubmitReview} onCancel={onCancelReview}/>)}
     </>}
    </>}
    {model.reviewError&&<p ref={reviewFeedback} tabIndex={-1} role='alert' className='notice amber'>{model.reviewError}</p>}
@@ -146,15 +158,15 @@ export function installTradeLoanDetails({document,window,transport,css=''}){
  const readContext=()=>readTradeLoanContext(document,window.location.href);
  const render=model=>root.render(<TradeLoanDetails model={model} onOpen={open=>controller.setOpen(open)} onRefresh={()=>controller.refresh()} onSelect={id=>controller.select(id)} onBeginReview={action=>controller.beginReview(action)} onCancelReview={()=>controller.cancelReview()} onSubmitReview={input=>controller.submitReview(input)}/>);
  let reviewStorage;try{reviewStorage=window.sessionStorage;}catch{}
- controller=createTradeLoanDetailsController({transport,readContext,onChange:render,navigateToTrade:url=>window.location.assign(url),onCreatedTradeReviewConsumed:detail=>clearCreatedTradeReview(reviewStorage,detail)});
+ controller=createTradeLoanDetailsController({transport,readContext,onChange:render,navigateToTrade:url=>window.location.assign(url),onCreatedTradeReviewConsumed:detail=>clearCreatedTradeReview(reviewStorage,detail),onTradeUpdated:()=>window.dispatchEvent(new window.Event('tlb:loan-trade-updated'))});
  render(controller.getState());
  let timer=null;
  const update=()=>{timer=null;const context=readTradeLoanContext(document,window.location.href);if(host.hidden===context.page)host.hidden=!context.page;controller.contextChanged();};
  const schedule=()=>{if(timer===null)timer=window.setTimeout(update,80);};
  const observer=new window.MutationObserver(schedule);
  observer.observe(document.documentElement,{subtree:true,childList:true,characterData:true,attributes:true,attributeFilter:['uid','name','value','hidden','aria-hidden','style','class','href','disabled','aria-disabled']});
- const created=event=>controller.openCreatedTrade(event.detail);
- window.addEventListener('hashchange',update);window.addEventListener('popstate',update);window.addEventListener('pageshow',update);window.addEventListener('tlb:loan-trade-created',created);
+ const created=event=>controller.openCreatedTrade(event.detail),stateChanged=()=>controller.refreshIfIdle();
+ window.addEventListener('hashchange',update);window.addEventListener('popstate',update);window.addEventListener('pageshow',update);window.addEventListener('tlb:loan-trade-created',created);window.addEventListener('tlb:loan-trade-state-changed',stateChanged);
  const pendingReview=readCreatedTradeReview(reviewStorage,window.location.href);if(pendingReview)controller.openCreatedTrade(pendingReview);
- return {dispose(){controller.dispose();observer.disconnect();if(timer!==null)window.clearTimeout(timer);window.removeEventListener('hashchange',update);window.removeEventListener('popstate',update);window.removeEventListener('pageshow',update);window.removeEventListener('tlb:loan-trade-created',created);root.unmount();host.remove();}};
+ return {dispose(){controller.dispose();observer.disconnect();if(timer!==null)window.clearTimeout(timer);window.removeEventListener('hashchange',update);window.removeEventListener('popstate',update);window.removeEventListener('pageshow',update);window.removeEventListener('tlb:loan-trade-created',created);window.removeEventListener('tlb:loan-trade-state-changed',stateChanged);root.unmount();host.remove();}};
 }
