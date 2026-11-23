@@ -4,6 +4,7 @@ import {validTornKey} from './api-key.js';
 import {hasPIStatus} from '../lib/pi-collateral.js';
 import {tradeRecipients,tradeStartUrl} from '../lib/collateral-trade.js';
 import {tradeReplacementEligibility} from '../lib/trade-replacement.js';
+import {hasAcceptedLoanTerms} from '../lib/loan-terms.js';
 
 const hosts=new Set(['torn.com','www.torn.com']);
 const nativeId=value=>typeof value==='string'&&/^[1-9]\d{0,15}$/.test(value)?value:null;
@@ -98,10 +99,14 @@ function canLinkDuringPlacement(context,loan){
  const url=new URL(context.route),params=url.hash?new URLSearchParams(url.hash.slice(1)):url.searchParams;
  return params.get('step')==='view'&&!(loan.collateralTradeHistory||[]).some(entry=>[entry.intent?.uiTradeId,entry.flow?.nativeTradeId].some(id=>String(id)===context.tradeId));
 }
-const actionStages={'collateral-placed':'collateral_placed','collateral-reviewed':'collateral_reviewed','funds-added':'funds_added','funds-reviewed':'funds_reviewed',complete:'completed'};
-const actionRecords={'collateral-placed':'collateralPlaced','collateral-reviewed':'collateralReviewed','funds-added':'fundsAdded','funds-reviewed':'fundsReviewed',complete:'completion'};
+const actionStages={'collateral-placed':'collateral_placed','funds-added':'funds_added',complete:'completed'};
+const actionRecords={'collateral-placed':'collateralPlaced','funds-added':'fundsAdded',complete:'completion'};
 const recoveryActions=new Set(['replace-expired','reconcile-expired']);
 const flowActions=new Set([...Object.keys(actionStages),'refresh','reset',...recoveryActions]);
+function manualRestartCheck(data,loan){
+ const check=data?.tradeCheck,intent=loan?.collateralTrade;
+ return check?.verificationMode==='manual'&&check.requiresManualRestart===true&&check.reference===loan?.reference&&check.intentId===intent?.intentId&&String(check.nativeTradeId)===linkedNativeId(loan)?check:null;
+}
 
 export function loanTradeActions(data,loan){
  const userId=String(data?.user?.id??''),state=data?.state||{},flow=loan?.tradeFlow;
@@ -111,23 +116,24 @@ export function loanTradeActions(data,loan){
  const borrower=accessible&&String(loan.borrowerId)===userId;
  const staffId=String(flow?.staffId??loan?.collateralTrade?.recipientId??loan?.issuer??'');
  const receiver=accessible&&staff&&staffId===userId;
- const participant=borrower||receiver||accessible&&staff&&!staffId;
- const attemptReady=!loan?.collateralTrade?.fundsReturnReconciled&&(!(loan?.collateralTradeHistory||[]).length||loan?.collateralTrade?.status==='created');
- const placementReady=attemptReady||loan?.collateralTrade?.status==='claimed'&&!loan?.collateralTrade?.fundsReturnReconciled;
- const approved=accessible&&!loan.fundingReconciliation&&loan.status==='approved'&&!loan.collateralConfirmed&&Number.isSafeInteger(loan.principal)&&loan.principal>0;
+ const participant=borrower||receiver;
+ const intent=loan?.collateralTrade;
+ const attemptReady=!!intent&&!intent.fundsReturnReconciled&&!intent.cancellationRequired&&!intent.reportedAfterFunding&&intent.status==='created';
+ const placementReady=attemptReady||!!intent&&intent.status==='claimed'&&!intent.fundsReturnReconciled&&!intent.cancellationRequired;
+ const approved=accessible&&!loan.fundingReconciliation&&loan.status==='approved'&&!loan.collateralConfirmed&&!loan.fundsReceived&&Number.isSafeInteger(loan.principal)&&loan.principal>0;
  const pending=approved&&attemptReady;
- const terms=pending&&!!loan.borrowerConfirmed;
- const stage=flow?.stage||'';
+ const manual=flow?.verificationMode==='manual',stage=manual?flow.stage||'':'';
+ const terms=pending&&hasAcceptedLoanTerms(loan);
  const lending=state.bankOnline===true&&!(state.borrowers?.[loan?.borrowerId]?.flags||[]).some(flag=>!flag.lifted);
+ const alreadyReserved=receiver&&flow?.reservedBy===userId&&loan.start<=state.testDate;
+ const canConfirmFunds=alreadyReserved||lending&&loan?.start===state.testDate;
  const replacement=accessible?tradeReplacementEligibility(state,loan,userId):{};
  return {
-  'collateral-placed':!!(placementReady&&approved&&borrower&&!stage),
-  'collateral-reviewed':!!(terms&&receiver&&stage==='collateral_placed'),
-  'funds-added':!!(terms&&receiver&&stage==='collateral_reviewed'&&lending&&loan.start===state.testDate),
-  'funds-reviewed':!!(terms&&borrower&&stage==='funds_added'),
-  complete:!!(terms&&receiver&&stage==='funds_reviewed'),
-  refresh:!!(pending&&participant&&stage!=='completed'),
-  reset:!!(pending&&receiver&&flow&&stage!=='completed'&&(flow.reservedBy||flow.collateralPlaced||flow.collateralReviewed||flow.fundsAdded||flow.fundsReviewed)),
+  'collateral-placed':!!(placementReady&&approved&&borrower&&(!stage||!hasAcceptedLoanTerms(loan)||manualRestartCheck(data,loan))),
+  'funds-added':!!(terms&&receiver&&manual&&stage==='collateral_placed'&&String(flow.collateralPlaced?.by)===String(loan.borrowerId)&&canConfirmFunds),
+  complete:!!(terms&&receiver&&manual&&stage==='funds_added'&&flow.fundsAdded?.by===userId&&flow.reservedBy===userId),
+  refresh:!!(approved&&participant&&intent&&intent.status!=='completed'),
+  reset:!!(pending&&receiver&&manual&&stage!=='completed'&&(flow.reservedBy||flow.collateralPlaced||flow.fundsAdded)),
   'replace-expired':!!(borrower&&replacement.canReplace),
   'reconcile-expired':!!(receiver&&replacement.canReconcile),
   piAllowed:!!(loan&&hasPIStatus(state,loan.borrowerId))
@@ -159,12 +165,15 @@ function nativeConflict(context,loan,allowUnclassifiedHeading=false){
 }
 function responseLoan(result,bound){
  const loan=tradeDetailLoans(result).find(record=>record.id===bound.loanId),flow=loan?.tradeFlow,check=result?.tradeCheck;
- if(String(result?.user?.id??'')!==bound.context.accountId||!loan||loan.reference!==bound.loan.reference||loan.borrowerId!==bound.loan.borrowerId||loan.principal!==bound.loan.principal||!flow||flow.reference!==loan.reference||String(flow.borrowerId)!==String(loan.borrowerId)||!check||check.stage!==(flow.stage||'')||String(check.apiTradeId)!==String(flow.apiTradeId))return null;
- const before=bound.loan.tradeFlow;
- if(before?.apiTradeId&&String(flow.apiTradeId)!==String(before.apiTradeId)||before?.staffId&&String(flow.staffId)!==String(before.staffId)||before?.nativeTradeId&&String(flow.nativeTradeId)!==String(before.nativeTradeId))return null;
- if(check.nativeTradeId!=null&&String(check.nativeTradeId)!==String(flow.nativeTradeId))return null;
- if(flow.stage==='completed'&&check.completedApiTradeId!=null&&String(check.completedApiTradeId)!==String(flow.completion?.apiTradeId))return null;
- if(bound.loan.collateralTrade?.intentId&&loan.collateralTrade?.intentId!==bound.loan.collateralTrade.intentId)return null;
+ if(String(result?.user?.id??'')!==bound.context.accountId||!loan||loan.reference!==bound.loan.reference||loan.borrowerId!==bound.loan.borrowerId||loan.principal!==bound.loan.principal||!check||check.verificationMode!=='manual'||check.reference!==loan.reference)return null;
+ const intent=loan.collateralTrade,before=bound.loan.tradeFlow;
+ if(!intent?.intentId||intent.intentId!==bound.loan.collateralTrade?.intentId||check.intentId!==intent.intentId)return null;
+ const native=linkedNativeId(loan),previousNative=linkedNativeId(bound.loan);
+ if(!nativeId(native)||String(check.nativeTradeId)!==native||previousNative&&native!==previousNative||before?.staffId&&String(flow?.staffId??intent.recipientId)!==String(before.staffId))return null;
+ const manual=flow?.verificationMode==='manual',stage=manual?flow.stage||'':'';
+ if(check.stage!==stage)return null;
+ if(!manual)return bound.action==='refresh'&&(!flow||check.requiresManualRestart===true)?loan:null;
+ if(flow.reference!==loan.reference||flow.intentId!==intent.intentId||String(flow.borrowerId)!==String(loan.borrowerId)||String(flow.staffId)!==String(intent.recipientId)||String(flow.nativeTradeId)!==native)return null;
  return loan;
 }
 
@@ -182,8 +191,8 @@ function responseReplacement(result,bound,payload){
 }
 
 // Viewing only reads the bank. Every explicit trade step rechecks its bound loan
-// before one API action. Unknown outcomes are reconciled by reads, never replay.
-export function createTradeLoanDetailsController({transport,readContext,navigateToTrade=null,onChange=()=>{},onCreatedTradeReviewConsumed=()=>{}}){
+// before one recorded confirmation. Unknown outcomes are reconciled by reads, never replay.
+export function createTradeLoanDetailsController({transport,readContext,navigateToTrade=null,onChange=()=>{},onCreatedTradeReviewConsumed=()=>{},onTradeUpdated=()=>{}}){
  let model={open:false,loading:false,error:'',data:null,selectedLoanId:'',manual:false,context:readContext(),review:null,saving:false,reviewError:'',success:'',savedKeyAvailable:false,tradeCheck:null,preparedTradeUrl:''};
  let epoch=0,disposed=false,writeInFlight=false,boundReview=null;
  let pendingCreated=null,openingCreated=null;
@@ -231,13 +240,18 @@ export function createTradeLoanDetailsController({transport,readContext,navigate
   if(action==='collateral-placed'&&loan.collateralTrade?.status==='claimed'&&!linkedNativeId(loan)&&!linkOnPlacement){
    publish({...resetReview(),reviewError:'Open the existing trade from Torn’s active trades list, then confirm collateral for the loan whose reference appears in its trade log.'});return false;
   }
-  if(!linkOnPlacement&&nativeConflict(context,loan,true)){publish({...resetReview(),reviewError:'The selected loan does not match the current Torn trade. Open its matching trade before continuing.'});return false;}
+  if(['collateral-placed','funds-added'].includes(action)&&(!nativeId(context.tradeId)||!linkOnPlacement&&context.tradeId!==linkedNativeId(loan))){
+   publish({...resetReview(),reviewError:'Open this application’s linked Torn trade before confirming its collateral or loan funds.'});return false;
+  }
+  const completedPage=action==='complete'&&!context.tradeId&&context.referenceEvidence==='unclassified'&&(isGenericTradeHeading(context.reference)||/^trades?(?: (?:has been )?completed?)?$/i.test(context.reference));
+  if(!linkOnPlacement&&nativeConflict(completedPage?{...context,reference:null}:context,loan,true)){publish({...resetReview(),reviewError:'The selected loan does not match the current Torn trade. Open its matching trade before continuing.'});return false;}
   if(recoveryActions.has(action)){
    let step;try{const url=new URL(context.route);step=(url.hash?new URLSearchParams(url.hash.slice(1)):url.searchParams).get('step');}catch{}
    if(['accept','accept2','cancel'].includes(step)){publish({...resetReview(),reviewError:'Finish or leave Torn’s current trade confirmation, then open Loan details on the trade page to replace an expired trade.'});return false;}
   }
-  boundReview={action,loanId:loan.id,loan:JSON.parse(JSON.stringify(loan)),signature:reviewSignature(model.data,loan),context,generation:epoch,attempt:{},linkOnPlacement};
-  publish({review:{action,loanId:loan.id,...(linkOnPlacement?{linkOnPlacement:true}:{})},reviewError:'',success:'',savedKeyAvailable:validTornKey(savedKey())});return true;
+  const restartCheck=action==='collateral-placed'?manualRestartCheck(model.data,loan):null,requiresTermsAcceptance=restartCheck?.requiresTermsAcceptance===true;
+  boundReview={action,loanId:loan.id,loan:JSON.parse(JSON.stringify(loan)),signature:reviewSignature(model.data,loan),context,generation:epoch,attempt:{},linkOnPlacement,restartCheck,requiresTermsAcceptance};
+  publish({review:{action,loanId:loan.id,...(linkOnPlacement?{linkOnPlacement:true}:{}),...(requiresTermsAcceptance?{requiresTermsAcceptance:true}:{})},reviewError:'',success:'',savedKeyAvailable:validTornKey(savedKey())});return true;
  }
  async function tryCreatedTrade(){
   const detail=pendingCreated;if(!detail||disposed)return false;
@@ -256,7 +270,7 @@ export function createTradeLoanDetailsController({transport,readContext,navigate
   let opened=false;
   if(loaded&&model.open&&current(loaded.generation,loaded.context)){
    const loan=tradeDetailLoans(loaded.data).find(record=>record.id===detail.loanId),intent=loan?.collateralTrade;
-   if(String(loaded.data.user.id)===detail.borrowerId&&String(loan?.borrowerId)===detail.borrowerId&&intent?.status==='created'&&intent.intentId===detail.intentId&&intent.loanId===detail.loanId&&String(intent.borrowerId)===detail.borrowerId&&String(intent.uiTradeId)===detail.nativeTradeId&&intent.reference===loan.reference&&!intent.cancellationRequired&&!intent.reportedAfterFunding&&loanTradeActions(loaded.data,loan)['collateral-placed']&&!nativeConflict(loaded.context,loan,true)){
+   if(String(loaded.data.user.id)===detail.borrowerId&&String(loan?.borrowerId)===detail.borrowerId&&intent?.status==='created'&&intent.intentId===detail.intentId&&intent.loanId===detail.loanId&&String(intent.borrowerId)===detail.borrowerId&&String(intent.uiTradeId)===detail.nativeTradeId&&intent.reference===loan.reference&&!intent.cancellationRequired&&!intent.reportedAfterFunding&&!loan.tradeFlow?.stage&&loanTradeActions(loaded.data,loan)['collateral-placed']&&!nativeConflict(loaded.context,loan,true)){
     publish({selectedLoanId:loan.id,manual:true});
     opened=beginReview('collateral-placed');
    }
@@ -279,38 +293,50 @@ export function createTradeLoanDetailsController({transport,readContext,navigate
   if(!stillBound())return;
   let key='',stored='',payload;
   try{
-   stored=savedKey();key=String(input.key??'').trim()||stored;
-   if(!validTornKey(key))throw Error('Enter a valid 16-character Torn API key for this trade check.');
-   const tradeId=String(input.tradeId??'').trim();
-   if(tradeId&&!/^[1-9]\d{0,15}$/.test(tradeId))throw Error('Enter a numeric Torn API trade ID, or leave it blank to find the matching trade.');
-   if(tradeId&&bound.loan.tradeFlow?.apiTradeId&&tradeId!==String(bound.loan.tradeFlow.apiTradeId))throw Error('This loan is already linked to a different Torn API trade. Refresh its review.');
+   const recovery=recoveryActions.has(bound.action);
    if(input.checked!==true)throw Error('Confirm you reviewed this loan and trade before continuing.');
-   const needsTerms=bound.action==='collateral-placed'&&!bound.loan.borrowerConfirmed;
-   if(needsTerms&&input.acceptTerms!==true)throw Error('Read and explicitly accept the approved loan terms before confirming the collateral offer.');
-   payload={action:bound.action,loanId:bound.loanId,key,checked:true};
+   payload={action:bound.action,loanId:bound.loanId,checked:true};
+   stored=savedKey();
    if(bound.loan.collateralTrade?.intentId)payload.intentId=bound.loan.collateralTrade.intentId;
-   if(bound.action==='replace-expired'){
-    const recipientId=String(input.recipientId??'');
-    if(!tradeRecipients(model.data.state,bound.loan).some(person=>String(person.id)===recipientId))throw Error('Choose an enabled receiving staff member for the replacement trade.');
-    payload.recipientId=recipientId;
-   }
-   if(bound.action==='reconcile-expired'){
-    const returnedAmount=parseReviewAmount(input.returnedAmount),notes=String(input.notes??'').trim();
-    if(returnedAmount!==bound.loan.principal)throw Error('Enter the full loan principal returned to you before confirming the expired trade.');
-    if(notes.length<10||notes.length>1000)throw Error('Add a return verification note of 10 to 1,000 characters explaining how you checked the returned loan funds.');
-    Object.assign(payload,{returnedAmount,notes});
-   }
-   if(needsTerms)payload.acceptTerms=true;
-   if(bound.linkOnPlacement){
-    if(input.linkOpenTrade!==true)throw Error('Confirm the reference in the log of this open Torn trade.');
-    Object.assign(payload,{linkOpenTrade:true,nativeTradeId:bound.context.tradeId,reference:bound.loan.reference});
-   }else if(tradeId)payload.tradeId=tradeId;
-   if(bound.context.tradeId&&bound.context.reference===bound.loan.reference)payload.nativeTradeId=bound.context.tradeId;
-   if(bound.action==='collateral-reviewed'){
-    const itemReference=parseReviewAmount(input.itemReference),piAmount=parseReviewAmount(input.piAmount),notes=String(input.notes??'').trim().slice(0,1000);
-    if(piAmount&&!loanTradeActions(model.data,selectedLoan(model.data)).piAllowed)throw Error('PI payment collateral is not enabled for this borrower.');
-    if((itemReference||piAmount)&&!notes)throw Error('Add notes explaining the collateral values you reviewed.');
-    Object.assign(payload,{itemReference,piAmount,notes});
+   if(recovery){
+    key=String(input.key??'').trim()||stored;
+    if(!validTornKey(key))throw Error('Enter a valid 16-character Torn API key for this expired-trade check.');
+    payload.key=key;
+    if(bound.action==='replace-expired'){
+     const recipientId=String(input.recipientId??'');
+     if(!tradeRecipients(model.data.state,bound.loan).some(person=>String(person.id)===recipientId))throw Error('Choose an enabled receiving staff member for the replacement trade.');
+     payload.recipientId=recipientId;
+    }else{
+     const returnedAmount=parseReviewAmount(input.returnedAmount),notes=String(input.notes??'').trim();
+     if(returnedAmount!==bound.loan.principal)throw Error('Enter the full loan principal returned to you before confirming the expired trade.');
+     if(notes.length<10||notes.length>1000)throw Error('Add a return verification note of 10 to 1,000 characters explaining how you checked the returned loan funds.');
+     Object.assign(payload,{returnedAmount,notes});
+    }
+   }else{
+    const needsTerms=bound.action==='collateral-placed'&&(!hasAcceptedLoanTerms(bound.loan)||bound.requiresTermsAcceptance);
+    if(needsTerms&&input.acceptTerms!==true)throw Error('Read and explicitly accept the approved loan terms before confirming the collateral offer.');
+    if(!payload.intentId)throw Error('Open the linked application trade before confirming this step.');
+    const tradeId=linkedNativeId(bound.loan)||(bound.linkOnPlacement?bound.context.tradeId:'');
+    if(!nativeId(tradeId))throw Error('The linked Torn trade is unavailable. Open the application trade before continuing.');
+    Object.assign(payload,{manual:true,reference:bound.loan.reference,nativeTradeId:tradeId});
+    if(needsTerms)payload.acceptTerms=true;
+    if(bound.linkOnPlacement){
+     if(input.linkOpenTrade!==true)throw Error('Confirm the reference in the log of this open Torn trade.');
+     payload.linkOpenTrade=true;
+    }
+    if(bound.action==='funds-added'){
+     const cashCollateral=parseReviewAmount(input.cashCollateral),itemReference=parseReviewAmount(input.itemReference),piAmount=parseReviewAmount(input.piAmount),fundsAmount=parseReviewAmount(input.fundsAmount),notes=String(input.notes??'').trim();
+     if(fundsAmount!==bound.loan.principal)throw Error('Confirm the exact approved loan amount shown above.');
+     if(piAmount&&!loanTradeActions(model.data,selectedLoan(model.data)).piAllowed)throw Error('PI payment collateral is not enabled for this borrower.');
+     if(notes.length>1000)throw Error('Keep collateral review notes within 1,000 characters.');
+     if((itemReference||piAmount)&&!notes)throw Error('Add notes explaining the collateral values you reviewed.');
+     Object.assign(payload,{cashCollateral,itemReference,piAmount,fundsAmount,notes});
+    }
+    if(bound.action==='reset'){
+     const notes=String(input.notes??'').trim();
+     if(notes.length<10||notes.length>1000)throw Error('Record how you checked that this trade did not complete and all offered funds were removed or returned (10 to 1,000 characters).');
+     payload.notes=notes;
+    }
    }
   }catch(error){publish({reviewError:redactedMessage(error,[key,stored]),success:''});return;}
   writeInFlight=true;let attempted=false,failed=false;
@@ -320,14 +346,19 @@ export function createTradeLoanDetailsController({transport,readContext,navigate
    if(!stillBound())return;
    if(String(data?.user?.id??'')!==bound.context.accountId)throw Error('Your bank login changed. Reopen Loan details with the current Torn account.');
    const loan=tradeDetailLoans(data).find(record=>record.id===bound.loanId);
-   if(!loanTradeActions(data,loan)[bound.action]||reviewSignature(data,loan)!==bound.signature){
+   const eligibilityData=bound.restartCheck?{...data,tradeCheck:bound.restartCheck}:data;
+   if(!loanTradeActions(eligibilityData,loan)[bound.action]||reviewSignature(data,loan)!==bound.signature){
     publish({data,selectedLoanId:loan?.id||'',...resetReview(),reviewError:'The loan, trade stage, or your permissions changed. Review the latest details before continuing.'});return;
+   }
+   if(payload.manual===true&&bound.action!=='refresh'){
+    if(!Number.isSafeInteger(data.state?.revision)||data.state.revision<0)throw Error('The reviewed bank revision is unavailable. Refresh before confirming this trade.');
+    payload.reviewRevision=data.state.revision;
    }
    if(payload.acceptTerms===true){
     if(!Number.isSafeInteger(data.state?.revision)||data.state.revision<0)throw Error('The reviewed loan revision is unavailable. Refresh before accepting its terms.');
     payload.termsRevision=data.state.revision;
    }
-   publish({data});if(!stillBound())return;
+   publish({data:eligibilityData});if(!stillBound())return;
    attempted=true;
    const result=await transport.request('loan-trade',payload);
    if(!stillBound())return;
@@ -349,17 +380,19 @@ export function createTradeLoanDetailsController({transport,readContext,navigate
    if(check.reason){publish({data:result,selectedLoanId:bound.loanId,...resetReview(),tradeCheck:check,reviewError:redactedMessage({message:check.reason},[key,stored])});return;}
    const stage=actionStages[bound.action],record=actionRecords[bound.action];
    if(stage&&(flow.stage!==stage||String(flow[record]?.by)!==bound.context.accountId))throw Error('The bank did not confirm that trade step. Review the latest loan details.');
-   if(bound.action==='collateral-placed'&&!bound.loan.borrowerConfirmed&&(String(updated.borrowerConfirmed?.by)!==String(bound.loan.borrowerId)||updated.borrowerConfirmed?.reference!==bound.loan.reference||updated.borrowerConfirmed?.source!=='Accepted with collateral placement'))throw Error('The bank did not confirm acceptance of the approved loan terms. Refresh its details before continuing.');
-   if(bound.action==='complete'&&(updated.status!=='active'||!(result.state?.loans||[]).some(record=>record.id===updated.id)||(result.state?.fundingRequests||[]).some(record=>record.id===updated.id)||updated.collateralConfirmed?.source!=='Torn API completed loan trade'||updated.fundsReceived?.source!=='Torn API completed loan trade'))throw Error('The bank did not confirm the completed loan transfer. Refresh its details.');
-   const messages={'collateral-placed':'Collateral offer confirmed. Receiving staff can review it.','collateral-reviewed':'Collateral offer reviewed. Receiving staff can add the approved loan funds.','funds-added':'Loan funds added and reserved. The borrower can review the offered funds.','funds-reviewed':'Loan funds reviewed. Continue with the matching trade’s Accept control.',complete:'Completed transfer verified. The approved application is now an active loan.',refresh:'Trade review refreshed from Torn.',reset:'Trade review reset. Follow the current stage shown below.'};
-   publish({data:result,selectedLoanId:bound.loanId,...resetReview(),tradeCheck:check,success:messages[bound.action]});
+   if(bound.action==='collateral-placed'&&!hasAcceptedLoanTerms(updated))throw Error('The bank did not confirm acceptance of the approved loan terms. Refresh its details before continuing.');
+   if(bound.action==='complete'&&(updated.status!=='active'||!(result.state?.loans||[]).some(record=>record.id===updated.id)||(result.state?.fundingRequests||[]).some(record=>record.id===updated.id)||updated.collateralConfirmed?.source!=='Manual staff confirmation'||updated.fundsReceived?.source!=='Manual staff confirmation'||flow.completion?.source!=='Manual staff confirmation'||updated.collateralTrade?.status!=='completed'))throw Error('The bank did not confirm the completed loan transfer. Refresh its details.');
+   const fundsMessage=check.ready?'Loan funds confirmed. Continue acceptance in Torn when its Accept control is available.':'Loan funds confirmed. '+redactedMessage({message:check.acceptanceBlockedReason||'Acceptance is awaiting staff review. Check the current trade status before continuing.'},[key,stored]);
+   const messages={'collateral-placed':'Collateral confirmed. Waiting for staff to add and confirm the loan funds.','funds-added':fundsMessage,complete:'Full transfer manually confirmed. Trade ticket closed; the loan is active for repayments.',refresh:check.requiresManualRestart?'Confirm the existing collateral to begin manual verification.':'Manual trade confirmations refreshed.',reset:'Trade review reset. The borrower can confirm collateral again.'};
+   publish({data:result,selectedLoanId:bound.loanId,...resetReview(),tradeCheck:check,success:messages[bound.action],...(bound.action==='complete'?{open:false}:{})});
+
   }catch(error){
    failed=true;
    if(stillBound())publish({...resetReview(),reviewError:redactedMessage(error,[key,stored])+(attempted?' The latest bank record will be checked. No automatic retry was sent.':' Refresh the loan details before trying again.')});
   }finally{
-   key='';stored='';if(payload)payload.key='';
+   key='';stored='';if(payload&&Object.hasOwn(payload,'key'))payload.key='';
    if(!disposed&&model.open&&readContext().page&&(failed||attempted&&!current(bound.generation,bound.context)))await load({keepFeedback:true,preserveSelected:true});
-   writeInFlight=false;if(!disposed)publish({saving:false});
+   writeInFlight=false;if(!disposed){publish({saving:false});if(attempted)try{onTradeUpdated();}catch{}}
   }
  }
  return {
@@ -371,6 +404,7 @@ export function createTradeLoanDetailsController({transport,readContext,navigate
    if(open)return load();
   },
   refresh(){if(!disposed&&!writeInFlight&&model.open){cancelCreated();return load();}},
+  refreshIfIdle(){if(!disposed&&!writeInFlight&&model.open&&!model.review&&!model.loading)return load({preserveSelected:true});},
   select(id){if(!disposed&&!writeInFlight&&model.data&&(!id||tradeDetailLoans(model.data).some(loan=>loan.id===id))){cancelCreated();publish({selectedLoanId:id,manual:!!id,...resetReview(),preparedTradeUrl:preparedUrl(model.data,tradeDetailLoans(model.data).find(loan=>loan.id===id))});}},
   openCreatedTrade,
   beginReview,

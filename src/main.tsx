@@ -7,6 +7,7 @@ import {createTransport,normalizeOrigin} from './transport';
 import {installTradeHandoff} from './trade-handoff.js';
 import {installTradeLoanDetails} from './trade-loan-details';
 import {installTradeCashGuard} from './trade-cash-guard.js';
+import {installTradeAcceptGuard} from './trade-accept-guard.js';
 import css from './bank.css';
 const native=typeof __NATIVE__!=='undefined'&&__NATIVE__;
 const configured=typeof __BANK_ORIGIN__!=='undefined'?__BANK_ORIGIN__:'';
@@ -14,6 +15,7 @@ const roleLabel=typeof __ROLE_LABEL__!=='undefined'?__ROLE_LABEL__:'Bank';
 if(native&&configured&&location.pathname==='/trade.php'){
  const transport=createTransport(configured,{native:true});
  installTradeCashGuard({document,window,transport});
+ installTradeAcceptGuard({document,window,transport});
  installTradeHandoff({document,window,transport});
  installTradeLoanDetails({document,window,transport,css});
 }

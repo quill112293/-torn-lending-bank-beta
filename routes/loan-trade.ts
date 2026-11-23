@@ -5,12 +5,22 @@ import {TRADE_REPLACEMENT_ACTIONS,inspectTradeReplacement,collectTradeReplacemen
 import {recordCollateralTrade} from '../lib/collateral-trade.js';
 import TB from '../lib/engine.js';
 import {findLoanRecord} from '../lib/funding-lifecycle.js';
+import {MANUAL_LOAN_TRADE_ACTIONS,applyManualLoanTrade} from '../lib/manual-loan-trade.js';
 
 export function route(env){
  const srv=createServer(env);
  return {async POST(req){
   try{
    const user=await srv.identity(req),input=await srv.body(req);
+   if(input.manual===true&&!TRADE_REPLACEMENT_ACTIONS.has(input.action)){
+    TB.need(MANUAL_LOAN_TRADE_ACTIONS.has(input.action),'Choose a supported manual trade confirmation.');
+    await srv.rateLimit(user.platformId+':loan-trade',12);
+    const currentUser=await srv.identity(req),current=await srv.loadState();
+    TB.need(currentUser.torn_id===user.torn_id,'The connected Torn account changed. Refresh before continuing.');
+    const result=await applyManualLoanTrade(current,currentUser.torn_id,input.action,input,Date.now());
+    if(result.changed)await srv.saveState(result.state,current.revision);
+    return srv.response({...srv.view(result.state,currentUser),tradeCheck:result.tradeCheck});
+   }
    if(TRADE_REPLACEMENT_ACTIONS.has(input.action)){
     const initial=await srv.loadState(),context=inspectTradeReplacement(initial,user.torn_id,input.action,input);
     await srv.rateLimit(user.platformId+':loan-trade',12);
@@ -33,6 +43,7 @@ export function route(env){
     return linked;
    };
    const context=inspectLoanTrade(withLink(initial,user.torn_id),user.torn_id,input.loanId,input.action);
+   TB.need(context.loan.tradeFlow?.verificationMode!=='manual','This trade uses manual confirmation. Update the bank script before continuing.');
    const intentId=context.loan.collateralTrade?.intentId;
    TB.need(input.intentId==null||input.intentId===intentId,'The loan trade attempt changed. Refresh the review before continuing.');
    TB.need(!context.loan.collateralTradeHistory?.length||input.intentId===intentId,'Refresh the replacement trade before continuing its review.');

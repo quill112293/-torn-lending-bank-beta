@@ -74,7 +74,7 @@ test('old native pages cannot open verification while a new replacement is only 
  assert.equal(f.controller.beginReview('collateral-placed'),false);
  const loan=f.data.state.fundingRequests[0];Object.assign(loan.collateralTrade,{status:'created',uiTradeId:'11687900'});
  await f.controller.refresh();f.controller.select(loan.id);
- assert.equal(f.controller.beginReview('collateral-placed'),false);assert.match(f.controller.getState().reviewError,/does not match/);
+ assert.equal(f.controller.beginReview('collateral-placed'),false);assert.match(f.controller.getState().reviewError,/linked Torn trade/);
  assert.equal(f.posts().length,1);
 });
 
@@ -112,7 +112,8 @@ test('receiving staff confirms actual returned funds before borrower replacement
  assert.equal(staff.posts().length,1);assert.equal(staff.posts()[0].payload.returnedAmount,100000000);
  assert.equal(staff.controller.getState().data.state.fundingRequests[0].tradeFlow.reservedBy,null);
  assert.equal(staff.navigations.length,0);assert.match(staff.controller.getState().success,/borrower can now create/);
- assert.equal(loanTradeActions(staff.controller.getState().data,staff.data.state.fundingRequests[0])['collateral-reviewed'],false);
+ const actions=loanTradeActions(staff.controller.getState().data,staff.data.state.fundingRequests[0]);
+ assert.equal(actions['funds-added'],false);assert.equal(actions['collateral-reviewed'],undefined);
 });
 
 test('replacing an attempt between opening the form and its fresh read cancels the stale write',async()=>{

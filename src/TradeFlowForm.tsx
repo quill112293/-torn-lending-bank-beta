@@ -1,63 +1,58 @@
 import React,{useEffect,useId,useRef,useState} from 'react';
-import {customKeyLink} from './key-link.js';
-import {validTornKey} from './api-key.js';
+import {hasAcceptedLoanTerms} from '../lib/loan-terms.js';
 
 export const tradeFlowLabels={
  'collateral-placed':'Confirm collateral placed',
- 'collateral-reviewed':'Verify collateral',
  'funds-added':'Confirm loan funds added',
- 'funds-reviewed':'Verify loan funds added',
- complete:'Verify completed transfer',
+ complete:'Confirm full transfer',
  refresh:'Refresh trade review',
  reset:'Reset trade review'
 };
 const money=value=>Number.isSafeInteger(value)&&value>=0?'$'+value.toLocaleString('en-US'):'Unavailable';
 
-export default function TradeFlowForm({linkOnPlacement=false,action,loan,keyRole='Borrower',piAllowed=false,savedKeyAvailable=false,saving=false,onSubmit=()=>{},onCancel=()=>{}}){
- const collateralReview=action==='collateral-reviewed',staffId=loan.tradeFlow?.staffId||loan.collateralTrade?.recipientId||loan.issuer;
- const needsTerms=action==='collateral-placed'&&!loan.borrowerConfirmed;
+export default function TradeFlowForm({linkOnPlacement=false,requiresTermsAcceptance=false,action,loan,application=null,piAllowed=false,saving=false,onSubmit=()=>{},onCancel=()=>{}}){
+ const collateralReview=action==='funds-added',staffId=loan.tradeFlow?.staffId||loan.collateralTrade?.recipientId||loan.issuer;
+ const needsTerms=action==='collateral-placed'&&(!hasAcceptedLoanTerms(loan)||requiresTermsAcceptance);
  const [validation,setValidation]=useState(null),heading=useRef(null),formRef=useRef(null),validationId=useId();
  useEffect(()=>{const node=heading.current;node?.focus({preventScroll:true});node?.scrollIntoView?.({block:'start',inline:'nearest'});},[]);
  useEffect(()=>{if(!validation)return;const field=formRef.current?.elements.namedItem(validation.field);field?.focus({preventScroll:true});field?.closest('label')?.scrollIntoView?.({block:'nearest',inline:'nearest'});},[validation]);
  const fieldFeedback=name=>validation?.field===name?{'aria-invalid':true,'aria-describedby':validationId}:{};
  const fieldError=name=>validation?.field===name?<small id={validationId} style={{display:'block',color:'var(--amber)'}}>{validation.message}</small>:null;
- const credit=loan.rules?.itemCredit;
+ const credit=loan.rules?.itemCredit,plan=loan.expectedCollateral,reviewed=loan.tradeFlow?.verificationMode==='manual'?loan.tradeFlow.fundsAdded||loan.tradeFlow.collateralReviewed:loan.tradeFlow?.collateralReviewed;
+ const matchedApplication=application&&application.id===loan.applicationId&&application.borrowerId===loan.borrowerId?application:null;
+ const proposedItems=(matchedApplication?.items||[]).reduce((sum,item)=>sum+Number(item.qty)*Number(item.reference),0);
+ const itemValue=Number.isSafeInteger(reviewed?.itemReference)?reviewed.itemReference:Number.isSafeInteger(proposedItems)&&proposedItems>=0?proposedItems:0;
+ const needsValuationNotes=collateralReview&&(!!plan?.items?.length||piAllowed&&(plan?.piCollateral>0||reviewed?.piAmount>0));
  const descriptions={
-  'collateral-placed':'Place the listed cash and items in this same Torn trade. This check reads the open trade before recording that collateral is placed.',
-  'collateral-reviewed':'Compare the expected collateral above with the open trade. Review every item quantity and its accepted value. Cash and item quantities are checked with Torn.',
-  'funds-added':'Add the exact loan principal to this same Torn trade, then check the offer below.',
-  'funds-reviewed':'Check that the recorded lender has added the exact loan principal to this same Torn trade.',
-  complete:'Finish both sides of Torn’s acceptance first. This check verifies the completed two-way transfer before recording collateral received and converting the approved application into a funded loan.',
-  refresh:'Check the latest trade offer in Torn. Changed cash or items can clear earlier review stages so they can be checked again.',
-  reset:'Remove the lender’s loan funds from the open Torn trade before resetting or cancelling. The bank releases the reservation only after Torn confirms the lender’s cash offer is zero.'
+  'collateral-placed':'Add the listed collateral to this Torn trade, then confirm it below. Your confirmation records that you placed it and tells staff they can continue.',
+  'funds-added':'Check the borrower’s listed collateral and record the accepted values below. Add the exact approved loan amount to this same Torn trade, or check the funds already present. After confirmation, both participants continue with Torn’s Accept control when it is available.',
+  complete:'Complete both sides of the trade in Torn first. Confirm only after the borrower has received the full loan amount and staff has received the agreed collateral. This closes the trade ticket and creates the active loan for repayments.',
+  refresh:'Reload the saved confirmations for this trade. Refreshing does not confirm collateral, funds or completion.',
+  reset:'Confirm that this trade did not complete and that all offered loan funds have been removed or returned before resetting its confirmations. This releases the bank’s reservation so the trade can be reviewed again.'
  };
  const confirmations={
-  'collateral-placed':'I placed the listed collateral in this trade and want Torn to check it.',
-  'collateral-reviewed':'I checked the offered collateral and reviewed its values, and accept these values for this trade.',
-  'funds-added':`I added ${money(loan.principal)} from the recorded lender to this trade for ${loan.reference}.`,
-  'funds-reviewed':`I can see ${money(loan.principal)} from the recorded lender added to this trade and checked the reference ${loan.reference}.`,
-  complete:`Both sides completed this trade, and I want Torn to verify its collateral and ${money(loan.principal)} loan transfer.`,
-  refresh:'Check this trade’s current offer and update the recorded review stages.',
-  reset:'I removed the lender’s loan funds from this open trade and want to reset its review.'
+  'collateral-placed':'I placed the listed collateral, including the displayed cash and item quantities, in this trade.',
+  'funds-added':`I checked the listed collateral and its item quantities, accept the recorded collateral values, and added exactly ${money(loan.principal)} for ${loan.reference}.`,
+  complete:`I manually verified that this trade completed in full: the borrower received ${money(loan.principal)} and staff received the agreed collateral for ${loan.reference}. Close this trade ticket and activate the loan.`,
+  refresh:'Reload this trade’s saved confirmations.',
+  reset:'I confirmed this trade did not complete and all offered loan funds have been removed or returned. Reset the confirmations and release their reservation.'
  };
  function submit(event){
   event.preventDefault();if(saving)return;
   const form=event.currentTarget,fields=new FormData(form);
   const fail=(field,message)=>{setValidation({field,message});};
-  const tradeId=String(fields.get('tradeId')||'').trim(),key=String(fields.get('key')||'').trim();
   if(needsTerms&&fields.get('acceptTerms')!=='on')return fail('acceptTerms','Tick the loan terms checkbox to accept the approved terms shown above.');
-  if(tradeId&&!/^[1-9]\d{0,15}$/.test(tradeId))return fail('tradeId','Enter a numeric Torn API trade ID of up to 16 digits, or leave it blank to find this loan’s trade.');
-  if(!key&&!savedKeyAvailable)return fail('key','Enter your 16-character Torn API key, or create a suitable key using the link below.');
-  if(key&&!validTornKey(key))return fail('key','The Torn API key must contain exactly 16 letters or numbers.');
   if(linkOnPlacement&&fields.get('linkOpenTrade')!=='on')return fail('linkOpenTrade','Confirm the reference in this open trade log.');
-  if(fields.get('checked')!=='on')return fail('checked',action==='collateral-placed'?'Tick the placement checkbox to confirm you placed the listed collateral in this trade.':'Tick the trade confirmation checkbox above before continuing.');
+  if(collateralReview)for(const field of ['cashCollateral','itemReference','fundsAmount'])if(!String(fields.get(field)||'').trim())return fail(field,'Enter the amount you manually checked. Use 0 when no cash or items are offered.');
+  if((needsValuationNotes||action==='reset')&&String(fields.get('notes')||'').trim().length<10)return fail('notes',action==='reset'?'Describe how you confirmed the trade did not complete and its funds were removed or returned in at least 10 characters.':'Describe the accepted item or PI values and their source in at least 10 characters.');
+  if(fields.get('checked')!=='on')return fail('checked',action==='collateral-placed'?'Tick the placement checkbox to confirm you placed the listed collateral in this trade.':'Tick the confirmation checkbox after completing the manual checks above.');
   setValidation(null);
-  const input={...(linkOnPlacement?{linkOpenTrade:true}:{}),key:String(fields.get('key')||''),tradeId:String(fields.get('tradeId')||''),checked:fields.get('checked')==='on',
+  onSubmit({manual:true,...(linkOnPlacement?{linkOpenTrade:true}:{}),checked:true,
    ...(needsTerms&&fields.get('acceptTerms')==='on'?{acceptTerms:true}:{}),
-   ...(collateralReview?{itemReference:String(fields.get('itemReference')||''),piAmount:piAllowed?String(fields.get('piAmount')||''):'',notes:String(fields.get('notes')||'')}:{} )};
-  form.elements.namedItem('key').value='';
-  onSubmit(input);
+   ...(action==='reset'?{notes:String(fields.get('notes')||'')}:{}),
+   ...(collateralReview?{cashCollateral:String(fields.get('cashCollateral')||''),itemReference:String(fields.get('itemReference')||''),piAmount:piAllowed?String(fields.get('piAmount')||''):'0',notes:String(fields.get('notes')||''),fundsAmount:String(fields.get('fundsAmount')||'')}:{} )});
  }
+ if(!tradeFlowLabels[action])return null;
  return <form ref={formRef} className='stack tight' aria-label={tradeFlowLabels[action]} aria-busy={saving} noValidate onSubmit={submit} onChange={event=>{if(event.target.name===validation?.field)setValidation(null);}}>
   <h3 ref={heading} tabIndex={-1}>{tradeFlowLabels[action]}</h3>
   <p>{descriptions[action]}</p>
@@ -81,17 +76,20 @@ export default function TradeFlowForm({linkOnPlacement=false,action,loan,keyRole
    <label className='check'><input type='checkbox' name='acceptTerms' required disabled={saving} {...fieldFeedback('acceptTerms')}/><span>I accept the approved loan principal, interest rate, start date and repayment terms shown above for {loan.reference}.{fieldError('acceptTerms')}</span></label>
   </section>}
   {collateralReview&&<>
-   <label className='field'><span>Accepted item market value</span><input name='itemReference' type='text' defaultValue='0' disabled={saving}/><small>Total reviewed market value of offered items{Number.isFinite(credit)?'; credited at '+(credit*100).toLocaleString('en-US')+'%':''}. Use 0 when no items are offered. Amounts such as 500k, 25m or 1b are accepted.</small></label>
-   {piAllowed&&<label className='field'><span>Accepted PI payment value</span><input name='piAmount' type='text' defaultValue='0' disabled={saving}/><small>Optional eligible PI payment value, reviewed separately from the trade’s cash and items.</small></label>}
-   <label className='field'><span>Item / PI valuation notes and source</span><textarea name='notes' rows={3} maxLength={1000} disabled={saving}/><small>Include reviewed values and their source when accepting item or PI payment collateral.</small></label>
+   <h3>Collateral and funds checked by staff</h3>
+   <p className='micro'>Compare these amounts and the item quantities above with the open trade before confirming. Amounts such as 500k, 25m or 1b are accepted.</p>
+   <label className='field'><span>Cash collateral in this trade</span><input name='cashCollateral' type='text' inputMode='decimal' defaultValue={reviewed?.cash??plan?.cashCollateral??''} required disabled={saving} {...fieldFeedback('cashCollateral')}/><small>Cash confirmed from the borrower, matching the approved collateral proposal.</small>{fieldError('cashCollateral')}</label>
+   <label className='field'><span>Accepted item market value</span><input name='itemReference' type='text' inputMode='decimal' defaultValue={itemValue} required disabled={saving} {...fieldFeedback('itemReference')}/><small>Total reviewed market value of the listed items{Number.isFinite(credit)?'; credited at '+(credit*100).toLocaleString('en-US')+'%':''}. Use 0 when no items are offered.</small>{fieldError('itemReference')}</label>
+   {piAllowed&&<label className='field'><span>Accepted PI payment value</span><input name='piAmount' type='text' inputMode='decimal' defaultValue={reviewed?.piAmount??plan?.piCollateral??0} disabled={saving}/><small>Eligible PI payment value reviewed separately from the trade’s cash and items.</small></label>}
+   <label className='field'><span>Item / PI valuation notes and source</span><textarea name='notes' rows={3} minLength={needsValuationNotes?10:undefined} maxLength={1000} defaultValue={reviewed?.notes||''} required={needsValuationNotes} disabled={saving} {...fieldFeedback('notes')}/><small>Include the accepted values and their source when using item or PI payment collateral.</small>{fieldError('notes')}</label>
+   <dl className='breakdown'><div><dt>Required credited collateral</dt><dd><strong>{money(loan.collateralRequired)}</strong></dd></div></dl>
+   <label className='field'><span>Loan funds added to this trade</span><input name='fundsAmount' type='text' inputMode='decimal' defaultValue={loan.principal} required disabled={saving} {...fieldFeedback('fundsAmount')}/><small>Must equal the approved principal of {money(loan.principal)}.</small>{fieldError('fundsAmount')}</label>
   </>}
   {linkOnPlacement&&<label className='check'><input type='checkbox' name='linkOpenTrade' required disabled={saving} {...fieldFeedback('linkOpenTrade')}/><span>I checked that this open Torn trade shows {loan.reference} in its trade log and is with the receiving lender. Link this trade to my loan.{fieldError('linkOpenTrade')}</span></label>}
-  {!linkOnPlacement&&action!=='complete'&&<label className='field'><span>Torn API trade ID (optional)</span><input name='tradeId' type='text' inputMode='numeric' pattern='[1-9][0-9]*' maxLength={16} disabled={saving} autoComplete='off' {...fieldFeedback('tradeId')}/><small>Leave blank to find the trade by this loan’s exact reference. If needed, enter its API trade ID. The page’s address may use a different number.</small>{fieldError('tradeId')}</label>}
-  <p className='micro'>{savedKeyAvailable?'Saved Torn API key available. Leave the key field blank to use it for this check.':'Enter a Torn API key with trade and trades access for your current account.'}</p>
-  <label className='field'><span>{savedKeyAvailable?'Different Torn API key (optional)':'Torn API key'}</span><input name='key' type='password' minLength={16} maxLength={16} required={!savedKeyAvailable} autoComplete='off' disabled={saving} {...fieldFeedback('key')}/><small>A key entered here is used only for this check and is not saved.</small>{fieldError('key')}</label>
-  <a className='secondary left' href={customKeyLink(keyRole)} target='_blank' rel='noopener noreferrer'>Create suitable Torn key</a>
+  {action==='reset'&&<label className='field'><span>Reset / return confirmation note</span><textarea name='notes' rows={3} minLength={10} maxLength={1000} required disabled={saving} {...fieldFeedback('notes')}/><small>Record how you checked that the trade did not complete and its offered funds were removed or returned.</small>{fieldError('notes')}</label>}
+  <p className='micro'>This is a manual confirmation. The bank records who confirmed it and when.</p>
   <label className='check'><input type='checkbox' name='checked' required disabled={saving} {...fieldFeedback('checked')}/><span>{confirmations[action]}{fieldError('checked')}</span></label>
   {validation&&<p className='notice amber' role='alert'>{validation.message}</p>}
-  <div className='actions'><button type='submit' className='primary' disabled={saving}>{saving?'Checking trade…':tradeFlowLabels[action]}</button><button type='button' className='secondary' disabled={saving} onClick={onCancel}>Cancel review</button></div>
+  <div className='actions'><button type='submit' className='primary' disabled={saving}>{saving?'Saving confirmation…':tradeFlowLabels[action]}</button><button type='button' className='secondary' disabled={saving} onClick={onCancel}>Cancel review</button></div>
  </form>;
 }

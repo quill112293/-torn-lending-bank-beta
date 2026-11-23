@@ -287,3 +287,26 @@ Update the lender and borrower userscripts to **1.1.0-beta.81** and reload Torn.
 The Applications list and application details now show the original submission date for borrowers and staff, using the saved application creation timestamp and Torn time (UTC). Reviewing or approving an application preserves this date. Existing applications show their recorded dates; missing or invalid legacy timestamps display “Not recorded.”
 
 Update the lender and borrower userscripts to **1.1.0-beta.82** and reload Torn. This display change requires no database migration.
+
+
+## Beta.83 manual loan trade verification
+
+The approved application still opens its linked Torn trade and the Loan details verification menu automatically. The menu now records three explicit manual confirmations:
+
+1. The borrower adds the approved collateral and selects **Confirm collateral placed**, accepting the current approved loan terms if required.
+2. The receiving staff member checks the collateral, records its accepted cash/item/PI values, adds the exact approved principal to the same trade, and selects **Confirm loan funds added**.
+3. After both participants complete the actual trade in Torn, the receiving staff member selects **Confirm full transfer** to record that the full principal and agreed collateral were received.
+
+The separate staff collateral-review and borrower funds-review buttons are removed from this manual flow. These confirmations use the authenticated bank session and do not require a Torn API key or an API receipt lookup. They record **Manual borrower confirmation** or **Manual staff confirmation**, with the actor, timestamp and exact current trade attempt. They do not claim API evidence.
+
+A native Accept guard keeps Torn's Accept and final acceptance actions unavailable until the current manual borrower and staff confirmations are present. It checks the saved reference, native trade, roles, accepted terms, reservation, approved principal and current lending eligibility. It refreshes recognized trades and requires a new explicit click if the saved result is stale. The script preserves Torn's own disabled state and never clicks or submits acceptance. Both participants complete the real trade themselves. Existing cash-entry protection remains in place.
+
+Only final staff confirmation closes the trade ticket, moves the approved funding request into Loans as an active repayment loan, records one disbursement and collateral receipt, and releases the reservation. The original application, submission date, reference and history remain available. The repayment schedule begins on the server's final confirmation date, preserving the agreed term length. This manual process relies on staff checking that the external transfer actually completed before confirming it.
+
+Existing in-progress API checks can move to manual confirmation on the same trade: the borrower reconfirms the collateral already placed, then receiving staff reconfirms the funds already offered. Existing reservations and previous verification evidence are retained. Already completed or inconsistent funding evidence is not converted into a new transfer. Expired-trade replacement and repayment history checks retain their separate existing API verification.
+
+Manual mutations are bound to the freshly reviewed bank revision and current trade identity. A delayed request cannot apply after a reset or later confirmation. The existing atomic save and duplicate-settlement checks prevent repeated completion from creating another loan. Reset requires the receiving staff member to confirm that the trade did not complete and all offered funds were removed or returned. The borrower cannot release staff's reservation. Later imported trade history keeps original funding transfers separate from repayments; uncertain funding evidence remains for review.
+
+Update both lender and borrower userscripts to **1.1.0-beta.83**, then reload Torn. No SQL migration or bank reset is required. Validation covers the real projected bank state through the controller and manual reducer, native Accept interactions with synthetic Torn pages, roles and explicit consent, stale requests and concurrent saves, receipts and accounting, legacy progress, and completed-ticket behavior. No live Torn trade or real asset transfer is performed as part of these checks.
+
+Release validation: `npm run build`, all **584 tests**, the local Workerd push-runtime check, and the pinned Wrangler **4.92.0** deployment dry-run passed.

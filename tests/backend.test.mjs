@@ -1583,3 +1583,93 @@ test('reserve balances persist with owner-only adjustment, idempotent withdrawal
  const reload=(await call(env,'bank',{token:owner})).data.state;assert.equal(TB.overview(reload).cash,2e9);assert.equal(reload.ledger.length,3);
  assert.ok(reload.audit.some(e=>e.event==='Bank funds taken'&&e.actor===OWNER));
 });
+
+const manualStaffValues={cashCollateral:100e6,itemReference:14*838912,piAmount:0,notes:'Manually reviewed the approved cash and all fourteen Xanax.',fundsAmount:100e6};
+function manualTradeStep(f,token,action,extra={}){
+ const state=f.read(),loan=fundingRecord(state,f.loanId);
+ return call(f.env,'loan-trade',{token,body:{manual:true,action,loanId:loan.id,intentId:loan.collateralTrade.intentId,reference:loan.reference,nativeTradeId:loan.collateralTrade.uiTradeId,checked:true,reviewRevision:state.revision,...(extra.acceptTerms?{termsRevision:state.revision}:{}),...extra}});
+}
+async function readyManualTrade(f){
+ const placed=await manualTradeStep(f,f.borrower,'collateral-placed');assert.equal(placed.status,200,placed.data.error);
+ const added=await manualTradeStep(f,f.owner,'funds-added',manualStaffValues);assert.equal(added.status,200,added.data.error);
+}
+
+test('manual verification API authenticates both roles and completes once without keys or Torn API calls',async()=>{
+ const f=await loanTradeScenario(),tornFetch=globalThis.fetch;let apiCalls=0;
+ globalThis.fetch=async()=>{apiCalls++;throw Error('Manual verification must not call Torn.');};
+ try{
+  const before=f.read(),initial=await manualTradeStep(f,f.borrower,'refresh');assert.equal(initial.status,200,initial.data.error);assert.equal(initial.data.tradeCheck.stage,'');assert.equal(initial.data.tradeCheck.verificationMode,'manual');assert.deepEqual(f.read(),before);
+  assert.equal((await manualTradeStep(f,undefined,'refresh')).status,401);
+  assert.equal((await manualTradeStep(f,f.owner,'collateral-placed')).status,400);
+  assert.equal((await manualTradeStep(f,f.borrower,'funds-added',manualStaffValues)).status,400);
+  assert.deepEqual(f.read(),before);
+  await readyManualTrade(f);const reserved=f.read();assert.equal(reserved.loans.length,0);assert.equal(fundingRecord(reserved).tradeFlow.stage,'funds_added');
+  assert.equal((await manualTradeStep(f,f.borrower,'complete')).status,400);assert.deepEqual(f.read(),reserved);
+  const complete=await manualTradeStep(f,f.owner,'complete');assert.equal(complete.status,200,complete.data.error);
+  const saved=f.read(),loan=fundingRecord(saved);
+  assert.equal(saved.loans.length,1);assert.equal(saved.fundingRequests.length,0);assert.equal(loan.status,'active');assert.equal(loan.fundsReceived.source,'Manual staff confirmation');assert.equal(loan.collateralTrade.status,'completed');assert.equal(saved.applications[0].tradeCompletion.source,'Manual staff confirmation');
+  assert.equal(saved.ledger.filter(entry=>entry.type==='disbursement').length,1);assert.equal(saved.collateral.length,1);assert.equal(saved.receipts.length,1);
+  const repeat=await manualTradeStep(f,f.owner,'complete',{reviewRevision:before.revision});assert.equal(repeat.status,200,repeat.data.error);assert.deepEqual(f.read(),saved);
+  const oldClient=await f.step(f.owner,'refresh');assert.equal(oldClient.status,400);assert.match(oldClient.data.error,/manual confirmation/);
+  assert.equal(apiCalls,0);
+ }finally{globalThis.fetch=tornFetch;}
+});
+
+test('manual verification API rejects stale revisions after reset and reconfirmation of the same native trade',async()=>{
+ const f=await loanTradeScenario();await readyManualTrade(f);const oldRevision=f.read().revision;
+ const reset=await manualTradeStep(f,f.owner,'reset',{notes:'Confirmed the trade did not finish and all offered funds were removed.'});assert.equal(reset.status,200,reset.data.error);
+ assert.equal((await manualTradeStep(f,f.borrower,'collateral-placed')).status,200);
+ const placed=f.read(),staleFunds=await manualTradeStep(f,f.owner,'funds-added',{...manualStaffValues,reviewRevision:oldRevision});assert.equal(staleFunds.status,409);assert.deepEqual(f.read(),placed);
+ assert.equal((await manualTradeStep(f,f.owner,'funds-added',manualStaffValues)).status,200);
+ const ready=f.read();
+ for(const reviewRevision of [undefined,oldRevision]){const stale=await manualTradeStep(f,f.owner,'complete',{reviewRevision});assert.equal(stale.status,409);assert.deepEqual(f.read(),ready);}
+ assert.equal((await manualTradeStep(f,f.owner,'complete')).status,200);assert.equal(f.read().ledger.filter(entry=>entry.type==='disbursement').length,1);
+});
+
+test('manual verification API races funds reservation against withdrawal with one persisted outcome',async()=>{
+ for(const winner of ['withdrawApplication','funds-added']){
+  const f=await loanTradeScenario();assert.equal((await manualTradeStep(f,f.borrower,'collateral-placed')).status,200);
+  const before=f.read(),originalBatch=f.env.DB.batch;
+  f.env.DB.batch=async statements=>{
+   f.env.DB.batch=originalBatch;
+   const result=winner==='withdrawApplication'?await f.save(f.borrower,'withdrawApplication',{id:f.appId},before.revision):await manualTradeStep(f,f.owner,'funds-added',manualStaffValues);
+   assert.equal(result.status,200,result.data.error);return originalBatch.call(f.env.DB,statements);
+  };
+  const loser=winner==='withdrawApplication'?await manualTradeStep(f,f.owner,'funds-added',manualStaffValues):await f.save(f.borrower,'withdrawApplication',{id:f.appId},before.revision);
+  assert.equal(loser.status,409,loser.data.error);
+  const saved=f.read();assert.equal(saved.revision,before.revision+1);assert.equal(fundingRecord(saved).status,winner==='withdrawApplication'?'withdrawn':'approved');assert.equal(!!fundingRecord(saved).tradeFlow.reservedBy,winner==='funds-added');assert.deepEqual(saved.ledger,before.ledger);assert.equal(saved.loans.length,0);
+ }
+});
+
+test('manual verification API concurrent completion and withdrawal cannot duplicate or withdraw a funded loan',async()=>{
+ const f=await loanTradeScenario();await readyManualTrade(f);const before=f.read(),originalBatch=f.env.DB.batch;
+ f.env.DB.batch=async statements=>{
+  f.env.DB.batch=originalBatch;
+  const withdrawn=await f.save(f.borrower,'withdrawApplication',{id:f.appId},before.revision);assert.equal(withdrawn.status,400);assert.match(withdrawn.data.error,/committed|reserved/);
+  const winner=await manualTradeStep(f,f.owner,'complete');assert.equal(winner.status,200,winner.data.error);return originalBatch.call(f.env.DB,statements);
+ };
+ const loser=await manualTradeStep(f,f.owner,'complete');assert.equal(loser.status,409,loser.data.error);
+ const saved=f.read();assert.equal(saved.revision,before.revision+1);assert.equal(saved.loans.length,1);assert.equal(saved.fundingRequests.length,0);assert.equal(saved.ledger.filter(entry=>entry.type==='disbursement').length,1);assert.equal(saved.collateral.length,1);assert.equal(saved.receipts.length,1);
+ const events=collateralTradeEvents(f.env);assert.equal(events.filter(event=>event.event==='Disbursement recorded').length,1);assert.equal(events.filter(event=>event.event==='Application withdrawn').length,0);
+ assert.equal((await manualTradeStep(f,f.owner,'complete')).status,200);assert.deepEqual(f.read(),saved);
+});
+
+test('manual verification API failed persistence rolls back the complete transfer and its activity events',async()=>{
+ const f=await loanTradeScenario();await readyManualTrade(f);const before=f.read(),originalBatch=f.env.DB.batch,eventCount=collateralTradeEvents(f.env).length;
+ f.env.DB.batch=statements=>originalBatch.call(f.env.DB,[...statements,f.env.DB.prepare('INSERT INTO missing_table VALUES (1)')]);
+ const failed=await manualTradeStep(f,f.owner,'complete');assert.equal(failed.status,400);assert.deepEqual(f.read(),before);assert.equal(collateralTradeEvents(f.env).length,eventCount);
+ f.env.DB.batch=originalBatch;
+ const retry=await manualTradeStep(f,f.owner,'complete');assert.equal(retry.status,200,retry.data.error);assert.equal(fundingRecord(f.read()).status,'active');assert.equal(f.read().ledger.filter(entry=>entry.type==='disbursement').length,1);
+});
+
+test('manual funding API receipts wait for final confirmation and re-evaluate without creating a repayment',async()=>{
+ const f=await loanTradeScenario();await readyManualTrade(f);f.addFunds();f.trade.completed_at=Math.floor(Date.now()/1000);
+ await withLoanTradeAPI(f,async()=>{
+  const check=()=>call(f.env,'trades',{token:f.owner,body:{key:'owner'.padEnd(16,'0'),tradeId:String(f.trade.id)}});
+  const held=await check();assert.equal(held.status,200,held.data.error);assert.match(held.data.results[0].result,/Awaiting receiving staff/);
+  const waiting=f.read();assert.equal(waiting.receipts.length,1);assert.equal(waiting.receipts[0].manualFundingReview,true);assert.equal(waiting.pendingPayments.length,0);
+  assert.equal((await manualTradeStep(f,f.owner,'complete')).status,200);
+  const completed=f.read(),source=fundingRecord(completed).tradeFlow.completion.source,linked=await check();assert.equal(linked.status,200,linked.data.error);assert.match(linked.data.results[0].result,/already manually recorded/);
+  const saved=f.read();assert.equal(saved.receipts.length,2);assert.equal(saved.receipts.find(receipt=>receipt.tradeId===String(f.trade.id)).status,'loan_trade');assert.deepEqual(saved.ledger,completed.ledger);assert.equal(fundingRecord(saved).payments.length,0);assert.equal(fundingRecord(saved).tradeFlow.completion.source,source);
+ });
+});

@@ -57,11 +57,13 @@ test('approved requests remain in Applications with trade-only checks and appear
    await click([...document.querySelectorAll('button.record')].find(button=>button.textContent.includes(reference)));
    assert.match(document.querySelector('main').textContent,/Approved — awaiting trade/);
    assert.match(document.querySelector('main').textContent,/until staff verifies the completed transfer in the Torn trade menu/);
+   assert.match(document.querySelector('main').textContent,/close the (?:trade )?ticket and (?:create the active|activate your) loan/);
+   assert.doesNotMatch(document.querySelector('main').textContent,/Awaiting borrower funds review|Verify loan funds added|Verify completed transfer/);
    assert.doesNotMatch(document.querySelector('main').textContent,/Linked loan/);
    assert.equal([...document.querySelectorAll('button')].some(button=>forbiddenControls.test(button.textContent.trim())),false);
    if(role==='borrower')assert.ok([...document.querySelectorAll('button')].some(button=>button.textContent==='Withdraw request'));
    const funded=data.state.fundingRequests.pop();
-   Object.assign(funded,{status:'active',issuer:owner,fundedOn:'2026-11-17',fundedAt:'2026-11-17T12:00:00Z',collateralConfirmed:{amount:50e6,source:'Verified completed trade'},borrowerConfirmed:{date:'2026-11-17',reference},tradeFlow:{stage:'completed'}});
+   Object.assign(funded,{status:'active',issuer:owner,fundedOn:'2026-11-17',fundedAt:'2026-11-17T12:00:00Z',collateralConfirmed:{amount:50e6,source:'Manual staff confirmation'},borrowerConfirmed:{by:borrower,date:'2026-11-17',at:'2026-11-17T11:30:00.000Z',reference},tradeFlow:{verificationMode:'manual',stage:'completed',completion:{by:owner,at:'2026-11-17T12:00:00.000Z',completedAt:'2026-11-17T12:00:00.000Z',amount:100e6,source:'Manual staff confirmation'}}});
    data.state.loans.push(funded);
    await click(document.querySelector('[aria-label="Refresh bank"]'));
    assert.match(document.querySelector('main').textContent,/Linked loan/);
@@ -84,7 +86,7 @@ test('pending application card exposes only date adjustment; withdrawn collatera
  const html=renderFunding(options);
  assert.match(html,/Adjust start date/);
  assert.doesNotMatch(html,/>Confirm terms<|>Verify collateral|>Record disbursement|>Record PI payment|>Record collateral return/);
- request.tradeFlow={stage:'funds_added',reservedBy:owner};
+ request.tradeFlow={verificationMode:'manual',stage:'funds_added',reservedBy:owner};
  assert.match(renderFunding(options),/<button type="button" class="subtle" disabled="">Adjust start date/);
  request.status='withdrawn';request.collateralReturnRequired=true;
  data.state.collateral=[{id:'CUSTODY-1',loanId:request.id,event:'received',holder:owner,date:'2026-11-17',description:'Cash already received',reference:'CUSTODY-REF'}];
