@@ -34,7 +34,7 @@ test('applications show the saved type as text with no faction or non-faction ch
   assert.match(html,lane==='faction'?/Member type: Faction VIP\+/:/Member type: Non-faction secured/);
   assert.match(html,lane==='faction'?/<option value="house" selected="">/:/<option value="bank" selected="">/);
   assert.match(html,/Submit application/);
-  if(borrowerOnly)assert.doesNotMatch(html,/Active faction membership verified/);
+  if(borrowerOnly)assert.doesNotMatch(html,/Manually verified faction/);
  }
 });
 test('existing unclassified members are directed to staff setup without claiming a faction',()=>{

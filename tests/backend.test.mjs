@@ -5,6 +5,7 @@ import {readFile} from 'node:fs/promises';
 import worker,{handle,validateImport} from '../dist/worker.mjs';
 import TB from '../lib/engine.js';
 import {loanSlots} from '../lib/preapproval.js';
+import {automaticFactionFor} from '../lib/faction-verification.js';
 import {digest} from '../server/context.js';
 import {fundingRecord,seedHistoricalFundedLoan} from './helpers/funding.mjs';
 const schema=(await Promise.all(['0001_bank.sql','0002_notifications.sql'].map(file=>readFile(new URL('../migrations/'+file,import.meta.url),'utf8')))).join('\n');
@@ -80,6 +81,112 @@ test('eligible $130M application remains an application until its checked native
  }finally{globalThis.fetch=tornFetch;}
 });
 test('anonymous and forged platform headers cannot read the bank',async()=>{const e=fixture();assert.equal((await call(e,'bank',{extra:{'oai-authenticated-user-id':OWNER}})).status,401);});
+
+async function factionVerificationFixture(){
+ const env=fixture(),owner=(await login(env)).data.token;
+ await call(env,'access',{token:owner,body:{action:'invite',lane:'faction',id:BORROWER}});
+ const borrower=(await login(env,'borrower')).data.token,state=(await call(env,'bank',{token:owner})).data.state;
+ state.bankOnline=true;TB.topup(state,1e9,'Faction test funding');
+ env.DB.sqlite.prepare('UPDATE bank_state SET data=? WHERE id=?').run(JSON.stringify(state),'main');
+ const checkedAt=new Date(Date.now()-3600000).toISOString();
+ env.DB.sqlite.prepare('UPDATE identities SET profile=? WHERE torn_id=?').run(JSON.stringify({id:Number(BORROWER),name:'Tester',networth:1e9,faction_id:2,checkedAt}),BORROWER);
+ const read=()=>JSON.parse(env.DB.sqlite.prepare('SELECT data FROM bank_state WHERE id=?').get('main').data);
+ const save=(token,action,payload)=>call(env,'bank',{token,body:{action,payload,revision:read().revision,requestId:crypto.randomUUID()}});
+ const application=()=>({...TB.sampleApp({borrowerId:BORROWER,name:'Tester',lane:'faction',tier:0,requested:100e6,cashCollateral:100e6,items:[]}),acceptPreapproval:true});
+ return {env,owner,borrower,read,save,application,checkedAt};
+}
+
+test('manual faction fallback remains independent while real automatic profile checks continue and update pending applications',async()=>{
+ const f=await factionVerificationFixture(),originalFetch=globalThis.fetch,paths=[];let factionId=2;
+ globalThis.fetch=async(url,options)=>{
+  const path=new URL(url).pathname;paths.push(path);
+  if(path==='/v2/user/'+BORROWER+'/profile')return Response.json({profile:{id:Number(BORROWER),name:'Tester',faction_id:factionId,status:{state:'Okay'}}});
+  return originalFetch(url,options);
+ };
+ try{
+  const created=await f.save(f.owner,'apply',{...f.application(),manualFactionVerified:true,factionMember:false});assert.equal(created.status,200,created.data.error);
+  const app=created.data.state.applications[0],manual=structuredClone(app.factionVerification.manual);
+  assert.equal(app.status,'pending');assert.equal(app.factionVerification.automatic.matched,false);assert.equal(manual.confirmed,true);assert.equal(manual.by,OWNER);assert.equal(app.factionMember,true);assert.equal(paths.length,0);
+  const checked=await call(f.env,'check',{token:f.owner,body:{key:'owner'.padEnd(16,'0'),id:BORROWER}});assert.equal(checked.status,200,checked.data.error);
+  assert.ok(paths.includes('/v2/user/basic'));assert.ok(paths.includes('/v2/user/'+BORROWER+'/profile'));
+  assert.equal(checked.data.factionVerification.automatic.matched,false);assert.equal(checked.data.factionVerification.automatic.borrowerId,BORROWER);
+  let saved=f.read().applications[0];assert.deepEqual(saved.factionVerification.manual,manual);assert.equal(saved.factionMember,true);assert.equal(saved.status,'pending');
+  const unchecked=await f.save(f.owner,'editApplication',{id:app.id,application:{...saved,manualFactionVerified:false,factionMember:true}});assert.equal(unchecked.status,200,unchecked.data.error);
+  saved=f.read().applications[0];assert.equal(saved.factionMember,false);assert.equal(saved.factionVerification.manual.confirmed,false);assert.ok(saved.reviewReasons.includes('Faction membership needs confirmation.'));assert.equal(saved.created,app.created);
+  factionId=1;
+  const matched=await call(f.env,'check',{token:f.owner,body:{key:'owner'.padEnd(16,'0'),id:BORROWER}});assert.equal(matched.status,200,matched.data.error);
+  saved=f.read().applications[0];assert.equal(saved.factionVerification.automatic.matched,true);assert.equal(saved.factionVerification.manual.confirmed,false);assert.equal(saved.factionMember,true);assert.equal(saved.status,'pending');assert.equal(saved.reviewReasons.includes('Faction membership needs confirmation.'),false);
+ }finally{globalThis.fetch=originalFetch;}
+});
+
+test('bank view supplies only target-bound cached faction evidence and borrower submission cannot forge manual fallback',async()=>{
+ const f=await factionVerificationFixture(),before=f.read(),originalFetch=globalThis.fetch;
+ globalThis.fetch=async()=>{throw Error('Cached bank view and submission must not replace the existing API-check policy.');};
+ try{
+  const view=await call(f.env,'bank',{token:f.borrower});assert.equal(view.status,200,view.data.error);
+  const check=view.data.user.profile.factionVerification.automatic;assert.equal(check.borrowerId,BORROWER);assert.equal(check.factionId,2);assert.equal(check.expectedFactionId,1);assert.equal(check.matched,false);assert.equal(check.checkedAt,f.checkedAt);
+  const forged=await f.save(f.borrower,'apply',{...f.application(),manualFactionVerified:true,factionVerification:{version:1,automatic:{...check,matched:true},manual:{confirmed:true,by:OWNER,at:new Date().toISOString()}}});assert.equal(forged.status,400);assert.match(forged.data.error,/Only bank staff/);assert.deepEqual(f.read(),before);
+  const submitted=await f.save(f.borrower,'apply',{...f.application(),manualFactionVerified:false,factionMember:true,factionVerification:{version:1,automatic:{...check,matched:true}}});assert.equal(submitted.status,200,submitted.data.error);
+  const app=submitted.data.state.applications[0];assert.equal(app.status,'pending');assert.equal(app.factionVerification.automatic.matched,false);assert.equal(app.factionVerification.manual,undefined);assert.equal(app.factionMember,false);
+ }finally{globalThis.fetch=originalFetch;}
+});
+
+test('newer target evidence is compared with the current owner faction before a borrower can be automatically approved',async()=>{
+ for(const currentOwnerFaction of [1,2,0]){
+  const f=await factionVerificationFixture(),state=f.read(),targetCheckedAt=new Date(Date.now()-1800000).toISOString();
+  const previousOwnerFaction=currentOwnerFaction===2?1:2;
+  state.borrowers[BORROWER].factionVerification={version:1,automatic:{borrowerId:BORROWER,factionId:2,expectedFactionId:previousOwnerFaction,matched:previousOwnerFaction===2,checkedAt:targetCheckedAt,source:'Torn API profile'}};
+  f.env.DB.sqlite.prepare('UPDATE bank_state SET data=? WHERE id=?').run(JSON.stringify(state),'main');
+  f.env.DB.sqlite.prepare('UPDATE identities SET profile=? WHERE torn_id=?').run(JSON.stringify({id:Number(OWNER),name:'Owner',faction_id:currentOwnerFaction,checkedAt:new Date().toISOString()}),OWNER);
+  const expected=currentOwnerFaction===0?null:currentOwnerFaction===2;
+  const view=await call(f.env,'bank',{token:f.borrower});assert.equal(view.status,200,view.data.error);
+  const visible=view.data.user.profile.factionVerification.automatic;assert.equal(visible.checkedAt,targetCheckedAt);assert.equal(visible.expectedFactionId,currentOwnerFaction||null);assert.equal(visible.matched,expected);
+  const submitted=await f.save(f.borrower,'apply',f.application());assert.equal(submitted.status,200,submitted.data.error);
+  const app=submitted.data.state.applications[0];assert.equal(app.status,expected?'approved':'pending');assert.equal(app.factionVerification.automatic.matched,expected);assert.equal(app.factionVerification.automatic.checkedAt,targetCheckedAt);assert.equal(app.factionVerification.automatic.expectedFactionId,currentOwnerFaction||null);
+  assert.deepEqual(submitted.data.state.borrowers[BORROWER].factionVerification.automatic,app.factionVerification.automatic);assert.deepEqual(automaticFactionFor(submitted.data.state,app),app.factionVerification.automatic);
+ }
+});
+
+test('pending staff edits recompare the newest saved application target facts without changing their check date',async()=>{
+ const f=await factionVerificationFixture();await f.save(f.owner,'apply',{...f.application(),manualFactionVerified:true});
+ const state=f.read(),app=state.applications[0],targetCheckedAt=new Date(Date.now()-600000).toISOString();
+ app.factionVerification.automatic={borrowerId:BORROWER,factionId:3,expectedFactionId:3,matched:true,checkedAt:targetCheckedAt,source:'Torn API profile'};
+ state.borrowers[BORROWER].factionVerification={version:1,automatic:{borrowerId:BORROWER,factionId:2,expectedFactionId:1,matched:false,checkedAt:new Date(Date.now()-1800000).toISOString(),source:'Torn API profile'}};
+ f.env.DB.sqlite.prepare('UPDATE bank_state SET data=? WHERE id=?').run(JSON.stringify(state),'main');
+ const updated=await f.save(f.owner,'editApplication',{id:app.id,application:{...app,manualFactionVerified:false}});assert.equal(updated.status,200,updated.data.error);
+ const saved=updated.data.state.applications[0];assert.equal(saved.status,'pending');assert.equal(saved.factionMember,false);assert.equal(saved.factionVerification.manual.confirmed,false);assert.equal(saved.factionVerification.automatic.factionId,3);assert.equal(saved.factionVerification.automatic.expectedFactionId,1);assert.equal(saved.factionVerification.automatic.checkedAt,targetCheckedAt);assert.equal(saved.factionVerification.automatic.matched,false);
+ assert.deepEqual(updated.data.state.borrowers[BORROWER].factionVerification.automatic,saved.factionVerification.automatic);assert.deepEqual(automaticFactionFor(updated.data.state,saved),saved.factionVerification.automatic);
+});
+
+test('automatic faction check cannot save through a revoked session and borrower cannot check another target',async()=>{
+ const f=await factionVerificationFixture(),originalFetch=globalThis.fetch,before=f.read();
+ globalThis.fetch=async(url,options)=>{
+  if(new URL(url).pathname==='/v2/user/'+BORROWER+'/profile'){
+   f.env.DB.sqlite.prepare('DELETE FROM sessions WHERE torn_id=?').run(OWNER);
+   return Response.json({profile:{id:Number(BORROWER),name:'Tester',faction_id:1,status:{state:'Okay'}}});
+  }
+  return originalFetch(url,options);
+ };
+ try{
+  const denied=await call(f.env,'check',{token:f.owner,body:{key:'owner'.padEnd(16,'0'),id:BORROWER}});assert.equal(denied.status,401);assert.deepEqual(f.read(),before);
+  const other=await call(f.env,'check',{token:f.borrower,body:{key:'borrower'.padEnd(16,'0'),id:OWNER}});assert.equal(other.status,400);assert.match(other.data.error,/only their own/);assert.deepEqual(f.read(),before);
+ }finally{globalThis.fetch=originalFetch;}
+});
+
+test('an automatic check completing after a manual edit preserves the current checkbox decision',async()=>{
+ const f=await factionVerificationFixture();await f.save(f.owner,'apply',{...f.application(),manualFactionVerified:true});
+ const originalFetch=globalThis.fetch;let observed,release;const started=new Promise(resolve=>{observed=resolve;}),wait=new Promise(resolve=>{release=resolve;});
+ globalThis.fetch=async(url,options)=>{
+  if(new URL(url).pathname==='/v2/user/'+BORROWER+'/profile'){observed();await wait;return Response.json({profile:{id:Number(BORROWER),name:'Tester',faction_id:2,status:{state:'Okay'}}});}
+  return originalFetch(url,options);
+ };
+ try{
+  const checking=call(f.env,'check',{token:f.owner,body:{key:'owner'.padEnd(16,'0'),id:BORROWER}});await started;
+  const app=f.read().applications[0],edited=await f.save(f.owner,'editApplication',{id:app.id,application:{...app,manualFactionVerified:false}});assert.equal(edited.status,200,edited.data.error);
+  const manual=structuredClone(f.read().applications[0].factionVerification.manual);release();const checked=await checking;assert.equal(checked.status,200,checked.data.error);
+  const saved=f.read().applications[0];assert.deepEqual(saved.factionVerification.manual,manual);assert.equal(saved.factionVerification.automatic.matched,false);assert.equal(saved.factionMember,false);assert.equal(saved.reviewReasons.includes('Faction membership needs confirmation.'),true);assert.equal(saved.status,'pending');
+ }finally{release?.();globalThis.fetch=originalFetch;}
+});
 test('existing bank records expose and persist non-faction limits without changing saved loan terms',async()=>{
  const e=fixture(),owner=(await login(e)).data.token;
  await call(e,'access',{token:owner,body:{action:'invite',lane:'external',id:BORROWER}});

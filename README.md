@@ -310,3 +310,17 @@ Manual mutations are bound to the freshly reviewed bank revision and current tra
 Update both lender and borrower userscripts to **1.1.0-beta.83**, then reload Torn. No SQL migration or bank reset is required. Validation covers the real projected bank state through the controller and manual reducer, native Accept interactions with synthetic Torn pages, roles and explicit consent, stale requests and concurrent saves, receipts and accounting, legacy progress, and completed-ticket behavior. No live Torn trade or real asset transfer is performed as part of these checks.
 
 Release validation: `npm run build`, all **584 tests**, the local Workerd push-runtime check, and the pinned Wrangler **4.92.0** deployment dry-run passed.
+
+## Beta.84 manual faction confirmation alongside automatic checks
+
+Staff reviewing a faction application now see **Automatic faction check** and a separate **Manually verified faction** checkbox in the Applicant section. The manual checkbox acts as a staff fallback when the automatic comparison does not match or is unavailable. A successful automatic result does not check the manual box, and a manual confirmation does not overwrite, disable, or disguise the automatic result.
+
+The existing account checks, automatic application comparison and optional background account checks continue. Staff can refresh the automatic result from the application form using their existing Torn API key. When a key is unavailable, the form explains where to enter it and remains usable for the manual fallback. Each automatic result identifies its borrower and actual profile-check time; a staff member's own profile is not used as evidence for another applicant.
+
+Saving a manual confirmation records the authenticated staff member, application, borrower and server timestamp. The automatic result remains separately visible in application details. Unchecking manual confirmation removes that fallback while preserving a successful automatic result. The checkbox is available to staff for faction applications; borrowers cannot submit their own staff verification. The original application submission date and review history remain available.
+
+The fallback resolves only faction membership. Net worth, loan limits, collateral, standing, terms and the existing approval permissions still apply. Saving or refreshing verification does not automatically approve a pending request or fund a loan. Existing approved loans and the beta.83 manual trade process retain their saved records. Legacy membership flags without evidence provenance are not presented as automatic checks or backfilled staff confirmations.
+
+For an existing pending request, open **Applications → select the application → Review details → Applicant**, tick **Manually verified faction**, and save the reviewed application. Update both userscripts to **1.1.0-beta.84** and reload Torn. No database migration or bank reset is required.
+
+Release validation: `npm run build`, all **610 tests**, the local Workerd push-runtime check, and the pinned Wrangler **4.92.0** deployment dry-run passed. Coverage includes real form-to-approval behavior, independent automatic/manual results, actor and target binding, automatic refresh during manual edits, revoked sessions, stale checks, and changed bank-faction comparisons.
