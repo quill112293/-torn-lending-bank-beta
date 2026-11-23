@@ -6,6 +6,7 @@ import worker,{handle,validateImport} from '../dist/worker.mjs';
 import TB from '../lib/engine.js';
 import {loanSlots} from '../lib/preapproval.js';
 import {automaticFactionFor} from '../lib/faction-verification.js';
+import {bankServiceStatus} from '../lib/bank-status.js';
 import {digest} from '../server/context.js';
 import {fundingRecord,seedHistoricalFundedLoan} from './helpers/funding.mjs';
 const schema=(await Promise.all(['0001_bank.sql','0002_notifications.sql'].map(file=>readFile(new URL('../migrations/'+file,import.meta.url),'utf8')))).join('\n');
@@ -1689,6 +1690,35 @@ test('reserve balances persist with owner-only adjustment, idempotent withdrawal
  const off=await save(owner,'availability',{available:false},'reserve-offline');assert.equal(off.status,200,off.data.error);assert.equal(TB.cash(off.data.state,OWNER),0);assert.equal(TB.cash(off.data.state,'bank'),2e9);
  const reload=(await call(env,'bank',{token:owner})).data.state;assert.equal(TB.overview(reload).cash,2e9);assert.equal(reload.ledger.length,3);
  assert.ok(reload.audit.some(e=>e.event==='Bank funds taken'&&e.actor===OWNER));
+});
+
+test('reserve-only automatic status is shared across saved bank responses and redacted borrower views',async()=>{
+ const env=fixture(),owner=(await login(env)).data.token;
+ await call(env,'access',{token:owner,body:{action:'invite',lane:'faction',id:BORROWER}});
+ const borrower=(await login(env,'borrower')).data.token;
+ const save=async(action,payload)=>{
+  const state=(await call(env,'bank',{token:owner})).data.state;
+  const result=await call(env,'bank',{token:owner,body:{action,payload,revision:state.revision,requestId:crypto.randomUUID()}});
+  assert.equal(result.status,200,result.data.error);return result.data.state;
+ };
+ await save('setBankBalance',{amount:250e6,reference:'Status threshold fixture'});
+ let state=await save('bankStatus',{status:'online'});
+ assert.equal(state.bankReserveBalance,250e6);assert.equal(bankServiceStatus(state).key,'online');
+ state=await save('takeBankFunds',{amount:100e6,reference:'Screenshot owner withdrawal'});
+ assert.equal(state.bankReserveBalance,150e6);assert.equal(TB.cash(state,OWNER),100e6);assert.equal(state.availableLendingFunds,250e6);
+ assert.equal(bankServiceStatus(state).key,'restocking');assert.equal(state.bankOnline,true);assert.equal(state.bankRestocking,false);
+ let visible=(await call(env,'bank',{token:borrower})).data.state;
+ assert.deepEqual(visible.ledger,[]);assert.equal(visible.bankReserveBalance,150e6);assert.equal(visible.availableLendingFunds,250e6);
+ assert.equal(bankServiceStatus(visible).key,'restocking');
+ state=await save('bankStatus',{status:'online'});assert.equal(bankServiceStatus(state).key,'restocking');
+ state=await save('availability',{available:false});
+ assert.equal(state.bankReserveBalance,250e6);assert.equal(TB.cash(state,OWNER),0);assert.equal(state.availableLendingFunds,250e6);
+ assert.equal(bankServiceStatus(state).key,'online');
+ visible=(await call(env,'bank',{token:borrower})).data.state;
+ assert.deepEqual(visible.ledger,[]);assert.equal(visible.bankReserveBalance,250e6);assert.equal(bankServiceStatus(visible).key,'online');
+ state=await save('bankStatus',{status:'restocking'});assert.equal(bankServiceStatus(state).key,'restocking');
+ state=await save('setBankBalance',{amount:300e6,reference:'Restock with manual hold'});assert.equal(bankServiceStatus(state).key,'restocking');
+ state=await save('bankStatus',{status:'offline'});assert.equal(bankServiceStatus(state).key,'offline');
 });
 
 const manualStaffValues={cashCollateral:100e6,itemReference:14*838912,piAmount:0,notes:'Manually reviewed the approved cash and all fourteen Xanax.',fundsAmount:100e6};
