@@ -280,3 +280,10 @@ Existing unfunded approvals and withdrawals are normalized into application fund
 New loans use the verified transfer completion date as their start. If completion crossed into a later day, the agreed term length is preserved and the originally approved dates are retained. No interest accrues before the actual transfer. The separate Apply navigation tab remains removed; Applications → New still opens the application form.
 
 Update the lender and borrower userscripts to **1.1.0-beta.81** and reload Torn. Both sides need the updated script to work with application funding records. The state transition is saved with the existing revision-checked bank write; no new SQL migration or bank reset is required.
+
+
+## Beta.82 application submission dates
+
+The Applications list and application details now show the original submission date for borrowers and staff, using the saved application creation timestamp and Torn time (UTC). Reviewing or approving an application preserves this date. Existing applications show their recorded dates; missing or invalid legacy timestamps display “Not recorded.”
+
+Update the lender and borrower userscripts to **1.1.0-beta.82** and reload Torn. This display change requires no database migration.
