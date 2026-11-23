@@ -9,8 +9,10 @@ test('2B bank reserve and 500m owner withdrawal keep separate balances and conse
  let s=act(fixture(),O,'setBankBalance',{amount:2e9,reference:'Opening'});
  assert.equal(TB.cash(s,O),0);assert.equal(TB.cash(s,'bank'),2e9);
  s=act(s,O,'takeBankFunds',{amount:500e6,reference:'Taken'});
- assert.equal(TB.cash(s,O),500e6);assert.equal(TB.cash(s,'bank'),1.5e9);assert.equal(TB.overview(s).cash,2e9);assert.equal(project(s,'1234567').state.availableLendingFunds,2e9);assert.equal(s.staff[0].available,true);
+ assert.equal(TB.cash(s,O),500e6);assert.equal(TB.cash(s,'bank'),1.5e9);assert.equal(TB.overview(s).cash,2e9);assert.equal(s.staff[0].available,true);
+ const publicState=project(s,'1234567').state;assert.equal(publicState.availableLendingFunds,2e9);assert.equal(publicState.bankReserveBalance,1.5e9);assert.deepEqual(publicState.ledger,[]);
  s=act(s,O,'availability',{available:false});assert.equal(TB.cash(s,O),0);assert.equal(TB.cash(s,'bank'),2e9);assert.equal(s.staff[0].available,false);
+ assert.equal(project(s,'1234567').state.bankReserveBalance,2e9);
  const count=s.ledger.length;s=act(s,O,'availability',{available:false});assert.equal(s.ledger.length,count);
  s=act(s,O,'setBankBalance',{amount:1e9,reference:'Correction'});assert.equal(TB.cash(s,'bank'),1e9);assert.equal(TB.cash(s,O),0);
 });
@@ -36,6 +38,6 @@ test('overdraw, limits and loan commitments cannot erase cash or create extra av
  assert.throws(()=>act(s,O,'availability',{available:false}),/committed/);
  assert.throws(()=>act(s,O,'transfer',{to:'bank',amount:500e6}),/reserved/);
  assert.equal(TB.cash(s,O),500e6);assert.equal(TB.cash(s,'bank'),1.5e9);
- assert.equal(project(s,'1234567').state.availableLendingFunds,1.9e9);
+ const publicState=project(s,'1234567').state;assert.equal(publicState.availableLendingFunds,1.9e9);assert.equal(publicState.bankReserveBalance,1.5e9);
  assert.throws(()=>act(s,O,'takeBankFunds',{amount:0,reference:'Zero'}),/Not enough/);
 });

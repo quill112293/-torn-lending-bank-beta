@@ -324,3 +324,15 @@ The fallback resolves only faction membership. Net worth, loan limits, collatera
 For an existing pending request, open **Applications → select the application → Review details → Applicant**, tick **Manually verified faction**, and save the reviewed application. Update both userscripts to **1.1.0-beta.84** and reload Torn. No database migration or bank reset is required.
 
 Release validation: `npm run build`, all **610 tests**, the local Workerd push-runtime check, and the pinned Wrangler **4.92.0** deployment dry-run passed. Coverage includes real form-to-approval behavior, independent automatic/manual results, actor and target binding, automatic refresh during manual edits, revoked sessions, stale checks, and changed bank-faction comparisons.
+
+## Beta.85 automatic bank status uses Bank Reserve
+
+The automatic service status now follows **Bank Reserve only**. A reserve below **$250,000,000** shows **Awaiting funds**; a reserve of **$250,000,000 or more** shows **Online**. Money held by the owner, vault lenders or other staff does not count toward this status threshold. Manual Awaiting funds and Offline selections retain priority.
+
+For example, **$150M in Bank Reserve plus $100M held by the owner now shows Awaiting funds**, even though total bank cash is $250M. Returning that $100M to reserve brings reserve to $250M and automatically restores Online, unless a manual status override is active. The Bank tab explains the reserve-only rule and shows the exact reserve balance used.
+
+The same server-calculated reserve value is supplied to staff and borrower views, including the borrower welcome page whose ledger is hidden. The status change does not alter pooled available lending funds, approval limits, loan reservations, trade verification, cash movements, or repayment accounting. Awaiting funds remains a service notice; applications and existing repayments remain available. This replaces the pooled-funds status threshold described in beta.77 and beta.78.
+
+Update both userscripts to **1.1.0-beta.85**, then reload Torn. No database migration, balance adjustment or bank reset is required.
+
+Release validation: `npm run build`, all **613 tests**, the local Workerd push-runtime check, and the pinned Wrangler **4.92.0** deployment dry-run passed. Regression coverage includes the reported $150M reserve / $100M held-cash scenario, all account roles, exact threshold boundaries, automatic recovery after returning funds, manual overrides, and matching server responses and borrower views.

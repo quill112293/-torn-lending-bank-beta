@@ -7,10 +7,10 @@ import {join} from 'node:path';
 import {pathToFileURL} from 'node:url';
 import TB from '../lib/engine.js';
 import {applyAction,project} from '../lib/operations.js';
-import {bankServiceStatus} from '../lib/bank-status.js';
+import {bankReserveBalance,bankServiceStatus} from '../lib/bank-status.js';
 
 const OWNER='3542697',VAULT='9000101',STAFF='9000102',BORROWER='1234567';
-function fixture(){const state=TB.newState();TB.topup(state,500000000,'Status test funds');state.staff.push({id:VAULT,role:'vault',name:'Vault'},{id:STAFF,role:'staff',name:'Staff'});TB.person(state,BORROWER).memberProgram='faction';return state;}
+function fixture(){const state=TB.newState();state.staff.push({id:VAULT,role:'vault',name:'Vault'},{id:STAFF,role:'staff',name:'Staff'});TB.person(state,BORROWER).memberProgram='faction';return applyAction(state,OWNER,'setBankBalance',{amount:500000000,reference:'Status test reserve'});}
 
 test('owner and vault can publish three service states, while other accounts cannot',()=>{
  for(const actor of [OWNER,VAULT]){
@@ -65,17 +65,71 @@ test('welcome page and Bank tab agree on green, yellow and red labels with contr
  }
 });
 
- test('automatic funding status uses exact threshold and preserves manual overrides',()=>{
- for(const funds of [0,249999999,250000000,250000001]){
- const state={bankOnline:true,availableLendingFunds:funds};
- assert.equal(bankServiceStatus(state).key,funds<250000000?'restocking':'online');
- assert.equal(bankServiceStatus({...state,bankOnline:false}).key,'offline');
- assert.equal(bankServiceStatus({...state,bankRestocking:true}).key,'restocking');
+test('automatic status uses the exact reserve threshold rather than pooled funds and preserves manual overrides',()=>{
+ for(const reserve of [0,249999999,250000000,250000001]){
+  const state={bankOnline:true,bankReserveBalance:reserve,availableLendingFunds:reserve<250000000?1e9:0};
+  assert.equal(bankServiceStatus(state).key,reserve<250000000?'restocking':'online');
+  assert.equal(bankServiceStatus({...state,bankOnline:false}).key,'offline');
+  assert.equal(bankServiceStatus({...state,bankRestocking:true}).key,'restocking');
  }
  let state=fixture();state.bankOnline=true;
  assert.equal(bankServiceStatus(project(state,BORROWER).state).key,'online');
  state.ledger=[];
  assert.equal(bankServiceStatus(project(state,BORROWER).state).key,'restocking');
- TB.topup(state,250000000,'Restocked');
+ state=applyAction(state,OWNER,'setBankBalance',{amount:250000000,reference:'Restocked reserve'});
  assert.equal(bankServiceStatus(project(state,BORROWER).state).key,'online');
- });
+});
+
+test('reserve lookup supports raw records and redacted borrower views without treating staff funds as reserve',()=>{
+ const raw=fixture();raw.bankOnline=true;
+ assert.equal(bankReserveBalance(raw),500000000);
+ TB.topup(raw,100000000,'Owner-held cash');
+ assert.equal(bankReserveBalance(raw),500000000);
+ const borrower=project(raw,BORROWER).state;
+ assert.deepEqual(borrower.ledger,[]);
+ assert.equal(borrower.bankReserveBalance,500000000);
+ assert.equal(bankReserveBalance(borrower),500000000);
+ assert.equal(bankServiceStatus(borrower).key,'online');
+ assert.equal(bankReserveBalance({bankOnline:true,availableLendingFunds:1e9}),null);
+ assert.equal(bankServiceStatus({bankOnline:true,availableLendingFunds:0}).key,'online');
+ assert.equal(bankReserveBalance({...raw,bankReserveBalance:NaN}),500000000);
+ assert.equal(bankReserveBalance({ledger:[]}),0);
+ assert.equal(bankServiceStatus({bankOnline:true,ledger:[],availableLendingFunds:1e9}).key,'restocking');
+});
+
+test('150M reserve plus 100M held cash shows Awaiting funds everywhere and returning cash restores Online',()=>{
+ let state=applyAction(fixture(),OWNER,'setBankBalance',{amount:250000000,reference:'Screenshot opening reserve'});
+ state=applyAction(state,OWNER,'bankStatus',{status:'online'});
+ state=applyAction(state,OWNER,'takeBankFunds',{amount:100000000,reference:'Owner takes shift funds'});
+ assert.equal(TB.cash(state,'bank'),150000000);assert.equal(TB.cash(state,OWNER),100000000);
+ assert.equal(TB.overview(state).cash,250000000);assert.equal(bankServiceStatus(state).key,'restocking');
+ for(const id of [OWNER,VAULT,STAFF,BORROWER]){
+  const view=project(state,id),panel=control(view.state,view.role,false);
+  assert.equal(view.state.bankReserveBalance,150000000);
+  assert.equal(view.state.availableLendingFunds,250000000);
+  assert.equal(bankServiceStatus(view.state).key,'restocking');
+  assert.match(panel,/bank-status is-restocking/);assert.match(panel,/badge amber/);
+  if([OWNER,VAULT].includes(id)){
+   assert.match(panel,/Bank Reserve/);assert.match(panel,/\$150,000,000/);
+   assert.match(panel,/staff/);assert.match(panel,/excluded|not (?:count|include)|does not|do not/i);
+   assert.doesNotMatch(panel,/available lending funds/);
+  }
+ }
+ const welcome=lobby(project(state,BORROWER).state);
+ assert.match(welcome,/lobby-bank is-restocking/);assert.match(welcome,/Awaiting funds/);
+ assert.doesNotMatch(welcome,/Bank online/);
+ state=applyAction(state,OWNER,'bankStatus',{status:'online'});
+ assert.equal(state.bankRestocking,false);assert.equal(bankServiceStatus(project(state,OWNER).state).key,'restocking');
+ const returned=applyAction(state,OWNER,'transfer',{to:'bank',amount:100000000,reference:'Shift funds returned'});
+ assert.equal(TB.cash(returned,OWNER),0);assert.equal(TB.overview(returned).cash,250000000);
+ for(const id of [OWNER,VAULT,STAFF,BORROWER]){
+  const view=project(returned,id);
+  assert.equal(view.state.bankReserveBalance,250000000);assert.equal(view.state.availableLendingFunds,250000000);
+  assert.equal(bankServiceStatus(view.state).key,'online');
+ }
+ assert.match(lobby(project(returned,BORROWER).state),/lobby-bank is-online/);
+ const manual=applyAction(state,OWNER,'bankStatus',{status:'restocking'});
+ const manuallyHeld=applyAction(manual,OWNER,'transfer',{to:'bank',amount:100000000,reference:'Manual hold restock'});
+ assert.equal(project(manuallyHeld,BORROWER).state.bankReserveBalance,250000000);
+ assert.equal(bankServiceStatus(project(manuallyHeld,BORROWER).state).key,'restocking');
+});
