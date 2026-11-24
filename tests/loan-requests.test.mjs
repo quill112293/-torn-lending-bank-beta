@@ -11,13 +11,14 @@ const {default:LoanRequests}=await import('data:text/javascript;base64,'+Buffer.
 const owner='3542697',borrower='1234567',today='2026-11-07';
 function state(){const s=TB.newState();s.loans=[{id:'loan',borrowerId:borrower,name:'Tester',product:'bank',principal:100e6,rate:.005,freeDays:0,start:today,maturity:'2027-01-06',status:'active',payments:[],extensions:[],rules:TB.clone(s.rules),issuer:owner}];return s;}
 function requested(){let s=applyAction(state(),borrower,'paymentIntent',{id:'loan',amount:10e6,recipient:owner},today);return applyAction(s,borrower,'requestExtension',{id:'loan',originalDue:'2027-01-06',until:'2027-01-13',reason:'More time needed'},today);}
+const originalPayoff=100e6+Math.round(100e6*((1.005**8)*(1+.005*4/7)-1));
 const render=(s,isStaff,loanId)=>renderToStaticMarkup(React.createElement(LoanRequests,{state:s,isStaff,loanId,staffName:id=>id,onRecord:()=>{},onReviewPayment:()=>{},onReviewExtension:()=>{}}));
 
 test('saved borrower payment and extension requests are visible on the selected loan',()=>{
  const s=project(requested(),borrower,today).state,html=render(s,false,'loan');
  assert.match(html,/\$10,000,000/);assert.match(html,/More time needed/);assert.match(html,/Awaiting lender review/);
  assert.doesNotMatch(html,/<button/);
- assert.equal(TB.balance(s.loans[0],today).total,100e6);assert.equal(s.loans[0].extensions.length,0);
+ assert.equal(TB.balance(s.loans[0],today).total,originalPayoff);assert.equal(s.loans[0].extensions.length,0);
 });
 
 test('lender sees both saved request types and review controls on the list and selected loan',()=>{
@@ -38,7 +39,7 @@ test('a payment request moves through receipt review to accepted payment exactly
  assert.throws(()=>applyAction(s,owner,'payment',{id:'loan',intentId,cash:10e6,recipient:owner,date:today,reference:'TEST-RECEIPT-2'},today),/pending payment request/);
  const paymentId=s.pendingPayments[0].id;
  s=applyAction(s,owner,'acceptPayment',{id:paymentId},today);
- assert.equal(s.paymentIntents[0].status,'received');assert.equal(TB.balance(s.loans[0],today).total,90e6);
+ assert.equal(s.paymentIntents[0].status,'received');assert.equal(TB.balance(s.loans[0],today).total,originalPayoff-10e6);
  assert.match(render(project(s,borrower,today).state,false,'loan'),/Payment received/);
  assert.throws(()=>applyAction(s,owner,'acceptPayment',{id:paymentId},today),/not pending/);
 });
@@ -48,7 +49,7 @@ test('rejected receipt returns its payment request to awaiting verification with
  s=applyAction(s,owner,'payment',{id:'loan',intentId,cash:10e6,recipient:owner,date:today,reference:'TEST-REJECT'},today);
  s=applyAction(s,owner,'rejectPayment',{id:s.pendingPayments[0].id,reason:'Receipt not confirmed'},today);
  assert.equal(s.paymentIntents[0].status,'pending');assert.equal(s.paymentIntents[0].paymentId,undefined);
- assert.equal(TB.balance(s.loans[0],today).total,100e6);
+ assert.equal(TB.balance(s.loans[0],today).total,originalPayoff);
  assert.match(render(s,true,'loan'),/Record received payment/);
 });
 

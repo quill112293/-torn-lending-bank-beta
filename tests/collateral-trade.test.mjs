@@ -193,7 +193,7 @@ test('a claimed trade can preserve its observed link after actual funding or rep
   state.collateral=[{id:'funding-race-custody',loanId,event:'received',holder:owner,reference:'torn-api-trade:already-received'}];
   seedHistoricalFundedLoan(state,loanId,{staffId:owner,reference:'Historical funding completed during the trade handoff'});
   if(status==='repaid'){
-   state=applyAction(state,owner,'payment',{id:loanId,cash:fundingRecord(state).principal,recipient:owner,reference:'Repayment completed before delayed trade observation',date:TB.today()});
+   state=applyAction(state,owner,'payment',{id:loanId,cash:TB.balance(fundingRecord(state),TB.today()).total,recipient:owner,reference:'Repayment completed before delayed trade observation',date:TB.today()});
    state=applyAction(state,owner,'acceptPayment',{id:state.pendingPayments[0].id});
   }
   const before=TB.clone(state),result=report(state),loan=fundingRecord(result),intent=loan.collateralTrade;

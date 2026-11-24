@@ -336,3 +336,25 @@ The same server-calculated reserve value is supplied to staff and borrower views
 Update both userscripts to **1.1.0-beta.85**, then reload Torn. No database migration, balance adjustment or bank reset is required.
 
 Release validation: `npm run build`, all **613 tests**, the local Workerd push-runtime check, and the pinned Wrangler **4.92.0** deployment dry-run passed. Regression coverage includes the reported $150M reserve / $100M held-cash scenario, all account roles, exact threshold boundaries, automatic recovery after returning funds, manual overrides, and matching server responses and borrower views.
+
+## Beta.86 loan interest and repayment dates
+
+Funded loans display the full interest charge, principal remaining and total owed. Accepted cash and item credits cover interest first. As an illustration of payment allocation, a $500M loan with an assumed $10M interest charge shows $500M principal and $6M interest after a $4M payment, or $496M principal and $0 interest after a $14M payment. Existing active loans use their saved rates, interest-free days and receipts. Historically settled loans keep their original allocations.
+
+Regular Installments offers one or two years, or a specific final date. A longer term requires the owner's manual approval and reason. Weekly, biweekly and calendar-monthly payments are available. Leaving the installment amount blank divides the original payoff over the scheduled payments, with the balance due at maturity. Existing dated agreements keep their terms, including four-week schedules. Previously undated active installment loans use the first anniversary of their start date.
+
+For a new Bank Investment application, enter the intended investment duration to see full-term interest before approval. After staff verifies the transfer and the investment starts, the borrower opens the funded loan and selects **Enter investment end date**. The receiving lender or owner can also enter it. That date becomes the repayment deadline. Older investments with a saved end date retain it.
+
+The planned Bank Investment terms match Torn City Bank: 1 week, 2 weeks, 1 month, 2 months and 3 months. Loan interest uses the bank's 0.50% weekly rate, with the existing Bank Investment compounding and any applicable interest-free days. For example, a $500M loan over one fully chargeable week has $2.5M interest.
+
+After funding, the borrower enters the date displayed in Torn (TCT). The borrower can also use their own API key with the user money selection to check the exact investment end time. Only City Bank timing and duration are retained from that response. The staff Loans tab sorts active investments by end time and labels each as an estimate, manual entry, saved date or Torn API result. A later timing check cannot substitute a new investment for an already linked one. Verifying a time leaves the recorded loan payoff date and accounting intact.
+
+### Final repayment and liquidation
+
+Staff and borrowers can see the original term charge, the full weeks and remaining chargeable days, and any subsequent final-payment late interest. Ordinary interest uses the loan's agreed rate and existing product calculation, including weekly compounding on Bank Investment. Four days of a final week use four sevenths of the weekly rate. A 90-day term with no free days contains 12 full weeks and six days.
+
+For new faction and non-faction approvals, the weekly late rate is twice the loan’s agreed weekly rate. It replaces regular interest only for overdue days. A faction loan at 0.50% becomes 1.00% weekly while overdue. The standard non-faction tiers use late rates of 3.00%, 2.00%, 1.50% and 1.00% respectively, with 1.00% for VIP-PI and Bank Investment. Previously approved loans keep the late rate saved in their agreement.
+
+The first overdue day costs one seventh of the loan's saved weekly late rate on its outstanding principal. A 90-day loan is due on day 90. Late interest runs from day 91 through payment, with the daily charges rounded cumulatively to whole Torn dollars. An approved final extension moves the collection deadline. Bank Investment uses its recorded end date for collection.
+
+An outstanding final payoff at the start of the seventh overdue TCT day triggers one final-payment strike. The scheduled Worker and bank reads check the cutoff. Held collateral appears in the staff liquidation queue. Staff record the actual disposal, its receipt and any proceeds applied to the loan. Accepting that payment credits interest before principal. A partial sale leaves the remaining holding in the queue. Accepted receipts dated before the cutoff are taken into account if staff record them later.

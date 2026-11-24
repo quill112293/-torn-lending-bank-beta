@@ -70,7 +70,7 @@ export function createTransport(origin, {native = false, onExpired = () => {}, s
     const startEpoch = epoch;
     if (!['link', 'logout'].includes(path)) await ensureSession();
     if (epoch !== startEpoch) throw Error('Your login changed. Refresh the bank.');
-    if (body !== undefined && ['link', 'check', 'trades', 'collateral-check', 'loan-trade'].includes(path) && !validTornKey(body?.key)) {
+    if (body !== undefined && ['link', 'check', 'investment-check', 'trades', 'collateral-check', 'loan-trade'].includes(path) && !validTornKey(body?.key)) {
       throw Error(path === 'link' ? 'Enter a valid 16-character Torn API key.' : 'Enter a valid 16-character Torn API key in Connections before running live checks.');
     }
     const requestEpoch = epoch;

@@ -351,7 +351,7 @@ test('borrower requests persist across reloads and lender decisions reach the bo
  const final=(await call(e,'bank',{token:borrower})).data.state;
  assert.equal(final.paymentIntents[0].status,'received');assert.equal(final.pendingPayments[0].status,'accepted');
  assert.equal(final.extensionRequests[0].status,'approved');assert.equal(fundingRecord(final).extensions[0].until,TB.addDays(maturity,7));
- assert.equal(TB.balance(fundingRecord(final),today).total,90e6);
+ assert.equal(TB.balance(fundingRecord(final),today).total,90e6+Math.round(100e6*((1.005**8)*(1+.005*4/7)-1)));
 });
 
 test('bank reset requires owner, exact passcode and current revision; retries cannot erase later writes',async()=>{
@@ -1809,4 +1809,101 @@ test('manual funding API receipts wait for final confirmation and re-evaluate wi
   const completed=f.read(),source=fundingRecord(completed).tradeFlow.completion.source,linked=await check();assert.equal(linked.status,200,linked.data.error);assert.match(linked.data.results[0].result,/already manually recorded/);
   const saved=f.read();assert.equal(saved.receipts.length,2);assert.equal(saved.receipts.find(receipt=>receipt.tradeId===String(f.trade.id)).status,'loan_trade');assert.deepEqual(saved.ledger,completed.ledger);assert.equal(fundingRecord(saved).payments.length,0);assert.equal(fundingRecord(saved).tradeFlow.completion.source,source);
  });
+});
+
+test('after funding the borrower’s own key verifies the exact City Bank time for staff without keeping other money data',async()=>{
+ const env=fixture(),owner=(await login(env)).data.token;
+ await call(env,'access',{token:owner,body:{action:'invite',lane:'external',id:BORROWER}});
+ const borrower=(await login(env,'borrower')).data.token;
+ const started=Math.floor(Date.now()/1000)-3600,until=started+7*86400;
+ const iso=seconds=>new Date(seconds*1000).toISOString();
+ const initial=(await call(env,'bank',{token:owner})).data.state;
+ const loan={id:'investment',borrowerId:BORROWER,name:'Test',product:'bank',status:'active',principal:500e6,freeDays:0,rate:.005,issuer:OWNER,
+  start:iso(started).slice(0,10),fundedAt:iso(started-60),fundedOn:iso(started).slice(0,10),maturity:iso(until).slice(0,10),investmentDays:7,
+  payments:[],extensions:[],rules:TB.clone(initial.rules)};
+ initial.loans=[loan];
+ const read=()=>JSON.parse(env.DB.sqlite.prepare('SELECT data FROM bank_state').get().data);
+ const write=state=>env.DB.sqlite.prepare('UPDATE bank_state SET data=?').run(JSON.stringify(state));
+ write(initial);
+ const key='borrower'.padEnd(16,'0'),verify=(token,fields={})=>call(env,'investment-check',{token,body:{loanId:loan.id,key,...fields}});
+ const previous=globalThis.fetch;let lookups=0,city={duration:7,invested_at:started,until};
+ try{
+  globalThis.fetch=async(url,options)=>{
+   if(new URL(url).pathname!=='/v2/user/money')return previous(url,options);
+   assert.equal(options.headers.Authorization,'ApiKey '+key);lookups++;
+   return Response.json({money:{city_bank:city,wallet:977331,wallet_noise:'PRIVATE_WALLET',faction:{balance:888880}}});
+  };
+  assert.equal((await verify(borrower)).status,400);assert.equal(lookups,0);
+  const s=read();s.loans[0].investmentEnd={date:loan.maturity,recordedOn:loan.start,by:BORROWER,planned:loan.maturity};write(s);
+  assert.equal((await verify(owner)).status,400);
+  assert.equal((await verify(borrower,{key:'owner'.padEnd(16,'0')})).status,400);assert.equal(lookups,0);
+  const saved=await verify(borrower,{until:1,amount:999});assert.equal(saved.status,200,saved.data.error);
+  assert.equal(saved.data.state.loans[0].investmentTiming.until,until);assert.equal(saved.data.state.loans[0].investmentTiming.days,7);
+  assert.equal(TB.balance(saved.data.state.loans[0],loan.start).interest,2500000);
+  const snapshot=read();assert.deepEqual(snapshot.ledger,initial.ledger);
+  assert.doesNotMatch(JSON.stringify(snapshot),/977331|PRIVATE_WALLET|888880|borrower00000000/);
+  assert.equal((await call(env,'bank',{token:owner})).data.state.loans[0].investmentTiming.until,until);
+  assert.equal((await verify(borrower)).status,200);
+  assert.equal(read().audit.filter(e=>e.event==='Investment end time verified').length,1);
+  city={...city,until:until-90000};assert.equal((await verify(borrower)).data.state.loans[0].investmentTiming.until,until-90000);
+  city={...city,invested_at:started+120};assert.equal((await verify(borrower)).status,400);
+  city=null;assert.equal((await verify(borrower)).status,400);
+  assert.equal(read().loans[0].investmentTiming.until,until-90000);assert.equal(read().loans[0].maturity,loan.maturity);
+ }finally{globalThis.fetch=previous;}
+});
+
+test('a differing investment needs confirmation against a fresh Torn response and preserves the agreed payoff',async()=>{
+ const env=fixture(),owner=(await login(env)).data.token;
+ await call(env,'access',{token:owner,body:{action:'invite',lane:'external',id:BORROWER}});
+ const token=(await login(env,'borrower')).data.token;
+ const s=(await call(env,'bank',{token:owner})).data.state;
+ const start=Math.floor(Date.now()/1000)-1200,end=start+14*86400,iso=t=>new Date(t*1000).toISOString();
+ const manual=iso(start+7*86400).slice(0,10);
+ s.loans=[{id:'i2',borrowerId:BORROWER,status:'active',product:'bank',fundedAt:iso(start-10),start:iso(start).slice(0,10),investmentDays:7,maturity:manual,
+  investmentEnd:{date:manual,recordedOn:TB.today()},principal:500e6,termInterest:2500000,rate:.005,freeDays:0,payments:[],extensions:[],rules:TB.clone(s.rules)}];
+ const write=state=>env.DB.sqlite.prepare('UPDATE bank_state SET data=?').run(JSON.stringify(state));
+ write(s);
+ const fetchBefore=globalThis.fetch,key='borrower'.padEnd(16,'0');let until=end,revoke=false;
+ const check=confirm=>call(env,'investment-check',{token,body:{loanId:'i2',key,confirm}});
+ try{
+  globalThis.fetch=async(url,opt)=>{
+   if(new URL(url).pathname!=='/v2/user/money')return fetchBefore(url,opt);
+   if(revoke)env.DB.sqlite.prepare('DELETE FROM sessions WHERE torn_id=?').run(BORROWER);
+   return Response.json({money:{city_bank:{duration:14,invested_at:start,until}}});
+  };
+  const first=await check();assert.equal(first.data.review.until,end);assert.equal(first.data.state,undefined);
+  until-=3600;const second=await check(first.data.review);assert.equal(second.data.review.until,until);
+  let result=await check(second.data.review);assert.equal(result.status,200);assert.equal(result.data.state.loans[0].maturity,manual);assert.equal(result.data.state.loans[0].termInterest,2500000);
+  write(s);revoke=true;result=await check(second.data.review);assert.equal(result.status,401);
+  assert.equal(JSON.parse(env.DB.sqlite.prepare('SELECT data FROM bank_state').get().data).loans[0].investmentTiming,undefined);
+ }finally{globalThis.fetch=fetchBefore;}
+});
+
+test('scheduled maturity review creates one strike and routes held collateral to proceeds review without altering cash',async()=>{
+ const e=fixture(),owner=(await login(e)).data.token;
+ await call(e,'access',{token:owner,body:{action:'invite',lane:'faction',id:BORROWER}});
+ const borrower=(await login(e,'borrower')).data.token;
+ const read=()=>JSON.parse(e.DB.sqlite.prepare('SELECT data FROM bank_state').get().data);
+ const s=(await call(e,'bank',{token:owner})).data.state,now=TB.today(),due=TB.addDays(now,-7);
+ const l={id:'maturity-loan',borrowerId:BORROWER,name:'Test',reference:'TLB-M',product:'house',status:'active',lane:'faction',principal:500e6,freeDays:0,rate:.005,
+  issuer:OWNER,start:TB.addDays(due,-90),maturity:due,collateralConfirmed:{holder:OWNER,amount:100e6},payments:[],extensions:[],rules:TB.clone(s.rules)};
+ s.loans=[l];s.lastDueReview=TB.addDays(now,-1);s.rules.maturityLateMode='review';l.rules.maturityLateMode='review';
+ e.DB.sqlite.prepare('UPDATE bank_state SET data=?').run(JSON.stringify(s));
+ await worker.scheduled({},e);await worker.scheduled({},e);
+ assert.equal(read().borrowers[BORROWER].strikes.length,1);assert.deepEqual(read().ledger,s.ledger);
+ const bank=async token=>(await call(e,'bank',{token})).data.state;
+ for(const token of [owner,borrower]){
+  const view=await bank(token);assert.equal(view.borrowers[BORROWER].strikes[0].finalDefaultOn,now);
+  assert.equal(TB.balance(view.loans[0],now).finalLate,7500000);
+ }
+ const sale={id:l.id,event:'liquidated',holder:OWNER,description:'Disposed of held collateral',proceeds:100e6,reference:'sale-reference',wholeHolding:true};
+ const save=async(token,action,payload)=>call(e,'bank',{token,body:{action,payload,revision:(await bank(token)).revision,requestId:crypto.randomUUID()}});
+ assert.equal((await save(borrower,'collateral',sale)).status,400);
+ const result=await save(owner,'collateral',sale);assert.equal(result.status,200,result.data.error);
+ const after=result.data.state;assert.deepEqual(after.ledger,s.ledger);assert.equal(after.pendingPayments[0].cash,100e6);
+ assert.equal(after.collateral.at(-1).paymentId,after.pendingPayments[0].id);
+ assert.equal((await save(owner,'collateral',{...sale,reference:'duplicate-holder'})).status,400);
+ const accepted=await save(owner,'acceptPayment',{id:after.pendingPayments[0].id});assert.equal(accepted.status,200,accepted.data.error);
+ const b=TB.balance(accepted.data.state.loans[0],now);assert.equal(b.principal,439642857);assert.equal(b.interest,0);
+ assert.equal(accepted.data.state.borrowers[BORROWER].strikes.length,1);
 });

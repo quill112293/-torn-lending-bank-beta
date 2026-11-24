@@ -1,4 +1,7 @@
+import {investmentTermLabel} from '../lib/investment-timing.js';
+import {scheduleLabel} from '../lib/repayment-terms.js';
 import React,{useEffect,useId,useRef,useState} from 'react';
+import TB from '../lib/engine.js';
 import {hasAcceptedLoanTerms} from '../lib/loan-terms.js';
 
 export const tradeFlowLabels={
@@ -68,9 +71,11 @@ export default function TradeFlowForm({linkOnPlacement=false,requiresTermsAccept
     <div><dt>Approved principal</dt><dd><strong>{money(loan.principal)}</strong></dd></div>
     <div><dt>Interest rate</dt><dd>{Number.isFinite(loan.rate)&&loan.rate>=0?(loan.rate*100).toLocaleString('en-US',{maximumFractionDigits:6})+'% per week':'Unavailable'}</dd></div>
     {Number.isSafeInteger(loan.freeDays)&&loan.freeDays>=0&&<div><dt>Interest-free period</dt><dd>{loan.freeDays} days</dd></div>}
+    {Number.isFinite(loan.rules?.lateRate)&&<div><dt>Late payment policy</dt><dd>Late interest is {Number((loan.rules.lateRate*100).toFixed(4))}% per week on unpaid principal, prorated each day after {loan.product==='regular'?'a missed installment or the final due date':'the final due date'}. A final balance seven days overdue triggers one strike and liquidation of held collateral.</dd></div>}
+    {loan.maturity&&loan.start&&<div><dt>Full-term interest</dt><dd>{money(TB.fullTermInterest(loan))}</dd></div>}
     <div><dt>Agreed start date</dt><dd>{loan.start||'Not recorded'}</dd></div>
-    <div><dt>Maturity / final due date</dt><dd>{loan.maturity||'No fixed maturity recorded'}</dd></div>
-    <div><dt>Repayment schedule</dt><dd>{loan.product==='regular'?(Number.isSafeInteger(loan.schedule)&&loan.schedule>0?'Every '+loan.schedule+' days':'Not recorded'):['house','bank'].includes(loan.product)?'Full repayment at maturity':'Not recorded'}</dd></div>
+    <div><dt>Maturity / final due date</dt><dd>{loan.investmentDays&&!loan.investmentEnd?investmentTermLabel(loan.investmentDays)+' · estimated end '+loan.maturity+' · enter actual end date after funding':loan.maturity||'Date unavailable'}</dd></div>
+    <div><dt>Repayment schedule</dt><dd>{loan.product==='regular'?scheduleLabel(loan.schedule):['house','bank'].includes(loan.product)?'Full repayment at maturity':'Not recorded'}</dd></div>
     {loan.product==='regular'&&<div><dt>Agreed installment</dt><dd>{money(loan.installment)}</dd></div>}
    </dl>
    <label className='check'><input type='checkbox' name='acceptTerms' required disabled={saving} {...fieldFeedback('acceptTerms')}/><span>I accept the approved loan principal, interest rate, start date and repayment terms shown above for {loan.reference}.{fieldError('acceptTerms')}</span></label>

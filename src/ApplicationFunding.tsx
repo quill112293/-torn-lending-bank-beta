@@ -1,3 +1,4 @@
+import {investmentTermLabel} from '../lib/investment-timing.js';
 import React from 'react';
 import ApprovalProgress from './ApprovalProgress';
 import {isFundedLoan} from '../lib/funding-lifecycle.js';
@@ -18,7 +19,7 @@ export default function ApplicationFunding({state,request,isStaff=false,busy=fal
    <ApprovalProgress loan={request} isStaff={isStaff}/>
    <dl className='breakdown'>
     <div><dt>Agreed start date</dt><dd>{request.start}</dd></div>
-    <div><dt>Agreed maturity</dt><dd>{request.maturity||'Scheduled payments'}</dd></div>
+    <div><dt>Agreed maturity</dt><dd>{request.investmentDays?investmentTermLabel(request.investmentDays)+' · estimated end '+request.maturity+' · enter actual end date after funding':request.maturity||'Date unavailable'}</dd></div>
     <div><dt>Terms accepted</dt><dd>{request.borrowerConfirmed?'Recorded with this application':'Confirm in the Torn trade menu'}</dd></div>
    </dl>
    {isStaff&&onAdjustStart&&<button type='button' className='subtle' disabled={busy||!!request.tradeFlow?.reservedBy} onClick={()=>onAdjustStart(request)}>Adjust start date</button>}

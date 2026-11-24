@@ -150,7 +150,7 @@ export function parseReviewAmount(value){
 }
 
 function reviewSignature(data,loan){
- const fields=['id','applicationId','borrowerId','reference','status','principal','issuer','collateralRequired','collateralConfirmed','fundsReceived','borrowerConfirmed','lane','tier','product','rate','start','maturity','schedule','installment','freeDays','rules','expectedCollateral','collateralTrade','collateralTradeHistory','tradeFlow'];
+ const fields=['id','applicationId','borrowerId','reference','status','principal','issuer','collateralRequired','collateralConfirmed','fundsReceived','borrowerConfirmed','lane','tier','product','rate','start','maturity','investmentDays','schedule','installment','freeDays','rules','expectedCollateral','collateralTrade','collateralTradeHistory','tradeFlow'];
  return JSON.stringify([data.role,data.state.bankOnline,data.state.testDate,hasPIStatus(data.state,loan.borrowerId),data.state.borrowers?.[loan.borrowerId]?.flags||[],fields.map(field=>loan[field]??null)]);
 }
 function redactedMessage(error,keys=[]){

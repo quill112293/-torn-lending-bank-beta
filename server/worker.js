@@ -8,10 +8,11 @@ import {route as bank} from '../routes/bank.ts';
 import {route as check} from '../routes/check.ts';
 import {route as trades} from '../routes/trades.ts';
 import {loadTornItemCatalog,marketQuote,route as market} from '../routes/market.ts';
+import {route as investmentCheck} from '../routes/investment-check.ts';
 import {route as staffCash} from '../routes/staff-cash.ts';
 import {route as collateralCheck} from '../routes/collateral-check.ts';
 import {route as loanTrade} from '../routes/loan-trade.ts';
-const routes={bank,check,trades,market,'staff-cash':staffCash,'collateral-check':collateralCheck,'loan-trade':loanTrade};
+const routes={bank,check,'investment-check':investmentCheck,trades,market,'staff-cash':staffCash,'collateral-check':collateralCheck,'loan-trade':loanTrade};
 const origins=new Set(['https://www.torn.com','https://torn.com']);
 export function allowedOrigin(request){const origin=request.headers.get('origin');return !origin||origin===new URL(request.url).origin||origins.has(origin);}
 export async function handle(request,env,ctx){
@@ -22,7 +23,7 @@ export async function handle(request,env,ctx){
  let result;const srv=createServer(env);const {database,response,body,identity,rateLimit,loadState,saveState,allowed,torn,flagConfirmedProfile}=srv;
  try{
   if(request.method==='OPTIONS')result=new Response(null,{status:204});
-  else if(path==='/api/health'&&request.method==='GET'){let notificationsReady=false;try{await database().prepare('SELECT id FROM push_devices LIMIT 1').first();notificationsReady=true;}catch{}result=response({ok:true,version:'1.1.0-beta.85',notificationsReady});}
+  else if(path==='/api/health'&&request.method==='GET'){let notificationsReady=false;try{await database().prepare('SELECT id FROM push_devices LIMIT 1').first();notificationsReady=true;}catch{}result=response({ok:true,version:'1.1.0-beta.86',notificationsReady});}
   else if(path==='/api/health/market'&&request.method==='GET'){
    // Fixed public item and a shared rate limit keep this check independent of bank accounts.
    await rateLimit('public-market-health',3);
@@ -95,6 +96,6 @@ export function validateImport(s){
  if(new Set(s.staff.map(p=>p.id)).size!==s.staff.length)fail('Duplicate staff records.');
  normalizeFundingState(s);TB.validateRules(s.rules);for(const loan of allLoanRecords(s)){TB.balance(loan,TB.today());if(!loan.id||!/^\d{1,10}$/.test(loan.borrowerId))fail('Invalid loan record.');}
 }
-export default {fetch:handle,async scheduled(_event,env){await env.DB.batch([env.DB.prepare('DELETE FROM sessions WHERE expires_at>0 AND expires_at<=?').bind(Date.now()),env.DB.prepare('DELETE FROM api_limits WHERE bucket<?').bind(Math.floor(Date.now()/60000)-2),env.DB.prepare('DELETE FROM push_events WHERE created_at<?').bind(Date.now()-7*86400000)]);await drainPush(env);}};
+export default {fetch:handle,async scheduled(_event,env){await env.DB.batch([env.DB.prepare('DELETE FROM sessions WHERE expires_at>0 AND expires_at<=?').bind(Date.now()),env.DB.prepare('DELETE FROM api_limits WHERE bucket<?').bind(Math.floor(Date.now()/60000)-2),env.DB.prepare('DELETE FROM push_events WHERE created_at<?').bind(Date.now()-7*86400000)]);await createServer(env).reviewDueToday();await drainPush(env);}};
 
 

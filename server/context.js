@@ -20,6 +20,20 @@ export function createServer(env){
  }
  async function loadState(){let row=await database().prepare('SELECT data,revision FROM bank_state WHERE id = ?').bind('main').first();if(!row){const s=TB.newState();s.processedRequests=[];s.extensionRequests=[];s.paymentIntents=[];s.receipts=[];await database().prepare('INSERT OR IGNORE INTO bank_state (id,data,revision) VALUES (?,?,0)').bind('main',JSON.stringify(s)).run();row=await database().prepare('SELECT data,revision FROM bank_state WHERE id = ?').bind('main').first();}const s=normalizeFundingState(JSON.parse(row.data));s.rules=TB.withLoanLimits(s.rules);s.revision=row.revision;s.testDate=TB.today();return s;}
  async function saveState(s,expected,afterSave=()=>[]){normalizeFundingState(s);const serialized=JSON.stringify({...s,revision:expected+1});if(new TextEncoder().encode(serialized).length>1500000)fail('Export and archive bank history before adding more records.');const before=await database().prepare('SELECT data,revision FROM bank_state WHERE id=?').bind('main').first();if(!before||before.revision!==expected)fail('Another person updated the bank. Refresh and review the latest balances before retrying.',409);const results=await database().batch([database().prepare('UPDATE bank_state SET data = ?, revision = revision + 1 WHERE id = ? AND revision = ?').bind(serialized,'main',expected),...eventStatements(database(),JSON.parse(before.data),s,serialized,expected+1),...afterSave(serialized,expected+1)]);const r=results[0];if(r.meta.changes!==1)fail('Another person updated the bank. Refresh and review the latest balances before retrying.',409);s.revision=expected+1;}
+ async function reviewDueToday(){
+  const s=await loadState();
+  if(s.lastDueReview===s.testDate){
+   const needsUpgrade=!s.finalDueReviewVersion&&s.loans.some(l=>l.status==='active'&&l.maturity&&l.maturity<s.testDate);
+   if(!needsUpgrade)return s;
+  }
+  s.actorId=OWNER_ID;
+  const before=s.audit.length;
+  TB.refreshStrikes(s);
+  for(const entry of s.audit.slice(before))entry.actor='system';
+  s.lastDueReview=s.testDate;s.finalDueReviewVersion=1;
+  try{await saveState(s,s.revision);}catch(error){if(error.status===409)return loadState();throw error;}
+  return s;
+ }
  async function allowed(id){if(id===OWNER_ID)return true;const s=await loadState();if(role(s,id)!=='borrower')return true;return !!(await database().prepare('SELECT torn_id FROM allowed_members WHERE torn_id=?').bind(id).first());}
  async function identity(req){
   const auth=req.headers.get('authorization')||'';if(!/^Bearer [a-f0-9]{64}$/.test(auth))fail('Verify your Torn account to sign in.',401);
@@ -35,6 +49,6 @@ export function createServer(env){
  async function torn(key,path){if(!/^[a-zA-Z0-9]{16}$/.test(key||''))fail('Enter a valid 16-character Torn API key.');const u=new URL('https://api.torn.com/v2/'+path);u.searchParams.set('comment','TornLendingBank');const r=await fetch(u,{headers:{Authorization:'ApiKey '+key,Accept:'application/json'},signal:AbortSignal.timeout(15000)});if(!r.ok)fail('Torn API is unavailable. Try again later.',502);const data=await r.json();if(data.error){const error=new Error('Torn API: '+TB.text(data.error.error||data.error.message||'access denied',180));error.tornCode=data.error.code;throw error;}return data;}
  async function ownKey(key,id){const b=await torn(key,'user/basic');if(String(b.profile?.id)!==id)fail('Use the API key belonging to your connected Torn account.');return b;}
  function flagConfirmedProfile(s,profile,actorId){if(profile.status?.state!=='Federal')return false;const target=String(profile.id),p=TB.person(s,target),signature=JSON.stringify([profile.status.description,profile.status.details,profile.status.until]);if(p.flags.some(f=>f.cause==='ban'&&f.signature===signature))return false;s.actorId=actorId;s.testDate=TB.today();p.flags.push({id:TB.uid('FLAG'),cause:'ban',signature,reason:'Torn API reports Federal: '+TB.text(profile.status.description,300),created:TB.today(),checkedAt:new Date().toISOString()});TB.log(s,'Confirmed Torn ban',target);return true;}
- return {database,response,body,loadState,saveState,allowed,identity,view,rateLimit,torn,ownKey,flagConfirmedProfile};
+ return {database,response,body,loadState,saveState,allowed,identity,view,reviewDueToday,rateLimit,torn,ownKey,flagConfirmedProfile};
 }
 
