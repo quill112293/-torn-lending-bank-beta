@@ -199,6 +199,26 @@ test('custom keys allow borrowers to check investment timing and staff to check 
   }
 });
 
+test('manual trade confirmations use the bank session, while live checks still require a Torn key', async () => {
+  const calls = bridge();
+  const transport = createTransport(origin, {native: true, store: memory(saved())});
+  for (const action of ['collateral-placed', 'funds-added', 'accept-ready', 'complete', 'refresh', 'reset']) {
+    const body = {manual: true, action, loanId: 'LOAN-1', nativeTradeId: '88333', checked: true};
+    await transport.request('loan-trade', body);
+    const sent = calls.at(-1);
+    assert.equal(sent.url, origin + '/api/loan-trade');
+    assert.equal(sent.headers.Authorization, 'Bearer ' + token);
+    assert.deepEqual(JSON.parse(sent.body), body);
+  }
+  const sentCount = calls.length;
+  for (const action of ['replace-expired', 'reconcile-expired', 'unknown']) {
+    await assert.rejects(transport.request('loan-trade', {manual: true, action}), /valid 16-character/);
+  }
+  await assert.rejects(transport.request('loan-trade', {manual: 'true', action: 'refresh'}), /valid 16-character/);
+  await assert.rejects(transport.request('collateral-check', {manual: true, action: 'refresh'}), /valid 16-character/);
+  assert.equal(calls.length, sentCount);
+});
+
 test('collateral and staged loan checks require a valid key and do not persist or log a replacement verification key',async()=>{
  for(const path of ['collateral-check','loan-trade']){
   const calls=bridge(),savedValue={...saved(),apiKey},store=memory(savedValue);

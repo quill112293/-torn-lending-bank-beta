@@ -1,6 +1,7 @@
 import {createSessionStore, validSession} from './session-store.js';
 import {createRequestLog} from './diagnostics.js';
 import {validTornKey} from './api-key.js';
+import {MANUAL_LOAN_TRADE_ACTIONS} from '../lib/manual-loan-trade.js';
 
 export function normalizeOrigin(value) {
   const u = new URL(value);
@@ -70,7 +71,9 @@ export function createTransport(origin, {native = false, onExpired = () => {}, s
     const startEpoch = epoch;
     if (!['link', 'logout'].includes(path)) await ensureSession();
     if (epoch !== startEpoch) throw Error('Your login changed. Refresh the bank.');
-    if (body !== undefined && ['link', 'check', 'investment-check', 'trades', 'collateral-check', 'loan-trade'].includes(path) && !validTornKey(body?.key)) {
+    const manualTrade = path === 'loan-trade' && body?.manual === true && MANUAL_LOAN_TRADE_ACTIONS.has(body.action);
+    const needsTornKey = ['link', 'check', 'investment-check', 'trades', 'collateral-check'].includes(path) || (path === 'loan-trade' && !manualTrade);
+    if (body !== undefined && needsTornKey && !validTornKey(body?.key)) {
       throw Error(path === 'link' ? 'Enter a valid 16-character Torn API key.' : 'Enter a valid 16-character Torn API key in Connections before running live checks.');
     }
     const requestEpoch = epoch;
