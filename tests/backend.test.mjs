@@ -1907,3 +1907,39 @@ test('scheduled maturity review creates one strike and routes held collateral to
  const b=TB.balance(accepted.data.state.loans[0],now);assert.equal(b.principal,439642857);assert.equal(b.interest,0);
  assert.equal(accepted.data.state.borrowers[BORROWER].strikes.length,1);
 });
+
+test('profile membership choices govern pending and future applications while the authenticated Torn check keeps running',async()=>{
+ const f=await factionVerificationFixture();
+ const select=(mode,token=f.owner)=>f.save(token,'memberProgram',{id:BORROWER,mode,reason:'Verified member profile'});
+ const pending=await f.save(f.borrower,'apply',f.application());
+ assert.equal(pending.data.state.applications[0].status,'pending');
+ const forged=await select('faction',f.borrower);
+ assert.equal(forged.status,400);assert.equal(f.read().borrowers[BORROWER].memberProgramMode,undefined);
+ const manual=await select('faction');assert.equal(manual.status,200,manual.data.error);
+ const reviewed=manual.data.state.applications[0];
+ assert.equal(reviewed.factionMember,true);assert.equal(reviewed.factionVerification.profile.by,OWNER);
+ assert.equal(reviewed.factionVerification.automatic.matched,false);
+ assert.equal(reviewed.status,'pending');assert.ok(!reviewed.reviewReasons.includes('Faction membership needs confirmation.'));
+ const approved=await f.save(f.borrower,'apply',f.application());assert.equal(approved.status,200,approved.data.error);
+ assert.equal(approved.data.state.applications.at(-1).status,'approved');
+ const agreement=structuredClone(f.read().applications.at(-1));
+ const external=await select('external');assert.equal(external.status,200,external.data.error);
+ assert.equal(external.data.state.applications[0].factionMember,false);
+ assert.equal(external.data.state.applications[0].factionVerification.profile,undefined);
+ let factionId=1;
+ const originalFetch=globalThis.fetch;
+ globalThis.fetch=async(url,options)=>new URL(url).pathname==='/v2/user/'+BORROWER+'/profile'
+  ?Response.json({profile:{id:Number(BORROWER),name:'Tester',faction_id:factionId,status:{state:'Okay'}}}):originalFetch(url,options);
+ try{
+  const check=()=>call(f.env,'check',{token:f.owner,body:{key:'owner'.padEnd(16,'0'),id:BORROWER}});
+  const first=await check();assert.equal(first.status,200,first.data.error);
+  assert.equal(first.data.factionVerification.automatic.matched,true);
+  assert.equal(f.read().borrowers[BORROWER].memberProgram,'external');
+  const auto=await select('auto');assert.equal(auto.status,200,auto.data.error);
+  assert.equal(auto.data.state.borrowers[BORROWER].memberProgram,'faction');
+  factionId=2;
+  assert.equal((await check()).status,200);
+  assert.equal(f.read().borrowers[BORROWER].memberProgram,'external');
+  assert.deepEqual(f.read().applications.at(-1),agreement);
+ }finally{globalThis.fetch=originalFetch;}
+});

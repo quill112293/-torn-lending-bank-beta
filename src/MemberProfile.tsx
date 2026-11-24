@@ -1,6 +1,8 @@
 import React,{useEffect,useState} from 'react';
 import {activeCountField,loanCounts} from '../lib/loan-counts.js';
 import TB from '../lib/engine.js';
+import {AutomaticFactionResult,factionCheckTime} from './FactionVerification';
+import {automaticFactionFor} from '../lib/faction-verification.js';
 import {eligibility} from '../lib/eligibility.js';
 import {memberProgram,programLabel} from '../lib/member-program.js';
 import {preapprovalFor,loanSlots} from '../lib/preapproval.js';
@@ -8,7 +10,36 @@ import {preapprovalFor,loanSlots} from '../lib/preapproval.js';
 const fields=[['preferredName','Preferred name',60],['discord','Discord username',80],['notes','Notes for bank staff',500]];
 const money=value=>'$'+value.toLocaleString('en-US');
 
-export default function MemberProfile({state,id,name,verified,busy,onSave,onAdjust}){
+function ProfileMembershipEditor({state,id,busy,onSave,onCheck,canCheck}){
+ const member=state.borrowers[id],assigned=memberProgram(state,id);
+ const saved=member?.memberProgramMode||(assigned?'assigned':'');
+ const [mode,setMode]=useState(saved),[reason,setReason]=useState('');
+ useEffect(()=>{setMode(saved);setReason('');},[id,saved]);
+ const automatic=automaticFactionFor(state,{borrowerId:id});
+ const review=member?.memberProgramReview;
+ return <form className='stack' aria-label='Edit membership' onSubmit={async event=>{
+  event.preventDefault();
+  if(await onSave({id,mode,reason}))setReason('');
+ }}>
+  <h3>Edit membership</h3>
+  <label className='field'><span>Faction selection</span><select required value={mode} onChange={e=>setMode(e.target.value)}>
+   {!saved&&<option value='' disabled>Choose a mode</option>}
+   {saved==='assigned'&&<option value='assigned' disabled>Current assignment · {programLabel(assigned)}</option>}
+   <option value='auto'>Automatic (Torn API)</option>
+   <option value='faction'>Faction VIP+ (manual)</option>
+   <option value='external'>Non-faction secured (manual)</option>
+  </select></label>
+  <p className='micro'>Automatic selects Faction VIP+ when the borrower is in the bank owner’s Torn faction. A different faction or confirmed no faction selects Non-faction secured. A manual selection stays in effect when Torn is checked again.</p>
+  <AutomaticFactionResult automatic={automatic}/>
+  {onCheck&&<button className='secondary' type='button' disabled={busy||!canCheck} onClick={()=>onCheck(id)}>Refresh automatic faction check</button>}
+  {onCheck&&!canCheck&&<p className='micro'>Enter your Torn API key in Connections to refresh the check.</p>}
+  {review&&<p className='micro'>Last saved by [{review.by}] · {factionCheckTime(review.at)}</p>}
+  <label className='field'><span>Reason / verification notes</span><textarea required maxLength={500} value={reason} onChange={e=>setReason(e.target.value)}/></label>
+  <button className='primary' disabled={busy||!mode||mode==='assigned'||!reason.trim()}>Save membership</button>
+ </form>;
+}
+
+export default function MemberProfile({state,id,name,verified,busy,onSave,onAdjust,onMembership,onFactionCheck,canCheckFaction=true}){
  const member=state.borrowers[id];
  const details=member?.profileDetails||{};
  const [draft,setDraft]=useState(details);
@@ -44,6 +75,7 @@ export default function MemberProfile({state,id,name,verified,busy,onSave,onAdju
  return <section className='card'>
   <h2>{onSave?'My Profile':'Member profile'}</h2>
   <p><strong>{name}</strong> · Torn ID {id}</p>
+  {onMembership&&<ProfileMembershipEditor key={id} state={state} id={id} busy={busy} onSave={onMembership} onCheck={onFactionCheck} canCheck={canCheckFaction}/>}
   {unsaved&&<p className='notice' role='status'>Unsaved loan count preview. Save loan counts to apply these changes.</p>}
   <dl className='breakdown' aria-live='polite'>{rows.map(([label,value])=><div key={label}><dt>{label}</dt><dd>{value}</dd></div>)}</dl>
   {onAdjust&&member&&<form onSubmit={event=>{

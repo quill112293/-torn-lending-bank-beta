@@ -1,5 +1,5 @@
 import React from 'react';
-import {automaticFactionFor,validManualFactionVerification,validAutomaticFactionVerification} from '../lib/faction-verification.js';
+import {automaticFactionFor,profileFactionConfirmed,validManualFactionVerification,validAutomaticFactionVerification} from '../lib/faction-verification.js';
 
 export function factionCheckTime(value){
  const date=new Date(value);
@@ -27,6 +27,7 @@ export default function FactionVerificationDetails({application,state,staffName=
   <h2>Faction verification</h2>
   <AutomaticFactionResult automatic={automatic}/>
   <dl className='breakdown'>
+   {profileFactionConfirmed(application.factionVerification?.profile,application.borrowerId)&&<div><dt>Confirmed in member profile</dt><dd>{staffName(application.factionVerification.profile.by)} · {factionCheckTime(application.factionVerification.profile.at)}</dd></div>}
    <div><dt>Manually verified faction</dt><dd>{manual?<>{manual.confirmed?'Confirmed':'Cleared'} by {actor} · {factionCheckTime(manual.at)}</>:'No manual confirmation recorded'}</dd></div>
   </dl>
   {manual?.confirmed&&automatic?.matched!==true&&<p className='micro'>Staff’s manual confirmation satisfies faction membership for this application. The automatic result remains recorded separately.</p>}

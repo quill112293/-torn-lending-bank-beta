@@ -16,7 +16,11 @@ async function cachedFaction(state,targetId,profile=null,application=null){
  // profile-check time, then compare those target facts with today's owner cache.
  return automaticFactionVerification(targetId,saved?{id:targetId,faction_id:saved.factionId,checkedAt:saved.checkedAt}:profile,ownerProfile);
 }
-async function withOwnFaction(state,u){return {...u,profile:{...u.profile,factionVerification:{version:1,automatic:await cachedFaction(state,u.torn_id,u.profile)}}};}
+async function withOwnFaction(state,u){
+ const automatic=await cachedFaction(state,u.torn_id,u.profile);
+ if(state.borrowers?.[u.torn_id]?.memberProgramMode==='auto')recordAutomaticFactionVerification(state,automatic);
+ return {...u,profile:{...u.profile,factionVerification:{version:1,automatic}}};
+}
 
 async function GET(req:Request){try{const u=await identity(req);const s=await reviewDueToday();return response(view(s,await withOwnFaction(s,u)));}catch(e:any){return response({error:e.message},e.status||400);}}
 async function POST(req:Request){try{const u=await identity(req),a=await body(req);await rateLimit(u.platformId+':actions',60);const s=await loadState();if(typeof a.requestId!=='string'||a.requestId.length>80)throw Error('Request identifier missing.');if(s.processedRequests?.includes(u.torn_id+':'+a.requestId))return response(view(s,await withOwnFaction(s,u)));if(a.revision!==s.revision)return response({error:'The bank changed. Refresh before saving your decision.'},409);if(a.action==='apply'&&role(s,u.torn_id)==='borrower'){a.payload.borrowerId=u.torn_id;a.payload.name=u.name;}
@@ -58,6 +62,15 @@ async function POST(req:Request){try{const u=await identity(req),a=await body(re
   const application=a.action==='editApplication'?current.applications.find(application=>application.id===a.payload?.id):null;
   const target=application?.borrowerId||(a.action==='apply'?TB.ident(a.payload?.borrowerId):null);
   if(target)verified={factionVerification:{version:1,automatic:await cachedFaction(current,target,null,application)}};
+ }
+ if(a.action==='memberProgram'&&a.payload?.mode==='auto'&&role(current,currentUser.torn_id)!=='borrower'){
+  const target=TB.ident(a.payload.id);
+  const automatic=await cachedFaction(current,target);
+  TB.person(current,target);recordAutomaticFactionVerification(current,automatic);
+ }
+ if(verified?.factionVerification?.automatic){
+  const check=verified.factionVerification.automatic;
+  if(current.borrowers?.[check.borrowerId]?.memberProgramMode==='auto')recordAutomaticFactionVerification(current,check);
  }
  const next=applyAction(current,currentUser.torn_id,a.action,a.payload,TB.today(),verified);
  const savedApplication=a.action==='apply'?next.applications.at(-1):a.action==='editApplication'?next.applications.find(application=>application.id===a.payload?.id):null;

@@ -111,3 +111,13 @@ test('staff investment calendar sorts exact, manual and estimated times with dis
  assert.match(html,/Estimated · 2026-12-07/);
  assert.ok(html.indexOf('Entered')<html.indexOf('Exact')&&html.indexOf('Exact')<html.indexOf('Projected'));assert.doesNotMatch(html,/Paid/);
 });
+
+test('staff edit faction selection inside the member profile and borrowers only see their assigned program',()=>{
+ const input=props('external',true),id=input.user.id;
+ const options={state:input.bankState,id,name:'Member',verified:input.user.profile};
+ const staff=renderProfile({...options,onMembership:async()=>true,onFactionCheck:async()=>true,canCheckFaction:false});
+ assert.match(staff,/<h2>Member profile<\/h2>.*<form[^>]+aria-label="Edit membership"/s);
+ for(const text of ['Automatic (Torn API)','Faction VIP+ (manual)','Non-faction secured (manual)','Refresh automatic faction check','Save membership'])assert.ok(staff.includes(text));
+ assert.match(staff,/<button[^>]*type="button"[^>]*disabled=""[^>]*>Refresh automatic faction check/);
+ assert.doesNotMatch(renderProfile({...options,onSave:async()=>true}),/Edit membership|Faction selection|Save membership/);
+});
