@@ -72,7 +72,7 @@ export default function TradeFlowForm({linkOnPlacement=false,requiresTermsAccept
     <div><dt>Interest rate</dt><dd>{Number.isFinite(loan.rate)&&loan.rate>=0?(loan.rate*100).toLocaleString('en-US',{maximumFractionDigits:6})+'% per week':'Unavailable'}</dd></div>
     {Number.isSafeInteger(loan.freeDays)&&loan.freeDays>=0&&<div><dt>Interest-free period</dt><dd>{loan.freeDays} days</dd></div>}
     {Number.isFinite(loan.rules?.lateRate)&&<div><dt>Late payment policy</dt><dd>Late interest is {Number((loan.rules.lateRate*100).toFixed(4))}% per week on unpaid principal, prorated each day after {loan.product==='regular'?'a missed installment or the final due date':'the final due date'}. A final balance seven days overdue triggers one strike and liquidation of held collateral.</dd></div>}
-    {loan.maturity&&loan.start&&<div><dt>Full-term interest</dt><dd>{money(TB.fullTermInterest(loan))}</dd></div>}
+    {loan.maturity&&loan.start&&TB.fullTermInterest(loan)!=null&&<div><dt>Full-term interest</dt><dd>{money(TB.fullTermInterest(loan))}</dd></div>}
     <div><dt>Agreed start date</dt><dd>{loan.start||'Not recorded'}</dd></div>
     <div><dt>Maturity / final due date</dt><dd>{loan.investmentDays&&!loan.investmentEnd?investmentTermLabel(loan.investmentDays)+' · estimated end '+loan.maturity+' · enter actual end date after funding':loan.maturity||'Date unavailable'}</dd></div>
     <div><dt>Repayment schedule</dt><dd>{loan.product==='regular'?scheduleLabel(loan.schedule):['house','bank'].includes(loan.product)?'Full repayment at maturity':'Not recorded'}</dd></div>

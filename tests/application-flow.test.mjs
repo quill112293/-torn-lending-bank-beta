@@ -259,7 +259,7 @@ test('regular loans use a one-year default, calculate installments and reserve l
  const start='2028-02-29',request={...input(),product:'regular',start,maturity:'',schedule:'monthly',installment:0};
  const standard=apply(base(),request).fundingRequests[0];
  assert.equal(standard.maturity,'2029-02-28');
- assert.equal(standard.installment,Math.ceil((100e6+Math.round(100e6*.005*365/7))/12));
+ assert.equal(standard.installment,9553169);
  assert.equal(apply(base(),{...request,maturity:'2030-02-28',schedule:14}).applications[0].decision.automatic,true);
  assert.throws(()=>apply(base(),{...request,maturity:'2028-07-01'}),/at least one year/);
  const bank=base();bank.staff.push({id:'222',name:'Lender',role:'staff'});
@@ -294,4 +294,26 @@ test('investment loan can be approved and funded before borrower enters the actu
  assert.equal(TB.scheduleRows(saved.loans[0],end)[0].due,end);
  assert.equal(TB.balance(saved.loans[0],end).interest,loan.termInterest);
  assert.throws(()=>applyAction(saved,borrower,'investmentEnd',entry,TB.addDays(start,2)),/already recorded/);
+});
+
+test('payment-based installments derive maturity and final payment and require staff review',()=>{
+ const start='2026-11-24';
+ const request={...input(),product:'regular',paymentBased:true,start,requested:500e6,
+   cashCollateral:500e6,schedule:7,installment:7e6,maturity:'2027-11-24'};
+ const state=apply(base(),request,borrower,{...verified,networth:10e9});
+ const app=state.applications[0];
+ assert.equal(app.paymentCount,89);
+ assert.equal(app.finalPayment,4115213);
+ assert.equal(app.maturity,'2028-08-08');
+ assert.equal(app.status,'pending');
+ assert.match(app.reviewReasons.join(' '),/installment requires staff approval/);
+ const approved=applyAction(state,owner,'approve',{id:app.id,amount:500e6,checks:true});
+ const loan=approved.fundingRequests[0];
+ assert.equal(loan.installment,7e6);
+ assert.equal(loan.maturity,app.maturity);
+ assert.throws(()=>apply(base(),{...request,installment:2.5e6}),/above the interest/);
+ const monthly=TB.installmentPlan({principal:10e6,start:'2028-01-31',schedule:'monthly',rate:0,installment:4e6});
+ assert.deepEqual(monthly,{paymentCount:3,maturity:'2028-04-30',finalPayment:2e6});
+ const biweekly=TB.installmentPlan({principal:10e6,start,schedule:14,rate:.005,freeDays:7,installment:20e6});
+ assert.deepEqual(biweekly,{paymentCount:1,maturity:'2026-12-08',finalPayment:10050000});
 });

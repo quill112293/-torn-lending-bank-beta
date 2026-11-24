@@ -185,8 +185,8 @@ test('automatic approvals replace the regular rate on missed installments and ke
  l.status='active';
  const before=TB.balance(l,TB.addDays(l.start,7));
  const after=TB.balance(l,TB.addDays(l.start,14));
- // The full-term charge already covers the regular rate for those seven days.
- near(after.interest-before.interest+500e6*l.rate,15e6);
+ // The missed week accrues the replacement late rate on outstanding principal.
+ near(after.interest-before.interest,15e6);
  const previous={...l,rules:{...l.rules,lateRate:.015}};
  assert.equal(TB.balance(previous,TB.addDays(l.maturity,7)).finalLate,7.5e6);
  const faction=TB.quote(app({lane:'faction',tier:0}),s.rules);
