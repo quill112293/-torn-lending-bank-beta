@@ -353,6 +353,8 @@ After funding, the borrower enters the date displayed in Torn (TCT). The borrowe
 
 Staff and borrowers can see the original term charge, the full weeks and remaining chargeable days, and any subsequent final-payment late interest. Ordinary interest uses the loan's agreed rate and existing product calculation, including weekly compounding on Bank Investment. Four days of a final week use four sevenths of the weekly rate. A 90-day term with no free days contains 12 full weeks and six days.
 
+For new non-faction approvals, the weekly late rate is twice the agreed weekly interest rate. The standard tiers use 3.00%, 2.00%, 1.50% and 1.00% respectively, with 1.00% for VIP-PI and Bank Investment. The late rate replaces regular interest while overdue. Faction loans use their configured late rate (1.50% by default). Previously approved loans keep the late rate saved in their agreement.
+
 The first overdue day costs one seventh of the loan's saved weekly late rate on its outstanding principal. A 90-day loan is due on day 90. Late interest runs from day 91 through payment, with the daily charges rounded cumulatively to whole Torn dollars. An approved final extension moves the collection deadline. Bank Investment uses its recorded end date for collection.
 
 An outstanding final payoff at the start of the seventh overdue TCT day triggers one final-payment strike. The scheduled Worker and bank reads check the cutoff. Held collateral appears in the staff liquidation queue. Staff record the actual disposal, its receipt and any proceeds applied to the loan. Accepting that payment credits interest before principal. A partial sale leaves the remaining holding in the queue. Accepted receipts dated before the cutoff are taken into account if staff record them later.

@@ -149,3 +149,46 @@ test('an approved final extension moves late interest and the seven-day cutoff; 
  const pending=TB.newState();pending.loans=[{...l,investmentDays:90,extensions:[]}];pending.testDate=s.testDate;TB.refreshStrikes(pending);assert.equal(pending.borrowers[l.borrowerId].strikes.length,0);
  assert.equal(TB.balance(pending.loans[0],pending.testDate).finalLate,0);
 });
+
+test('non-faction approvals save twice the agreed weekly rate for every tier and Bank Investment',()=>{
+ const cases=[
+  ['regular',0,false,.015,.03],['regular',1,false,.01,.02],['regular',2,false,.0075,.015],
+  ['regular',3,false,.005,.01],['regular',0,true,.005,.01],['bank',0,false,.005,.01],
+ ];
+ for(const [product,tier,piRto,rate,lateRate] of cases){
+  const s=TB.newState();
+  const application=TB.addApplication(s,app({lane:'external',product,tier,piRto,maturity:product==='bank'?'2026-04-01':'2027-01-01',completed:7,networth:4e9,requested:500e6,cashCollateral:500e6,items:[]}));
+  const quote=TB.quote(application,s.rules);
+  assert.equal(quote.rate,rate);assert.equal(quote.lateRate,lateRate);
+  const l=TB.approve(s,application.id,500e6,'Reviewed',true);
+  assert.equal(l.rules.lateRate,lateRate);
+  assert.equal(s.rules.lateRate,.015);
+  s.rules.external[tier].rate=.02;
+  assert.equal(l.rules.lateRate,lateRate);
+  l.status='active';
+  if(product==='bank')l.investmentEnd={recordedOn:l.start};
+  const balance=n=>TB.balance(l,TB.addDays(l.maturity,n));
+  assert.equal(balance(0).finalLate,0);
+  assert.equal(balance(1).finalLate,Math.round(500e6*lateRate/7));
+  assert.equal(balance(7).finalLate,500e6*lateRate);
+ }
+});
+
+test('automatic approvals replace the regular rate on missed installments and keep earlier agreements intact',()=>{
+ const s=TB.newState();s.bankOnline=true;s.rules.lateReplaces=false;
+ const application=TB.addApplication(s,app({lane:'external',product:'regular',tier:0,maturity:'2027-01-01',completed:0,networth:4e9,requested:500e6,cashCollateral:500e6,items:[]}));
+ s.actorId=application.borrowerId;
+ const l=TB.autoApprove(s,application.id,500e6,'Within limits',{verified:true,accepted:true});
+ assert.equal(l.rules.lateRate,.03);assert.equal(l.rules.lateReplaces,true);
+ l.status='active';
+ const before=TB.balance(l,TB.addDays(l.start,7));
+ const after=TB.balance(l,TB.addDays(l.start,14));
+ // The full-term charge already covers the regular rate for those seven days.
+ near(after.interest-before.interest+500e6*l.rate,15e6);
+ const previous={...l,rules:{...l.rules,lateRate:.015}};
+ assert.equal(TB.balance(previous,TB.addDays(l.maturity,7)).finalLate,7.5e6);
+ const faction=TB.quote(app({lane:'faction',tier:0}),s.rules);
+ assert.equal(faction.rate,.005);assert.equal(faction.lateRate,.015);
+ s.rules.external[0].rate=.0125;
+ assert.equal(TB.quote(application,s.rules).lateRate,.025);
+});
