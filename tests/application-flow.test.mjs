@@ -254,3 +254,44 @@ test('test member profile adjustments use the same count scope as borrower slots
  s.borrowers[borrower].testParticipant=false;
  assert.equal(loanCounts(s,borrower).active,2);
 });
+
+test('regular loans use a one-year default, calculate installments and reserve longer terms for owner approval',()=>{
+ const start='2028-02-29',request={...input(),product:'regular',start,maturity:'',schedule:'monthly',installment:0};
+ const standard=apply(base(),request).fundingRequests[0];
+ assert.equal(standard.maturity,'2029-02-28');
+ assert.equal(standard.installment,Math.ceil((100e6+Math.round(100e6*.005*365/7))/12));
+ assert.equal(apply(base(),{...request,maturity:'2030-02-28',schedule:14}).applications[0].decision.automatic,true);
+ assert.throws(()=>apply(base(),{...request,maturity:'2028-07-01'}),/at least one year/);
+ const bank=base();bank.staff.push({id:'222',name:'Lender',role:'staff'});
+ const pending=apply(bank,{...request,maturity:'2031-02-28',schedule:7});
+ assert.equal(pending.applications[0].status,'pending');
+ assert.match(pending.applications[0].reviewReasons.join(' '),/over two years/);
+ const approval={id:pending.applications[0].id,amount:100e6,reason:'Three years agreed',checks:true};
+ assert.throws(()=>applyAction(pending,'222','approve',approval),/manual owner/);
+ assert.throws(()=>applyAction(pending,owner,'approve',{...approval,reason:''}),/recorded reason/);
+ const financing=applyAction(pending,owner,'approve',approval).fundingRequests[0];
+ assert.equal(financing.maturity,'2031-02-28');assert.equal(financing.schedule,7);
+});
+
+test('investment loan can be approved and funded before borrower enters the actual Torn end date',async()=>{
+ let state=base();
+ state.borrowers[borrower].memberProgram='external';
+ const request={...input(),lane:'external',product:'bank',maturity:'',investmentDays:30};
+ state=apply(state,request);
+ assert.equal(state.applications[0].status,'approved');
+ const id=state.fundingRequests[0].id;
+ const funded=await settleFunding(state);
+ const loan=funded.loans[0],start=loan.fundedOn,end=TB.addDays(start,32),entry={id,end};
+ assert.equal(loan.investmentDays,30);
+ assert.equal(loan.investmentEnd,undefined);assert.ok(loan.termInterest>0);
+ assert.equal(TB.balance(loan,start).total,100e6+loan.termInterest);
+ assert.equal(TB.scheduleRows(loan,start).length,0);
+ assert.throws(()=>applyAction(state,borrower,'investmentEnd',entry,start),/funded/);
+ assert.throws(()=>applyAction(funded,'7654','investmentEnd',entry,TB.addDays(start,2)),/not accessible/);
+ assert.throws(()=>applyAction(funded,borrower,'investmentEnd',entry,start),/on or before today/);
+ const saved=applyAction(funded,borrower,'investmentEnd',entry,TB.addDays(start,2));
+ assert.equal(saved.loans[0].maturity,end);assert.equal(saved.loans[0].investmentEnd.by,borrower);
+ assert.equal(TB.scheduleRows(saved.loans[0],end)[0].due,end);
+ assert.equal(TB.balance(saved.loans[0],end).interest,loan.termInterest);
+ assert.throws(()=>applyAction(saved,borrower,'investmentEnd',entry,TB.addDays(start,2)),/already recorded/);
+});

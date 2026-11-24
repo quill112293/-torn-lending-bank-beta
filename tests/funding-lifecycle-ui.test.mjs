@@ -71,6 +71,19 @@ test('approved requests remain in Applications with trade-only checks and appear
    await click(nav('Loans'));
    assert.match(document.querySelector('main').textContent,new RegExp(reference));
    assert.doesNotMatch(document.querySelector('main').textContent,/No loans yet/);
+   Object.assign(funded,{principal:500e6,rate:.005,freeDays:0,maturity:TB.addDays(funded.start,28),payments:[{id:'paid',seq:0,date:funded.start,credited:4e6,cash:4e6,items:0,recipient:owner}]});
+   await click(document.querySelector('[aria-label="Refresh bank"]'));
+   const loanCard=[...document.querySelectorAll('button.record')].find(button=>button.textContent.includes(reference));
+   assert.match(loanCard.textContent,/Principal left \$500,000,000 · Interest left \$6,000,000/);
+   await click(loanCard);
+   const loanScreen=()=>document.querySelector('main').textContent;
+   assert.match(loanScreen(),/Original full-term interest\$10,000,000/);
+   assert.match(loanScreen(),/Interest paid \$4,000,000 · Principal paid \$0/);
+   funded.payments[0].credited=14e6;funded.payments[0].cash=14e6;
+   await click(document.querySelector('[aria-label="Refresh bank"]'));
+   assert.match(loanScreen(),/PRINCIPAL REMAINING\$496.0M\$496,000,000/);
+   assert.match(loanScreen(),/INTEREST REMAINING\$0\$0/);
+   assert.match(loanScreen(),/Interest paid \$10,000,000 · Principal paid \$4,000,000/);
    assert.equal(requests.every(request=>request.path==='bank'&&request.body===undefined),true);
   }finally{
    if(root)await act(async()=>root.unmount());

@@ -336,3 +336,11 @@ The same server-calculated reserve value is supplied to staff and borrower views
 Update both userscripts to **1.1.0-beta.85**, then reload Torn. No database migration, balance adjustment or bank reset is required.
 
 Release validation: `npm run build`, all **613 tests**, the local Workerd push-runtime check, and the pinned Wrangler **4.92.0** deployment dry-run passed. Regression coverage includes the reported $150M reserve / $100M held-cash scenario, all account roles, exact threshold boundaries, automatic recovery after returning funds, manual overrides, and matching server responses and borrower views.
+
+## Beta.86 loan interest and repayment dates
+
+Funded loans display the full interest charge, principal remaining and total owed. Accepted cash and item credits cover interest first. A $500M loan with $10M interest shows $500M principal and $6M interest after a $4M payment, or $496M principal and $0 interest after a $14M payment. Existing active loans use their saved rates, interest-free days and receipts. Historically settled loans keep their original allocations.
+
+Regular Installments offers one or two years, or a specific final date. A longer term requires the owner's manual approval and reason. Weekly, biweekly and calendar-monthly payments are available. Leaving the installment amount blank divides the original payoff over the scheduled payments, with the balance due at maturity. Existing dated agreements keep their terms, including four-week schedules. Previously undated active installment loans use the first anniversary of their start date.
+
+For a new Bank Investment application, enter the intended investment duration to see full-term interest before approval. After staff verifies the transfer and the investment starts, the borrower opens the funded loan and selects **Enter investment end date**. The receiving lender or owner can also enter it. That date becomes the repayment deadline. Older investments with a saved end date retain it.

@@ -351,7 +351,7 @@ test('borrower requests persist across reloads and lender decisions reach the bo
  const final=(await call(e,'bank',{token:borrower})).data.state;
  assert.equal(final.paymentIntents[0].status,'received');assert.equal(final.pendingPayments[0].status,'accepted');
  assert.equal(final.extensionRequests[0].status,'approved');assert.equal(fundingRecord(final).extensions[0].until,TB.addDays(maturity,7));
- assert.equal(TB.balance(fundingRecord(final),today).total,90e6);
+ assert.equal(TB.balance(fundingRecord(final),today).total,90e6+Math.round(100e6*((1.005**8)*(1+.005*4/7)-1)));
 });
 
 test('bank reset requires owner, exact passcode and current revision; retries cannot erase later writes',async()=>{

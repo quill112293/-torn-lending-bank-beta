@@ -30,7 +30,7 @@ test('test status does not relabel old real approvals and ending it does not rel
 });
 test('archiving real-money test loan preserves ledger, outstanding snapshot and all real loans',()=>{
  let s=act(state(),B,'apply',app());const live=s.fundingRequests[0].id;seedHistoricalFundedLoan(s,live,{staffId:O,reference:'Historical live loan'});s=status(s);s=act(s,B,'apply',app());const l=s.fundingRequests[0];l.collateralConfirmed={amount:l.collateralRequired,source:'Torn API completed trade',reference:'torn-api-trade:99'};seedHistoricalFundedLoan(s,l.id,{staffId:O,reference:'Historical real outgoing test transfer'});
- const plan=removalPlan(s,'testPerson',B);assert.equal(plan.outstanding,100e6);assert.equal(plan.recordedCashOut,100e6);const ledger=JSON.stringify(s.ledger),cash=TB.cash(s,O);
+ const plan=removalPlan(s,'testPerson',B);assert.equal(plan.outstanding,100e6+Math.round(100e6*.005*90/7));assert.equal(plan.recordedCashOut,100e6);const ledger=JSON.stringify(s.ledger),cash=TB.cash(s,O);
  s=act(s,O,'removeRecords',{kind:'testPerson',id:B,confirm:'REMOVE '+B,reason:'Test complete'});assert.equal(TB.cash(s,O),cash);assert.equal(JSON.stringify(s.ledger),ledger);assert.equal(s.loans.length,1);assert.equal(s.loans[0].id,live);assert.equal(s.recordArchives[0].records.loans[0].id,l.id);assert.equal(project(s,B).state.recordArchives,undefined);
 });
 test('funded real loans cannot be removed and confirmation is exact',()=>{
@@ -39,7 +39,7 @@ test('funded real loans cannot be removed and confirmation is exact',()=>{
 });
 test('test repayment and overdue dates do not change real trust, completion or strikes',()=>{
  let s=status(state());s=act(s,B,'apply',app());const l=fundingRecord(s);l.collateralConfirmed={amount:l.collateralRequired,reference:'actual received test collateral'};seedHistoricalFundedLoan(s,l.id,{staffId:O,reference:'Historical actual test funding'});
- s=act(s,O,'payment',{id:l.id,cash:100e6,date:TB.today(),reference:'actual repayment',recipient:O});s=act(s,O,'acceptPayment',{id:s.pendingPayments[0].id});assert.equal(s.loans[0].status,'repaid');assert.equal(s.borrowers[B].completed,undefined);assert.equal(s.borrowers[B].trust,undefined);
+ s=act(s,O,'payment',{id:l.id,cash:TB.balance(l,TB.today()).total,date:TB.today(),reference:'actual repayment',recipient:O});s=act(s,O,'acceptPayment',{id:s.pendingPayments[0].id});assert.equal(s.loans[0].status,'repaid');assert.equal(s.borrowers[B].completed,undefined);assert.equal(s.borrowers[B].trust,undefined);
  s.testDate=TB.addDays(TB.today(),100);TB.refreshStrikes(s);assert.equal(s.borrowers[B].strikes.length,0);
 });
 test('clear all tests keeps real records, funds, statuses and blocks reuse of archived receipts',()=>{
