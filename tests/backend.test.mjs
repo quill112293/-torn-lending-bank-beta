@@ -1810,3 +1810,71 @@ test('manual funding API receipts wait for final confirmation and re-evaluate wi
   const saved=f.read();assert.equal(saved.receipts.length,2);assert.equal(saved.receipts.find(receipt=>receipt.tradeId===String(f.trade.id)).status,'loan_trade');assert.deepEqual(saved.ledger,completed.ledger);assert.equal(fundingRecord(saved).payments.length,0);assert.equal(fundingRecord(saved).tradeFlow.completion.source,source);
  });
 });
+
+test('after funding the borrower’s own key verifies the exact City Bank time for staff without keeping other money data',async()=>{
+ const env=fixture(),owner=(await login(env)).data.token;
+ await call(env,'access',{token:owner,body:{action:'invite',lane:'external',id:BORROWER}});
+ const borrower=(await login(env,'borrower')).data.token;
+ const started=Math.floor(Date.now()/1000)-3600,until=started+7*86400;
+ const iso=seconds=>new Date(seconds*1000).toISOString();
+ const initial=(await call(env,'bank',{token:owner})).data.state;
+ const loan={id:'investment',borrowerId:BORROWER,name:'Test',product:'bank',status:'active',principal:500e6,freeDays:0,rate:.005,issuer:OWNER,
+  start:iso(started).slice(0,10),fundedAt:iso(started-60),fundedOn:iso(started).slice(0,10),maturity:iso(until).slice(0,10),investmentDays:7,
+  payments:[],extensions:[],rules:TB.clone(initial.rules)};
+ initial.loans=[loan];
+ const read=()=>JSON.parse(env.DB.sqlite.prepare('SELECT data FROM bank_state').get().data);
+ const write=state=>env.DB.sqlite.prepare('UPDATE bank_state SET data=?').run(JSON.stringify(state));
+ write(initial);
+ const key='borrower'.padEnd(16,'0'),verify=(token,fields={})=>call(env,'investment-check',{token,body:{loanId:loan.id,key,...fields}});
+ const previous=globalThis.fetch;let lookups=0,city={duration:7,invested_at:started,until};
+ try{
+  globalThis.fetch=async(url,options)=>{
+   if(new URL(url).pathname!=='/v2/user/money')return previous(url,options);
+   assert.equal(options.headers.Authorization,'ApiKey '+key);lookups++;
+   return Response.json({money:{city_bank:city,wallet:977331,wallet_noise:'PRIVATE_WALLET',faction:{balance:888880}}});
+  };
+  assert.equal((await verify(borrower)).status,400);assert.equal(lookups,0);
+  const s=read();s.loans[0].investmentEnd={date:loan.maturity,recordedOn:loan.start,by:BORROWER,planned:loan.maturity};write(s);
+  assert.equal((await verify(owner)).status,400);
+  assert.equal((await verify(borrower,{key:'owner'.padEnd(16,'0')})).status,400);assert.equal(lookups,0);
+  const saved=await verify(borrower,{until:1,amount:999});assert.equal(saved.status,200,saved.data.error);
+  assert.equal(saved.data.state.loans[0].investmentTiming.until,until);assert.equal(saved.data.state.loans[0].investmentTiming.days,7);
+  assert.equal(TB.balance(saved.data.state.loans[0],loan.start).interest,2500000);
+  const snapshot=read();assert.deepEqual(snapshot.ledger,initial.ledger);
+  assert.doesNotMatch(JSON.stringify(snapshot),/977331|PRIVATE_WALLET|888880|borrower00000000/);
+  assert.equal((await call(env,'bank',{token:owner})).data.state.loans[0].investmentTiming.until,until);
+  assert.equal((await verify(borrower)).status,200);
+  assert.equal(read().audit.filter(e=>e.event==='Investment end time verified').length,1);
+  city={...city,until:until-90000};assert.equal((await verify(borrower)).data.state.loans[0].investmentTiming.until,until-90000);
+  city={...city,invested_at:started+120};assert.equal((await verify(borrower)).status,400);
+  city=null;assert.equal((await verify(borrower)).status,400);
+  assert.equal(read().loans[0].investmentTiming.until,until-90000);assert.equal(read().loans[0].maturity,loan.maturity);
+ }finally{globalThis.fetch=previous;}
+});
+
+test('a differing investment needs confirmation against a fresh Torn response and preserves the agreed payoff',async()=>{
+ const env=fixture(),owner=(await login(env)).data.token;
+ await call(env,'access',{token:owner,body:{action:'invite',lane:'external',id:BORROWER}});
+ const token=(await login(env,'borrower')).data.token;
+ const s=(await call(env,'bank',{token:owner})).data.state;
+ const start=Math.floor(Date.now()/1000)-1200,end=start+14*86400,iso=t=>new Date(t*1000).toISOString();
+ const manual=iso(start+7*86400).slice(0,10);
+ s.loans=[{id:'i2',borrowerId:BORROWER,status:'active',product:'bank',fundedAt:iso(start-10),start:iso(start).slice(0,10),investmentDays:7,maturity:manual,
+  investmentEnd:{date:manual,recordedOn:TB.today()},principal:500e6,termInterest:2500000,rate:.005,freeDays:0,payments:[],extensions:[],rules:TB.clone(s.rules)}];
+ const write=state=>env.DB.sqlite.prepare('UPDATE bank_state SET data=?').run(JSON.stringify(state));
+ write(s);
+ const fetchBefore=globalThis.fetch,key='borrower'.padEnd(16,'0');let until=end,revoke=false;
+ const check=confirm=>call(env,'investment-check',{token,body:{loanId:'i2',key,confirm}});
+ try{
+  globalThis.fetch=async(url,opt)=>{
+   if(new URL(url).pathname!=='/v2/user/money')return fetchBefore(url,opt);
+   if(revoke)env.DB.sqlite.prepare('DELETE FROM sessions WHERE torn_id=?').run(BORROWER);
+   return Response.json({money:{city_bank:{duration:14,invested_at:start,until}}});
+  };
+  const first=await check();assert.equal(first.data.review.until,end);assert.equal(first.data.state,undefined);
+  until-=3600;const second=await check(first.data.review);assert.equal(second.data.review.until,until);
+  let result=await check(second.data.review);assert.equal(result.status,200);assert.equal(result.data.state.loans[0].maturity,manual);assert.equal(result.data.state.loans[0].termInterest,2500000);
+  write(s);revoke=true;result=await check(second.data.review);assert.equal(result.status,401);
+  assert.equal(JSON.parse(env.DB.sqlite.prepare('SELECT data FROM bank_state').get().data).loans[0].investmentTiming,undefined);
+ }finally{globalThis.fetch=fetchBefore;}
+});

@@ -1,5 +1,5 @@
 // Capture only an explicit allowlist of metadata. Never retain request/response bodies.
-const operations = new Set(['link', 'logout', 'bank', 'check', 'trades', 'collateral-check', 'loan-trade', 'market', 'access', 'health']);
+const operations = new Set(['link', 'logout', 'bank', 'check', 'investment-check', 'trades', 'collateral-check', 'loan-trade', 'market', 'access', 'health']);
 const typeOf = value => value === null ? 'null' : Array.isArray(value) ? 'array' : typeof value;
 export function responseMetadata(response) {
   const value = response?.status;

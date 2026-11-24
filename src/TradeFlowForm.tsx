@@ -1,3 +1,4 @@
+import {investmentTermLabel} from '../lib/investment-timing.js';
 import {scheduleLabel} from '../lib/repayment-terms.js';
 import React,{useEffect,useId,useRef,useState} from 'react';
 import TB from '../lib/engine.js';
@@ -72,7 +73,7 @@ export default function TradeFlowForm({linkOnPlacement=false,requiresTermsAccept
     {Number.isSafeInteger(loan.freeDays)&&loan.freeDays>=0&&<div><dt>Interest-free period</dt><dd>{loan.freeDays} days</dd></div>}
     {loan.maturity&&loan.start&&<div><dt>Full-term interest</dt><dd>{money(TB.fullTermInterest(loan))}</dd></div>}
     <div><dt>Agreed start date</dt><dd>{loan.start||'Not recorded'}</dd></div>
-    <div><dt>Maturity / final due date</dt><dd>{loan.investmentDays&&!loan.investmentEnd?loan.investmentDays+' days · enter actual end date after funding':loan.maturity||'Date unavailable'}</dd></div>
+    <div><dt>Maturity / final due date</dt><dd>{loan.investmentDays&&!loan.investmentEnd?investmentTermLabel(loan.investmentDays)+' · estimated end '+loan.maturity+' · enter actual end date after funding':loan.maturity||'Date unavailable'}</dd></div>
     <div><dt>Repayment schedule</dt><dd>{loan.product==='regular'?scheduleLabel(loan.schedule):['house','bank'].includes(loan.product)?'Full repayment at maturity':'Not recorded'}</dd></div>
     {loan.product==='regular'&&<div><dt>Agreed installment</dt><dd>{money(loan.installment)}</dd></div>}
    </dl>

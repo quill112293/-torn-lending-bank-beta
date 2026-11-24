@@ -187,13 +187,13 @@ test('local storage fallback separates bank origins', async () => {
   await store.remove(); assert.equal(values.size, 0);
 });
 
-test('custom keys allow trade review for both roles while keeping wallet access staff-only', () => {
+test('custom keys allow borrowers to check investment timing and staff to check their own wallet', () => {
   for (const role of ['Borrower', 'Lender']) {
     const url = new URL(customKeyLink(role));
     assert.equal(url.origin, 'https://www.torn.com'); assert.equal(url.pathname, '/preferences.php');
     const params = new URLSearchParams(url.hash.split('?')[1]);
     assert.equal(params.get('step'), 'addNewKey'); assert.equal(params.get('title'), 'Torn Lending Bank ' + role);
-    assert.equal(params.get('user'), 'basic,profile,personalstats,job,trades,trade' + (role === 'Lender' ? ',money' : ''));
+    assert.equal(params.get('user'), 'basic,profile,personalstats,job,trades,trade,money');
     assert.equal(params.get('torn'), 'items');
     assert.equal(params.has('type'), false); assert.equal(params.has('key'), false);
   }

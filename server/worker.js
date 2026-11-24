@@ -8,10 +8,11 @@ import {route as bank} from '../routes/bank.ts';
 import {route as check} from '../routes/check.ts';
 import {route as trades} from '../routes/trades.ts';
 import {loadTornItemCatalog,marketQuote,route as market} from '../routes/market.ts';
+import {route as investmentCheck} from '../routes/investment-check.ts';
 import {route as staffCash} from '../routes/staff-cash.ts';
 import {route as collateralCheck} from '../routes/collateral-check.ts';
 import {route as loanTrade} from '../routes/loan-trade.ts';
-const routes={bank,check,trades,market,'staff-cash':staffCash,'collateral-check':collateralCheck,'loan-trade':loanTrade};
+const routes={bank,check,'investment-check':investmentCheck,trades,market,'staff-cash':staffCash,'collateral-check':collateralCheck,'loan-trade':loanTrade};
 const origins=new Set(['https://www.torn.com','https://torn.com']);
 export function allowedOrigin(request){const origin=request.headers.get('origin');return !origin||origin===new URL(request.url).origin||origins.has(origin);}
 export async function handle(request,env,ctx){
