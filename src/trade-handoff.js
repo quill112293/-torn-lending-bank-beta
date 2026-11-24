@@ -259,13 +259,13 @@ export function createTornTradePage(document,window){
   if(!initiated)submissionRoute=window.location.href;
   initiated=true;
  }
- function findResult(intent){
+ function findResult(intent,resumingClaim=false){
   const href=window.location.href;
   const observed=observedTrade(document,intent,href);
   if(observed)return observed;
   // A confirmed native submit can navigate straight to an ID before any trade
   // markup appears. This route is a candidate and still needs the API check.
-  if(!submissionRoute)return null;
+  if(!submissionRoute&&!resumingClaim)return null;
   let id=openedTradeId(href);
   if(!id&&href===submissionRoute&&!Array.from(document.querySelectorAll('.init-trade.m-top10')).some(visible)){
    const links=[...document.querySelectorAll('#trade-container .trade-cancel a[href]')].filter(visible);
@@ -332,11 +332,11 @@ export function createTornTradePage(document,window){
    markInitiated();
    controls.initiate.click();
   },
-  async waitForResult(intent){
+  async waitForResult(intent,resumingClaim=false){
    let previous=null;
    return waitFor(()=>{
     foreground();account(intent);
-    const result=findResult(intent);
+    const result=findResult(intent,resumingClaim);
     const same=result&&previous===result.uiTradeId;previous=result?.uiTradeId||null;
     return same?result:null;
    },window,20000,()=>timeoutError('torn_result_timeout','Torn has not confirmed the new trade yet.'));
@@ -406,7 +406,7 @@ export async function resumeTradeObservation({handoff,transport,page,onStatus=()
  if(intent.uiTradeId){onStatus({status:'recorded',intent});return intent;}
  need(intent.claimedAt&&['claimed','cancelled'].includes(intent.status),'This setup has no confirmed creation attempt. Return to the bank and check the request.');
  onStatus({status:'claimed',intent});
- const observed=await page.waitForResult(intent);
+ const observed=await page.waitForResult(intent,intent.status==='claimed');
  onStatus({status:'observed',intent,observed});
  const saved=await saveObservedTrade(transport,handoff,observed,requestId);
  onStatus({status:'recorded',intent:saved});return saved;

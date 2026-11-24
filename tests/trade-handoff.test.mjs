@@ -289,6 +289,10 @@ test('creation captures Torn’s new view route before markup loads and checks i
  assert.equal(f.nativeSubmissions,1);
  const resumed=nativeForm();resumed.window.location.href=f.window.location.href;
  assert.equal(resumed.page.observed(resumed.intent),null,'a bare trade route after a reload is not a creation handoff');
+ const resumedResult=resumed.page.waitForResult(resumed.intent,true);
+ [...resumed.timers.values()].find(entry=>entry.type==='interval').fn();
+ assert.deepEqual(await resumedResult,await result);
+ assert.equal(resumed.nativeSubmissions,0);
  const bank=scenario();await bank.run();
  assert.equal(bank.writes[1].payload.verifyDescription,true);
 });
