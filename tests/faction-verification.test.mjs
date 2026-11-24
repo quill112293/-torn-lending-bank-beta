@@ -83,3 +83,16 @@ test('legacy staff application flags stay legacy until an explicit new manual ch
  const reviewed=edit(legacy,{manualFactionVerified:false},auto(false));assert.equal(reviewed.applications[0].factionMember,false);assert.equal(reviewed.applications[0].factionVerification.manual,undefined);
  const trustedLegacy={networth:1e9,factionMember:true,checkedAt:recent};const submitted=applyAction(base(),borrower,'apply',input(),TB.today(),trustedLegacy);assert.equal(submitted.applications[0].factionVerification,undefined);assert.equal(submitted.applications[0].status,'approved');
 });
+
+test('automatic membership with unavailable or older Torn evidence never invents a membership or overwrites a manual choice',()=>{
+ let s=base();
+ const set=mode=>{s=applyAction(s,staff,'memberProgram',{id:borrower,mode,reason:'Profile review'});};
+ const lane=()=>s.borrowers[borrower].memberProgram;
+ set('auto');assert.equal(lane(),null);
+ recordAutomaticFactionVerification(s,auto(false,recent));assert.equal(lane(),'external');
+ recordAutomaticFactionVerification(s,auto(true,older));assert.equal(lane(),'external');
+ const noComparison=automaticFactionVerification(borrower,{id:Number(borrower),faction_id:10,checkedAt:new Date(Date.now()+3000).toISOString()},{});
+ recordAutomaticFactionVerification(s,noComparison);assert.equal(lane(),null);
+ set('faction');recordAutomaticFactionVerification(s,noComparison);assert.equal(lane(),'faction');
+ set('auto');assert.equal(lane(),null);
+});

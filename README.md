@@ -358,3 +358,9 @@ For new faction and non-faction approvals, the weekly late rate is twice the loa
 The first overdue day costs one seventh of the loan's saved weekly late rate on its outstanding principal. A 90-day loan is due on day 90. Late interest runs from day 91 through payment, with the daily charges rounded cumulatively to whole Torn dollars. An approved final extension moves the collection deadline. Bank Investment uses its recorded end date for collection.
 
 An outstanding final payoff at the start of the seventh overdue TCT day triggers one final-payment strike. The scheduled Worker and bank reads check the cutoff. Held collateral appears in the staff liquidation queue. Staff record the actual disposal, its receipt and any proceeds applied to the loan. Accepting that payment credits interest before principal. A partial sale leaves the remaining holding in the queue. Accepted receipts dated before the cutoff are taken into account if staff record them later.
+
+## Beta.87 faction selection in the member profile
+
+In **Users → select a borrower → Member profile → Edit membership**, staff can select Automatic (Torn API), Faction VIP+ (manual), or Non-faction secured (manual) and save a verification note. The automatic check compares the borrower’s faction ID with the bank owner’s faction ID. A match selects the faction program, a confirmed mismatch selects the non-faction program, and an unavailable comparison leaves Automatic awaiting verification. Staff can refresh the check on the same profile.
+
+Manual selections remain effective through later API checks. Selecting Faction VIP+ explicitly confirms membership for pending and new faction applications, with the reviewer and time shown separately from Torn’s response. Returning to Automatic removes the profile confirmation from pending applications. Applications approved under earlier terms retain their recorded evidence. Existing staff assignments remain in place until staff choose a profile mode.
