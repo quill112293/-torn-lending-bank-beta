@@ -96,6 +96,6 @@ export function validateImport(s){
  if(new Set(s.staff.map(p=>p.id)).size!==s.staff.length)fail('Duplicate staff records.');
  normalizeFundingState(s);TB.validateRules(s.rules);for(const loan of allLoanRecords(s)){TB.balance(loan,TB.today());if(!loan.id||!/^\d{1,10}$/.test(loan.borrowerId))fail('Invalid loan record.');}
 }
-export default {fetch:handle,async scheduled(_event,env){await env.DB.batch([env.DB.prepare('DELETE FROM sessions WHERE expires_at>0 AND expires_at<=?').bind(Date.now()),env.DB.prepare('DELETE FROM api_limits WHERE bucket<?').bind(Math.floor(Date.now()/60000)-2),env.DB.prepare('DELETE FROM push_events WHERE created_at<?').bind(Date.now()-7*86400000)]);await drainPush(env);}};
+export default {fetch:handle,async scheduled(_event,env){await env.DB.batch([env.DB.prepare('DELETE FROM sessions WHERE expires_at>0 AND expires_at<=?').bind(Date.now()),env.DB.prepare('DELETE FROM api_limits WHERE bucket<?').bind(Math.floor(Date.now()/60000)-2),env.DB.prepare('DELETE FROM push_events WHERE created_at<?').bind(Date.now()-7*86400000)]);await createServer(env).reviewDueToday();await drainPush(env);}};
 
 

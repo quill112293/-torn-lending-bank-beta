@@ -84,6 +84,15 @@ test('approved requests remain in Applications with trade-only checks and appear
    assert.match(loanScreen(),/PRINCIPAL REMAINING\$496.0M\$496,000,000/);
    assert.match(loanScreen(),/INTEREST REMAINING\$0\$0/);
    assert.match(loanScreen(),/Interest paid \$10,000,000 · Principal paid \$4,000,000/);
+   funded.maturity=TB.addDays(funded.start,88);data.state.testDate=TB.addDays(funded.maturity,7);
+   data.state.actorId=owner;TB.refreshStrikes(data.state);
+   await click(document.querySelector('[aria-label="Refresh bank"]'));
+   assert.match(loanScreen(),/Chargeable term12 full weeks \+ 4\/7 of a week at 0.50% weekly/);
+   assert.match(loanScreen(),/Late interest charged after maturity/);
+   assert.match(loanScreen(),/Held collateral is due for liquidation/);
+   assert.equal([...document.querySelectorAll('button')].some(button=>button.textContent==='Record liquidation'),role==='owner');
+   await click(nav('Loans'));
+   assert.equal(loanScreen().includes('Collateral awaiting liquidation'),role==='owner');
    assert.equal(requests.every(request=>request.path==='bank'&&request.body===undefined),true);
   }finally{
    if(root)await act(async()=>root.unmount());

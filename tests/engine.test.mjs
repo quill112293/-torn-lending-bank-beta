@@ -30,9 +30,13 @@ test('non-faction collateral jumps apply to whole principal',()=>{const a=app({l
 test('VIP-PI and minima and exact net-worth support',()=>{const a=app({lane:'external',tier:0,product:'bank',piRto:true,networth:1e9,requested:250e6,cashCollateral:25e6,items:[]});const q=TB.quote(a);assert.equal(q.rate,.005);assert.equal(q.freeDays,7);assert.equal(q.limits.networth,500e6);assert.equal(q.amount,250e6);assert.ok(TB.quote({...a,requested:99e6}).blockers.length);});
 test('bank weekly compounding and partial weeks match independent formula',()=>{for(const freeDays of [0,7]){const l=loan({product:'bank',freeDays});const d=90-freeDays;near(TB.balance(l,'2026-04-01').interest,Math.round(100e6*((1.005)**Math.floor(d/7)*(1+.005*(d%7)/7)-1)));}});
 test('regular payment pays interest before principal and does not compound',()=>{const l=loan({product:'regular',payments:[{id:'p',seq:0,date:'2026-01-08',credited:20e6}]});const b=TB.balance(l,'2026-01-15');near(b.allocations[0].interest,6428571);near(b.allocations[0].principal,13571429);near(b.principal,86428571);near(b.interest,0);});
-test('bank extension freezes payoff and late rate resumes next day',()=>{const l=loan({product:'bank',extensions:[{originalDue:'2026-04-01',until:'2026-04-08',approvedOn:'2026-04-01'}]});const due=TB.balance(l,'2026-04-01');near(TB.balance(l,'2026-04-08').total,due.total);near(TB.balance(l,'2026-04-09').total,due.total+100e6*.015/7);});
+test('bank extension freezes payoff and late rate resumes next day',()=>{const l=loan({product:'bank',extensions:[{originalDue:'2026-04-01',until:'2026-04-08',approvedOn:'2026-04-01'}]});const due=TB.balance(l,'2026-04-01');near(TB.balance(l,'2026-04-08').total,due.total);near(TB.balance(l,'2026-04-09').total,due.total+Math.round(100e6*.015/7));});
 test('regular extension keeps the normal rate',()=>{const l=loan({product:'regular',extensions:[{originalDue:'2026-01-08',until:'2026-01-15',approvedOn:'2026-01-08'}]});near(TB.balance(l,'2026-01-15').interest,6428571);});
-test('unknown maturity policy blocks silent late-interest assumptions',()=>{assert.equal(TB.balance(loan(),'2026-04-02').unknown,true);});
+test('active loans with the former undecided policy start charging the saved late rate the day after maturity',()=>{
+ const l=loan();l.rules.maturityLateMode='review';
+ const due=TB.balance(l,l.maturity),next=TB.balance(l,'2026-04-02');
+ assert.equal(next.unknown,false);assert.equal(next.total-due.total,Math.round(l.principal*.015/7));
+});
 test('strikes are once per late payment and unresolved updates after cure',()=>{const s=TB.newState();s.loans=[loan({product:'regular'})];s.testDate='2026-01-09';TB.refreshStrikes(s);TB.refreshStrikes(s);assert.equal(s.borrowers['100'].strikes.length,1);assert.equal(s.borrowers['100'].strikes[0].unresolved,false);s.testDate='2026-01-16';TB.refreshStrikes(s);assert.equal(s.borrowers['100'].strikes[0].unresolved,true);s.testDate='2026-01-23';TB.refreshStrikes(s);assert.equal(TB.grade(s,'100').color,'red');});
 test('staff cash transfers conserve bank funds and reserve pending handovers',()=>{const s=TB.seed(TB.newState()),before=TB.overview(s).cash;s.actorId='9000102';TB.requestTransfer(s,'9000101',750e6,true);assert.equal(TB.spendable(s,'9000102'),0);assert.equal(TB.cash(s,'9000102'),750e6);assert.equal(TB.overview(s).cash,before);s.actorId='9000101';TB.confirmTransfer(s,s.transfers.at(-1).id,'return');assert.equal(TB.cash(s,'9000102'),0);assert.equal(TB.overview(s).cash,before);});
 test('red flags block lending and only owner can lift',()=>{const s=TB.seed(TB.newState());const a=s.applications.at(-1);TB.ban(s,a.borrowerId,'Federal evidence');s.actorId='9000102';assert.throws(()=>TB.approve(s,a.id,100e6,'',true),/Do Not Lend/);assert.throws(()=>TB.lift(s,a.borrowerId,s.borrowers[a.borrowerId].flags[0].id,'review'),/role/);s.actorId='3542697';TB.lift(s,a.borrowerId,s.borrowers[a.borrowerId].flags[0].id,'False ban reviewed');assert.equal(TB.grade(s,a.borrowerId).color,'green');});
@@ -95,4 +99,53 @@ test('changing the planned start keeps an entered investment maturity and shifts
  TB.shiftLoanStart(regular,'2028-03-01');assert.equal(regular.maturity,'2029-03-01');
  const investment=loan({product:'bank',start:'2026-01-01',maturity:'2026-03-01'});
  TB.shiftLoanStart(investment,'2026-01-05');assert.equal(investment.maturity,'2026-03-01');
+});
+
+test('four extra days cost four sevenths of the weekly rate with the saved product rules',()=>{
+ const l=loan({principal:500e6,maturity:'2026-01-12',freeDays:0});
+ assert.equal(TB.balance(l,l.start).termInterest,Math.round(2500000*(1+4/7)));
+ assert.equal(TB.balance({...l,product:'bank'},l.start).termInterest,Math.round(500e6*(1.005*(1+.005*4/7)-1)));
+ assert.equal(TB.balance({...l,rate:.015,lane:'external',product:'regular'},l.start).termInterest,Math.round(7500000*(1+4/7)));
+});
+
+test('90-day payoff charges only late interest for days 91–97 on remaining principal, with one strike on day 97',()=>{
+ const s=TB.newState(),l=loan({principal:500e6,collateralConfirmed:{by:s.actorId,amount:200e6}});
+ s.loans=[l];const term=TB.balance(l,l.start).termInterest;
+ const on=i=>TB.addDays(l.start,i);
+ assert.equal(l.maturity,on(90));assert.equal(term,32142857);
+ for(const n of [90,91,92,93,94,95,96,97,98]){
+  s.testDate=on(n);TB.refreshStrikes(s);TB.refreshStrikes(s);
+  const b=TB.balance(l,s.testDate);
+  assert.equal(b.finalLate,Math.round((n-90)*500e6*.015/7));
+  assert.equal(b.total,500e6+term+b.finalLate);
+  assert.equal(s.borrowers[l.borrowerId].strikes.length,n<97?0:1);
+ }
+ assert.equal(s.audit.filter(entry=>entry.event==='Collateral liquidation due').length,1);
+ assert.equal(s.borrowers[l.borrowerId].strikes[0].finalDefaultOn,on(97));
+ const day92Charge=Math.round(2*500e6*.015/7);
+ l.payments=[{id:'p',seq:0,date:on(92),credited:term+day92Charge+100e6}];
+ const next=TB.balance(l,on(93));assert.equal(next.principal,400e6);
+ assert.equal(next.total,400e6+Math.round((500e6*2+400e6)*.015/7)-day92Charge);
+});
+
+test('a payoff before the cutoff prevents liquidation, including when the receipt is accepted after day 97',()=>{
+ const s=TB.newState(),l=loan({principal:500e6,collateralConfirmed:{by:s.actorId,amount:100e6}});s.loans=[l];const prior=TB.addDays(l.maturity,6);
+ s.testDate=TB.addDays(l.maturity,7);TB.refreshStrikes(s);
+ assert.equal(s.borrowers[l.borrowerId].strikes.length,1);
+ const p=TB.submitPayment(s,l.id,{cash:TB.balance(l,prior).total,date:prior,reference:'dated-receipt'});
+ TB.acceptPayment(s,p.id);TB.refreshStrikes(s);
+ assert.equal(l.status,'repaid');assert.equal(s.borrowers[l.borrowerId].strikes.length,0);
+ assert.equal(TB.balance(l,TB.addDays(l.maturity,15)).total,0);
+});
+
+test('an approved final extension moves late interest and the seven-day cutoff; estimated dates trigger neither',()=>{
+ const s=TB.newState(),l=loan({product:'bank'}),extended=TB.addDays(l.maturity,7);
+ l.extensions=[{originalDue:l.maturity,until:extended,approvedOn:l.maturity}];s.loans=[l];
+ for(const n of [0,1,6,7]){
+  s.testDate=TB.addDays(extended,n);TB.refreshStrikes(s);
+  assert.equal(TB.balance(l,s.testDate).finalLate,Math.round(n*l.principal*.015/7));
+  assert.equal(s.borrowers[l.borrowerId].strikes.length,n===7?1:0);
+ }
+ const pending=TB.newState();pending.loans=[{...l,investmentDays:90,extensions:[]}];pending.testDate=s.testDate;TB.refreshStrikes(pending);assert.equal(pending.borrowers[l.borrowerId].strikes.length,0);
+ assert.equal(TB.balance(pending.loans[0],pending.testDate).finalLate,0);
 });

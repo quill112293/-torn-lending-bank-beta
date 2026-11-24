@@ -1878,3 +1878,32 @@ test('a differing investment needs confirmation against a fresh Torn response an
   assert.equal(JSON.parse(env.DB.sqlite.prepare('SELECT data FROM bank_state').get().data).loans[0].investmentTiming,undefined);
  }finally{globalThis.fetch=fetchBefore;}
 });
+
+test('scheduled maturity review creates one strike and routes held collateral to proceeds review without altering cash',async()=>{
+ const e=fixture(),owner=(await login(e)).data.token;
+ await call(e,'access',{token:owner,body:{action:'invite',lane:'faction',id:BORROWER}});
+ const borrower=(await login(e,'borrower')).data.token;
+ const read=()=>JSON.parse(e.DB.sqlite.prepare('SELECT data FROM bank_state').get().data);
+ const s=(await call(e,'bank',{token:owner})).data.state,now=TB.today(),due=TB.addDays(now,-7);
+ const l={id:'maturity-loan',borrowerId:BORROWER,name:'Test',reference:'TLB-M',product:'house',status:'active',lane:'faction',principal:500e6,freeDays:0,rate:.005,
+  issuer:OWNER,start:TB.addDays(due,-90),maturity:due,collateralConfirmed:{holder:OWNER,amount:100e6},payments:[],extensions:[],rules:TB.clone(s.rules)};
+ s.loans=[l];s.lastDueReview=TB.addDays(now,-1);s.rules.maturityLateMode='review';l.rules.maturityLateMode='review';
+ e.DB.sqlite.prepare('UPDATE bank_state SET data=?').run(JSON.stringify(s));
+ await worker.scheduled({},e);await worker.scheduled({},e);
+ assert.equal(read().borrowers[BORROWER].strikes.length,1);assert.deepEqual(read().ledger,s.ledger);
+ const bank=async token=>(await call(e,'bank',{token})).data.state;
+ for(const token of [owner,borrower]){
+  const view=await bank(token);assert.equal(view.borrowers[BORROWER].strikes[0].finalDefaultOn,now);
+  assert.equal(TB.balance(view.loans[0],now).finalLate,7500000);
+ }
+ const sale={id:l.id,event:'liquidated',holder:OWNER,description:'Disposed of held collateral',proceeds:100e6,reference:'sale-reference',wholeHolding:true};
+ const save=async(token,action,payload)=>call(e,'bank',{token,body:{action,payload,revision:(await bank(token)).revision,requestId:crypto.randomUUID()}});
+ assert.equal((await save(borrower,'collateral',sale)).status,400);
+ const result=await save(owner,'collateral',sale);assert.equal(result.status,200,result.data.error);
+ const after=result.data.state;assert.deepEqual(after.ledger,s.ledger);assert.equal(after.pendingPayments[0].cash,100e6);
+ assert.equal(after.collateral.at(-1).paymentId,after.pendingPayments[0].id);
+ assert.equal((await save(owner,'collateral',{...sale,reference:'duplicate-holder'})).status,400);
+ const accepted=await save(owner,'acceptPayment',{id:after.pendingPayments[0].id});assert.equal(accepted.status,200,accepted.data.error);
+ const b=TB.balance(accepted.data.state.loans[0],now);assert.equal(b.principal,439642857);assert.equal(b.interest,0);
+ assert.equal(accepted.data.state.borrowers[BORROWER].strikes.length,1);
+});

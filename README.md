@@ -348,3 +348,11 @@ For a new Bank Investment application, enter the intended investment duration to
 The planned Bank Investment terms match Torn City Bank: 1 week, 2 weeks, 1 month, 2 months and 3 months. Loan interest uses the bank's 0.50% weekly rate, with the existing Bank Investment compounding and any applicable interest-free days. For example, a $500M loan over one fully chargeable week has $2.5M interest.
 
 After funding, the borrower enters the date displayed in Torn (TCT). The borrower can also use their own API key with the user money selection to check the exact investment end time. Only City Bank timing and duration are retained from that response. The staff Loans tab sorts active investments by end time and labels each as an estimate, manual entry, saved date or Torn API result. A later timing check cannot substitute a new investment for an already linked one. Verifying a time leaves the recorded loan payoff date and accounting intact.
+
+### Final repayment and liquidation
+
+Staff and borrowers can see the original term charge, the full weeks and remaining chargeable days, and any subsequent final-payment late interest. Ordinary interest uses the loan's agreed rate and existing product calculation, including weekly compounding on Bank Investment. Four days of a final week use four sevenths of the weekly rate. A 90-day term with no free days contains 12 full weeks and six days.
+
+The first overdue day costs one seventh of the loan's saved weekly late rate on its outstanding principal. A 90-day loan is due on day 90. Late interest runs from day 91 through payment, with the daily charges rounded cumulatively to whole Torn dollars. An approved final extension moves the collection deadline. Bank Investment uses its recorded end date for collection.
+
+An outstanding final payoff at the start of the seventh overdue TCT day triggers one final-payment strike. The scheduled Worker and bank reads check the cutoff. Held collateral appears in the staff liquidation queue. Staff record the actual disposal, its receipt and any proceeds applied to the loan. Accepting that payment credits interest before principal. A partial sale leaves the remaining holding in the queue. Accepted receipts dated before the cutoff are taken into account if staff record them later.
