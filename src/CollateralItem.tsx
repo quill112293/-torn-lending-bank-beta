@@ -82,7 +82,7 @@ export default function CollateralItem({item,catalog,catalogStatus,loadCatalog,o
    <p>{priceLabel} {formatMoney(item.reference)} each · {formatMoney(total)} total · {formatMoney(Math.floor(total*creditRate))} credited</p>
    {!item.manualEstimate&&item.source&&<p className='muted'>Source: {item.source}{checkedAt&&<> · Checked <time dateTime={item.checked}>{checkedAt}</time></>}</p>}
    {(item.savedEstimate||item.officialEstimate||item.manualEstimate)&&<p className='muted'>The bank checks for a live quote at submission. Staff review items without a live quote.</p>}
-   {moreNeeded>0&&<p><strong>About {moreNeeded.toLocaleString('en-US')} more needed</strong> if you cover the remaining collateral with this item.</p>}
+   {moreNeeded>0&&<p><strong>About {moreNeeded.toLocaleString('en-US')} more {catalog.find(entry=>entry.id===itemId)?.name||name} needed</strong> to cover the remaining collateral.</p>}
    {remainingCollateral===0&&<p>Estimated collateral requirement covered.</p>}
   </div>:null}
   {(status||name&&!itemId&&!showSuggestions)&&<p className='muted' role='status'>{status||'Unpriced items go to staff review.'}</p>}
