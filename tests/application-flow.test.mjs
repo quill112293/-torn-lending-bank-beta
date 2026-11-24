@@ -296,7 +296,7 @@ test('investment loan can be approved and funded before borrower enters the actu
  assert.throws(()=>applyAction(saved,borrower,'investmentEnd',entry,TB.addDays(start,2)),/already recorded/);
 });
 
-test('payment-based installments derive maturity and final payment and require staff review',()=>{
+test('payment-based installments derive maturity and final payment and qualify for automatic approval within two years',()=>{
  const start='2026-11-24';
  const request={...input(),product:'regular',paymentBased:true,start,requested:500e6,
    cashCollateral:500e6,schedule:7,installment:7e6,maturity:'2027-11-24'};
@@ -305,10 +305,13 @@ test('payment-based installments derive maturity and final payment and require s
  assert.equal(app.paymentCount,89);
  assert.equal(app.finalPayment,4115213);
  assert.equal(app.maturity,'2028-08-08');
- assert.equal(app.status,'pending');
- assert.match(app.reviewReasons.join(' '),/installment requires staff approval/);
- const approved=applyAction(state,owner,'approve',{id:app.id,amount:500e6,checks:true});
- const loan=approved.fundingRequests[0];
+ assert.equal(app.decision.automatic,true);
+ const loan=state.fundingRequests[0];
+ const short=apply(base(),{...request,installment:500e6},borrower,{...verified,networth:10e9});
+ assert.equal(short.applications[0].decision.automatic,true);
+ const long=apply(base(),{...request,installment:5e6},borrower,{...verified,networth:10e9});
+ assert.equal(long.applications[0].status,'pending');
+ assert.match(long.applications[0].reviewReasons.join(' '),/over two years/);
  assert.equal(loan.installment,7e6);
  assert.equal(loan.maturity,app.maturity);
  assert.throws(()=>apply(base(),{...request,installment:2.5e6}),/above the interest/);
