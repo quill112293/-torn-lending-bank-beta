@@ -150,20 +150,22 @@ test('an approved final extension moves late interest and the seven-day cutoff; 
  assert.equal(TB.balance(pending.loans[0],pending.testDate).finalLate,0);
 });
 
-test('non-faction approvals save twice the agreed weekly rate for every tier and Bank Investment',()=>{
+test('new approvals in both memberships save twice the agreed rate and charge it only when overdue',()=>{
  const cases=[
-  ['regular',0,false,.015,.03],['regular',1,false,.01,.02],['regular',2,false,.0075,.015],
-  ['regular',3,false,.005,.01],['regular',0,true,.005,.01],['bank',0,false,.005,.01],
+  ['external','regular',0,false,.015,.03],['external','regular',1,false,.01,.02],
+  ['external','regular',2,false,.0075,.015],['external','regular',3,false,.005,.01],
+  ['external','regular',0,true,.005,.01],['external','bank',0,false,.005,.01],
+  ['faction','regular',0,false,.005,.01],['faction','house',3,false,.005,.01],
  ];
- for(const [product,tier,piRto,rate,lateRate] of cases){
+ for(const [lane,product,tier,piRto,rate,lateRate] of cases){
   const s=TB.newState();
-  const application=TB.addApplication(s,app({lane:'external',product,tier,piRto,maturity:product==='bank'?'2026-04-01':'2027-01-01',completed:7,networth:4e9,requested:500e6,cashCollateral:500e6,items:[]}));
+  const application=TB.addApplication(s,app({lane,product,tier,piRto,maturity:product==='regular'?'2027-01-01':'2026-04-01',completed:7,networth:4e9,requested:500e6,cashCollateral:500e6,items:[]}));
   const quote=TB.quote(application,s.rules);
   assert.equal(quote.rate,rate);assert.equal(quote.lateRate,lateRate);
   const l=TB.approve(s,application.id,500e6,'Reviewed',true);
   assert.equal(l.rules.lateRate,lateRate);
   assert.equal(s.rules.lateRate,.015);
-  s.rules.external[tier].rate=.02;
+  s.rules[lane][tier].rate=.02;
   assert.equal(l.rules.lateRate,lateRate);
   l.status='active';
   if(product==='bank')l.investmentEnd={recordedOn:l.start};
@@ -188,7 +190,9 @@ test('automatic approvals replace the regular rate on missed installments and ke
  const previous={...l,rules:{...l.rules,lateRate:.015}};
  assert.equal(TB.balance(previous,TB.addDays(l.maturity,7)).finalLate,7.5e6);
  const faction=TB.quote(app({lane:'faction',tier:0}),s.rules);
- assert.equal(faction.rate,.005);assert.equal(faction.lateRate,.015);
+ assert.equal(faction.rate,.005);assert.equal(faction.lateRate,.01);
+ s.rules.faction[0].rate=.006;
+ assert.equal(TB.quote(app({lane:'faction',tier:0}),s.rules).lateRate,.012);
  s.rules.external[0].rate=.0125;
  assert.equal(TB.quote(application,s.rules).lateRate,.025);
 });
