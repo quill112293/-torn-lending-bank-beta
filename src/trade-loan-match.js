@@ -37,7 +37,7 @@ export function readTradeLoanContext(document,href){
  const roots=[...document.querySelectorAll('#trade-container')].filter(visible);
  if(roots.length>1){context.ambiguous=true;return context;}
  if(roots.length===1){
-  const headings=[...roots[0].querySelectorAll(':scope > .title-black')].filter(visible);
+  const headings=[...roots[0].querySelectorAll(':scope > .title-black')].filter(visible).filter(node=> !/^(?:Trade Log|Add a comment)$/i.test(normalized(renderedText(node))));
   if(headings.length>1)context.ambiguous=true;
   if(headings.length===1){
    const heading=normalized(renderedText(headings[0])),description=/^(?:trade\s+)?description\s*:\s*/i;

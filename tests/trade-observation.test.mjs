@@ -216,6 +216,7 @@ test('the generic mobile heading and oldest borrower entry require API confirmat
  const {window}=new JSDOM(`<script uid="${BORROWER}" name="Borrower"></script><div id="trade-container">
   <div class="title-black">Trade between Borrower &amp; Recipient</div>
   <div class="trade-cont"></div>
+  <div class="title-black">Trade Log</div><div class="title-black">Add a comment</div>
   <ul class="log">
    <li><div class="desc"><a href="/profiles.php?XID=${BORROWER}">Borrower</a> added 14x Xanax to the trade.</div></li>
    <li><div class="desc"><a href="/profiles.php?XID=${BORROWER}">Borrower</a> says: ${REFERENCE}</div></li>

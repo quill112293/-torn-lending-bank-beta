@@ -121,7 +121,7 @@ export function observedTrade(document,intent,href){
  // log messages, hidden descendants, and the current URL alone are not proof.
  const roots=[...document.querySelectorAll('#trade-container')].filter(visible);
  if(roots.length!==1)return null;
- const root=roots[0],trades=[...root.querySelectorAll('.trade-cont')].filter(visible),headings=[...root.querySelectorAll(':scope > .title-black')].filter(visible);
+ const root=roots[0],trades=[...root.querySelectorAll('.trade-cont')].filter(visible),headings=[...root.querySelectorAll(':scope > .title-black')].filter(visible).filter(node=> !/^(?:Trade Log|Add a comment)$/i.test(normalized(renderedText(node))));
  if(trades.length!==1||headings.length!==1)return null;
  const currentId=activeTradeId(href,href);
  const ids=[...root.querySelectorAll('.trade-cancel a[href]')].filter(visible).map(a=>activeTradeId(a.getAttribute('href'),href)).filter(Boolean);
