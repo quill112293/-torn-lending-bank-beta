@@ -196,3 +196,42 @@ test('automatic approvals replace the regular rate on missed installments and ke
  s.rules.external[0].rate=.0125;
  assert.equal(TB.quote(application,s.rules).lateRate,.025);
 });
+
+test('installment forecast follows confirmed payments while preserving the original estimate and ledger',()=>{
+ const terms=loan({product:'regular',decliningBalance:true,paymentBased:true,principal:100e6,rate:.01,installment:10e6});
+ Object.assign(terms,TB.installmentPlan(terms));
+ const due=TB.addDays(terms.start,7);
+ const project=credit=>{
+   const l={...terms,payments:[{id:'confirmed',seq:0,date:due,credited:credit}]};
+   const saved=JSON.stringify(l);
+   const b=TB.balance(l,due),f=TB.installmentForecast(l,due,b);
+   assert.equal(JSON.stringify(l),saved);
+   return {f,b};
+ };
+ const ordinary=project(10e6),extra=project(50e6);
+ assert.equal(ordinary.f.payoffDate,terms.maturity);
+ near(Math.ceil(ordinary.f.remaining+ordinary.b.allocations[0].interest),TB.expectedInterest(terms));
+ assert.ok(extra.f.payoffDate<ordinary.f.payoffDate);
+ assert.ok(extra.f.remaining<ordinary.f.remaining);
+ // Check the forecast by replaying real allocations on the future dates.
+ const replay={...terms,payments:[{id:'confirmed',seq:0,date:due,credited:50e6}]};
+ for(let date=TB.addDays(due,7);date<=extra.f.payoffDate;date=TB.addDays(date,7)){
+   const b=TB.balance(replay,date);
+   replay.payments.push({id:date,seq:replay.payments.length,date,credited:Math.min(b.total,terms.installment)});
+ }
+ const closed=TB.balance(replay,extra.f.payoffDate);
+ near(closed.total,0);
+ near(closed.allocations.slice(1).reduce((n,p)=>n+p.interest,0),extra.f.remaining);
+});
+
+test('an early $50M bank investment payment leaves the fixed charge on $500M intact',()=>{
+ const bank=loan({product:'bank',principal:500e6});
+ const charge=TB.expectedInterest(bank),date=TB.addDays(bank.start,7);
+ const partial=TB.balance({...bank,payments:[{id:'p',date,credited:10e6}]},date);
+ near(partial.interest,charge-10e6);
+ const paid=TB.balance({...bank,payments:[{id:'p',date,credited:50e6}]},date);
+ near(paid.termInterest,charge);
+ near(paid.allocations[0].interest,charge);
+ near(paid.interest,0);
+ near(paid.principal,500e6-(50e6-charge));
+});
